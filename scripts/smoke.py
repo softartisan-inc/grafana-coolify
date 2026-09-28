@@ -230,6 +230,115 @@ def masking(c):
     expect(not problems, f"{len(problems)} problem(s):\n    " + "\n    ".join(problems) + f"\n  body: {line}\n  map body: {map_line}\n  metadata: {meta}")
 
 
+# 12.3.2: the reference table of spec 6.4 (harness values of HOST_MAP, RESERVED_SUBDOMAINS,
+# TENANT_HOST_REGEX), plus the validation of the client tenant on an unknown host (spec 6.5):
+# (page host, tenant sent by the client, service_name, env, stored tenant). None = absent;
+# "client" = the app name; the client environment is "preprod".
+HOST_CASES = [
+    ("example.me", "clienttenant", "guest-front", "prod", None),
+    ("www.example.me", "clienttenant", "client", "prod", None),
+    ("api-dev.example.me", "clienttenant", "client", "preprod", None),
+    ("acme.example.me", "clienttenant", "client", "prod", "acme"),
+    ("acme-dev.example.app", "clienttenant", "client", "preprod", "acme"),
+    ("inconnu.autre.org", "clienttenant", "client", "preprod", "clienttenant"),
+    ("ACME.Example.ME", "clienttenant", "client", "prod", "acme"),
+    ("inconnu.autre.org", "Bad Tenant", "client", "preprod", None),
+    ("inconnu.autre.org", "www", "client", "preprod", None),
+    ("198.51.100.7", "clienttenant", "client", "preprod", "clienttenant"),
+]
+
+
+@section("faro-hosts")
+def faro_hosts(c):
+    """12.3.2: env/tenant/service deduced from the page host (spec 6.4), validated client values otherwise."""
+    for index, (host, client_tenant, service, env, tenant) in enumerate(HOST_CASES):
+        token = f"host-{index}-{c.run}"
+        payload = g.faro_payload(c.faro_app(), f"https://{host}/path?q=1", logs=[g.faro_log(token)], session_attributes={"tenant": client_tenant})
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+        labels, line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{token}"')[0]
+        expected_service = f"web-{c.run}" if service == "client" else service
+        expect(labels.get("service_name") == expected_service, f"{host}: service_name {labels.get('service_name')} != {expected_service}")
+        expect(labels.get("env") == env, f"{host}: env {labels.get('env')} != {env}")
+        expect(meta.get("tenant") == tenant, f"{host} ({client_tenant}): tenant {meta.get('tenant')} != {tenant}")
+        if host[0].isdigit():
+            expect(host not in line and c.ip_hash(host) in line, f"page_url IP not hashed: {line}")
+
+
+@section("faro-names")
+def faro_names(c):
+    """12.3.1 + 12.3.9 (logs): Faro logs use the Loki names of the OTLP path; app.* mapping."""
+    trace_id = g.new_trace_id()
+    token = f"names-{c.run}"
+    payload = g.faro_payload(c.faro_app(environment="prod"), "https://inconnu.autre.org/", logs=[g.faro_log(token, "warn", trace_id)])
+    g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    labels, _line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{token}"')[0]
+    expect(set(labels) == INDEXED, f"Faro indexed labels {sorted(labels)}")
+    expect(labels == {"project": c.faro_project, "env": "prod", "service_name": f"web-{c.run}"}, f"Faro labels {labels}")
+    expect(meta.get("trace_id") == trace_id, f"trace_id not normalised from traceID: {meta}")
+    expect(meta.get("detected_level") == "warn", f"detected_level: {meta}")
+
+
+@section("faro-reject")
+def faro_reject(c):
+    """12.3.5 (Faro path): lines with a missing, malformed or unknown project, a missing or unexpected env, or
+    a malformed service name are dropped, each with its reason."""
+    alloy = c.s["GC_ALLOY_METRICS_URL"]
+    metric = "loki_process_dropped_lines_total"
+    app = {"name": f"web-{c.run}", "namespace": c.faro_project, "environment": "prod"}
+    cases = {
+        "missing_project": {k: v for k, v in app.items() if k != "namespace"},
+        "invalid_project": dict(app, namespace="Bad_Project"),
+        "missing_env": {k: v for k, v in app.items() if k != "environment"},
+        "invalid_env": dict(app, environment="staging"),
+        "invalid_service": dict(app, name="bad name!"),
+    }
+    if c.s.get("PROJECTS"):
+        cases["unknown_project"] = dict(app, namespace=f"unlisted-{c.run}")
+    before = {reason: g.metric_value(g.scrape(alloy), metric, {"reason": reason}) for reason in cases}
+    for reason, case_app in cases.items():
+        payload = g.faro_payload(case_app, "https://inconnu.autre.org/", logs=[g.faro_log(f"{reason}-{c.run}")])
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+
+    def counted():
+        text = g.scrape(alloy)
+        return all(g.metric_value(text, metric, {"reason": reason}) > before[reason] for reason in cases)
+
+    g.wait_for(counted, f"{metric} increments for {sorted(cases)}", timeout=30)
+    time.sleep(3)
+    for reason in cases:
+        expect(not c.logs(f'{{service_name=~".+"}} |= "{reason}-{c.run}"'), f"Faro line with {reason} stored")
+
+
+@section("ip-parity")
+def ip_parity(c):
+    """12.3.4: an IP gets the same digest in Faro and OTLP logs, in every Faro value but the technical keys."""
+    ip = "192.0.2.77"
+    token = f"parity-{c.run}"
+    secrets = "Authorization: Basic dXNlcjpwYXNz access_token=at7Kx2q Bearer fb3Qw8r mail bob@example.com"
+    log = g.faro_log(f"{token} from {ip} card 4111 1111 1111 1111 {secrets}", context={"ip": ip, "db_password": "hunter2x"})
+    event = g.faro_event(f"{token}-event", {"x": ip})
+    browser = {"name": "chrome", "version": "128.0.0.0"}
+    faro = g.faro_payload(c.faro_app(environment="prod"), f"https://{ip}/login", logs=[log], events=[event], browser=browser)
+    g.send_faro(c.s["GC_FARO_URL"], faro, c.s["FARO_API_KEY"])
+    g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(c.resource("parity"), f"{token} from {ip}"))
+    lines = [line for _l, line, _m in c.wait_logs(f'{{project=~"{c.project}|{c.faro_project}"}} |= "{token}"', count=3)]
+    digest = c.ip_hash(ip)
+    for line in lines:
+        expect(ip not in line and digest in line, f"IP not hashed as sha256(salt+ip): {line}")
+    faro_log = next(line for line in lines if "kind=log" in line)
+    expect("[card]" in faro_log and "4111" not in faro_log, f"card not masked in Faro message: {faro_log}")
+    expect(f"context_ip={digest}" in faro_log, f"context_ip not hashed: {faro_log}")
+    # Same free-text secret rules as the OTLP path; a secret-named key is dropped, not redacted.
+    for secret in ("dXNlcjpwYXNz", "at7Kx2q", "fb3Qw8r", "bob@example.com", "hunter2x", "context_db_password"):
+        expect(secret not in faro_log, f"{secret!r} survived in the Faro line: {faro_log}")
+    for marker in ("Authorization: [redacted]", "access_token=[redacted]", "Bearer [redacted]", "[email]"):
+        expect(marker in faro_log, f"{marker!r} missing from the Faro line: {faro_log}")
+    expect(f"page_url=https://{digest}/login" in faro_log, f"page_url not hashed: {faro_log}")
+    expect("browser_version=128.0.0.0" in faro_log, f"review focus 1: browser version hashed: {faro_log}")
+    faro_event = next(line for line in lines if "kind=event" in line)
+    expect(f"event_data_x={digest}" in faro_event, f"event_data_x not hashed: {faro_event}")
+
+
 # --- end of sections ---
 
 

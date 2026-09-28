@@ -18,7 +18,7 @@ services:
       - -c
       - "echo '45d62586d0ebc8789747f6d3c73acdb89fec9de5e7eaa7505048f0ed980415fa  /opt/config-guard/guard.45d62586.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.45d62586.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.5dc00425.alloy=5dc004254dfb7a256a3bfcacc743e541ec2b160faa0c3709760b97c65f5601e0;/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.147fea01.alloy=147fea01dc3184ede6b562f66d84cab09145aee2b7e31901c0d3e6481c2e4dec;/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -450,7 +450,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.5dc00425.alloy
+      - /etc/alloy/config.147fea01.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -469,8 +469,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.5dc00425.alloy
-        target: /etc/alloy/config.5dc00425.alloy
+        source: ./config/alloy/config.147fea01.alloy
+        target: /etc/alloy/config.147fea01.alloy
         content: |2
           // grafana-coolify - main Alloy pipeline (spec 7.1).
           // In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
@@ -765,6 +765,231 @@ services:
 
             retry_on_failure {
               max_elapsed_time = "1h"
+            }
+          }
+
+          // ------------------------------------------------------------------ Faro path
+          faro.receiver "default" {
+            server {
+              listen_address = sys.env("BIND_ADDR")
+              listen_port    = 12347
+              // Mandatory: config-guard refuses a key shorter than 16 characters (an empty api_key would
+              // disable the check of faro.receiver).
+              api_key = sys.env("FARO_API_KEY")
+              // CORS is answered by Traefik (gc-faro-cors@file): a second header would break browsers.
+              cors_allowed_origins     = []
+              max_allowed_payload_size = coalesce(sys.env("FARO_MAX_PAYLOAD"), "5MiB")
+
+              rate_limiting {
+                enabled    = true
+                rate       = coalesce(sys.env("FARO_RATE"), "100")
+                burst_size = coalesce(sys.env("FARO_BURST"), "200")
+              }
+            }
+
+            output {
+              logs   = [loki.process.faro.receiver]
+              traces = [otelcol.processor.memory_limiter.default.input]
+            }
+          }
+
+          // Faro logs (logfmt lines): deduce env/tenant from the page host (normative algorithm,
+          // spec 6.4), map app_* to the contract, emit exactly the Loki names of the OTLP path,
+          // validate project/env/service (drop with a reason) and the client tenant, then mask.
+          loki.process "faro" {
+            forward_to = [loki.write.loki.receiver]
+
+            stage.logfmt {
+              mapping = {
+                "gc_page_url"        = "page_url",
+                "gc_app_name"        = "app_name",
+                "gc_app_namespace"   = "app_namespace",
+                "gc_app_environment" = "app_environment",
+                "gc_client_tenant"   = "session_attr_tenant",
+                "gc_level"           = "level",
+                "trace_id"           = "traceID",
+              }
+            }
+
+            // host := lowercase host of page_url
+            stage.regex {
+              source     = "gc_page_url"
+              expression = `^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]*@)?(?P<gc_host>[^:/?#]+)`
+            }
+
+            stage.template {
+              source   = "gc_host"
+              template = "{{ ToLower .Value }}"
+            }
+
+            // Rules come from the environment. A leading comma keeps the template non-empty.
+            stage.template {
+              source   = "gc_host_map"
+              template = "," + sys.env("HOST_MAP")
+            }
+
+            stage.template {
+              source   = "gc_reserved"
+              template = "," + sys.env("RESERVED_SUBDOMAINS")
+            }
+
+            stage.template {
+              source   = "gc_projects"
+              template = "," + sys.env("PROJECTS")
+            }
+
+            // HOST_MAP lookup (exact match, has priority): "service:env" or empty.
+            stage.template {
+              source   = "gc_hm_hit"
+              template = `{{ $h := .gc_host }}{{ $r := "" }}{{ if $h }}{{ range $e := splitList "," .gc_host_map }}{{ $kv := splitList "=" $e }}{{ if and (eq (len $kv) 2) (eq (index $kv 0) $h) }}{{ $r = index $kv 1 }}{{ end }}{{ end }}{{ end }}{{ $r }}`
+            }
+
+            stage.regex {
+              source     = "gc_hm_hit"
+              expression = `^(?P<gc_hm_service>[^:]+):(?P<gc_hm_env>.+)$`
+            }
+
+            // TENANT_HOST_REGEX (named groups sub and dev). Empty variable: a class that never matches.
+            stage.regex {
+              source     = "gc_host"
+              expression = "(?P<gc_host_match>" + coalesce(sys.env("TENANT_HOST_REGEX"), "[^\\s\\S]") + ")"
+            }
+
+            stage.template {
+              source   = "env"
+              template = `{{ if .gc_hm_env }}{{ .gc_hm_env }}{{ else if .gc_host_match }}{{ if .dev }}preprod{{ else }}prod{{ end }}{{ else }}{{ with .gc_app_environment }}{{ . }}{{ end }}{{ end }}`
+            }
+
+            // A tenant sent by the client (unknown host) is validated like on Faro traces (spec 6.5):
+            // [a-z0-9-]+ and not a reserved subdomain, otherwise it is removed.
+            stage.template {
+              source   = "tenant"
+              template = `{{ if .gc_hm_env }}{{ else if .gc_host_match }}{{ if not (has .sub (splitList "," .gc_reserved)) }}{{ .sub }}{{ end }}{{ else }}{{ with .gc_client_tenant }}{{ if and (regexMatch "^[a-z0-9-]+$" .) (not (has . (splitList "," $.gc_reserved))) }}{{ . }}{{ end }}{{ end }}{{ end }}`
+            }
+
+            stage.template {
+              source   = "service_name"
+              template = `{{ if .gc_hm_service }}{{ .gc_hm_service }}{{ else }}{{ with .gc_app_name }}{{ . }}{{ end }}{{ end }}`
+            }
+
+            stage.template {
+              source   = "project"
+              template = "{{ with .gc_app_namespace }}{{ . }}{{ end }}"
+            }
+
+            stage.template {
+              source   = "detected_level"
+              template = "{{ with .gc_level }}{{ . }}{{ end }}"
+            }
+
+            stage.labels {
+              values = {
+                project      = "",
+                env          = "",
+                service_name = "",
+              }
+            }
+
+            stage.structured_metadata {
+              values = {
+                tenant         = "",
+                trace_id       = "",
+                detected_level = "",
+              }
+            }
+
+            // Why the line must be dropped, empty when it is valid: project missing, malformed or absent
+            // from PROJECTS (when PROJECTS is set), env missing or neither prod nor preprod, service name
+            // malformed. Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
+            stage.template {
+              source   = "gc_reject"
+              template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9-]{1,64}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ end }}`
+            }
+
+            stage.drop {
+              source              = "gc_reject"
+              value               = "missing_project"
+              drop_counter_reason = "missing_project"
+            }
+
+            stage.drop {
+              source              = "gc_reject"
+              value               = "invalid_project"
+              drop_counter_reason = "invalid_project"
+            }
+
+            stage.drop {
+              source              = "gc_reject"
+              value               = "unknown_project"
+              drop_counter_reason = "unknown_project"
+            }
+
+            stage.drop {
+              source              = "gc_reject"
+              value               = "missing_env"
+              drop_counter_reason = "missing_env"
+            }
+
+            stage.drop {
+              source              = "gc_reject"
+              value               = "invalid_env"
+              drop_counter_reason = "invalid_env"
+            }
+
+            stage.drop {
+              source              = "gc_reject"
+              value               = "invalid_service"
+              drop_counter_reason = "invalid_service"
+            }
+
+            // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair is consumed in
+            // turn (a quoted value whole, so text inside a message is never read as a key): a pair whose
+            // key matches authorization|cookie|password|token|secret is dropped with its leading space,
+            // whatever its value (context_*, session_attr_*, event_data_* are client-controlled).
+            stage.replace {
+              expression = `((?:^|\s)[A-Za-z0-9_.-]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+              replace    = `{{ if not (regexMatch "(?i)^\\s*[A-Za-z0-9_.-]*(?:authorization|cookie|password|token|secret)[A-Za-z0-9_.-]*=" .Value) }}{{ .Value }}{{ end }}`
+            }
+
+            // Then, on the whole line: Bearer tokens, secrets in free text (key=value, key: value,
+            // "key":"value", logfmt-escaped \"key\":\"value\", with an optional Basic/Digest/Token/ApiKey
+            // scheme, any key containing one of the words: access_token, client_secret...), emails.
+            stage.replace {
+              expression = `(?i)\bbearer\s+([A-Za-z0-9._~+/=-]+)`
+              replace    = "[redacted]"
+            }
+
+            stage.replace {
+              expression = `(?i)\b[\w-]*(?:authorization|cookie|password|token|secret)[\w-]*\\?"?\s*[:=]\s*\\?"?((?:(?:basic|digest|token|apikey)\s+)?[^\s"\\&,;]+)`
+              replace    = "[redacted]"
+            }
+
+            stage.replace {
+              expression = `([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})`
+              replace    = "[email]"
+            }
+
+            // Card numbers in free text only: message, value, stacktrace (spec 8.1), before IP hashing
+            // so a digest is never rewritten.
+            stage.replace {
+              expression = `(?:^|\s)(?:message|value|stacktrace)=("(?:[^"\\]|\\.)*"|\S*)`
+              replace    = `{{ regexReplaceAll "\\b(?:\\d[ -]?){12,18}\\d\\b" .Value "[card]" }}`
+            }
+
+            // Every IPv4/IPv6 of every key=value pair hashed as sha256(salt + ip) - Sha2Hash(salt, input),
+            // salt first, same digest as the OTTL SHA256 - except in technical keys whose dotted numbers
+            // are not addresses: browser_*, sdk_*, app_version, *_id, *_ms, *timestamp*, *version*,
+            // user_agent* (browser_version=128.0.0.0 stays intact).
+            stage.replace {
+              expression = `(?:^|\s)([A-Za-z0-9_.-]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+              replace    = `{{ $kv := .Value }}{{ $k := regexReplaceAll "=[\\s\\S]*$" $kv "" }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
+            }
+          }
+
+          // No WAL for Faro logs: loki.write's WAL is experimental; a limited loss is accepted (spec 9.2).
+          loki.write "loki" {
+            endpoint {
+              url = "http://loki:3100/loki/api/v1/push"
             }
           }
         read_only: true
