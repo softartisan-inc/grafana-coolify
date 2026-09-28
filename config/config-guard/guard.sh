@@ -8,13 +8,19 @@ set -u
 set -f
 
 failed=0
+# A literal newline: grep matches line by line, so a multi-line value must be rejected first.
+NL=$(printf '\n.')
+NL=${NL%.}
 
 error() {
   printf 'config-guard: ERROR: %s\n' "$*" >&2
   failed=1
 }
 
-matches() { # value extended_regex
+matches() { # value extended_regex; the whole value must be one matching line
+  case $1 in
+    *"$NL"*) return 1 ;;
+  esac
   printf '%s\n' "$1" | grep -Eq "$2"
 }
 
@@ -78,6 +84,7 @@ fi
 tenant_regex=${TENANT_HOST_REGEX:-}
 if [ -n "$tenant_regex" ]; then
   case $tenant_regex in
+    *"$NL"*) error "TENANT_HOST_REGEX must be a single line" ;;
     *'(?P<sub>'*) ;;
     *) error "TENANT_HOST_REGEX must define the named group (?P<sub>...)" ;;
   esac

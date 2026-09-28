@@ -83,40 +83,42 @@ class GuardCases:
         self.assert_fails(self.guard(expected=f"{self.file}"), "malformed")
 
     def test_salt_rules(self):
-        for salt in ["", "short", 'with"quote0123456789', "with space 0123456789", "with$dollar0123456789"]:
+        for salt in ["", "short", 'with"quote0123456789', "with space 0123456789", "with$dollar0123456789", "validSalt0123456789\nx"]:
             with self.subTest(salt=salt):
                 self.assert_fails(self.guard(IP_HASH_SALT=salt), "IP_HASH_SALT")
 
     def test_faro_api_key_rules(self):
         """alloy always runs faro.receiver: an empty or short key must stop the deployment."""
         self.assertEqual(self.guard(FARO_API_KEY="0123456789abcdef0123456789abcdef0123456789abcdef").returncode, 0)
-        for key in ["", "short-key-01234", "with space 0123456789", 'with"quote0123456789']:
+        for key in ["", "short-key-01234", "with space 0123456789", 'with"quote0123456789', "valid-faro-key-0123456789\nx"]:
             with self.subTest(key=key):
                 self.assert_fails(self.guard(FARO_API_KEY=key), "FARO_API_KEY")
 
     def test_projects_rules(self):
         self.assertEqual(self.guard(PROJECTS="").returncode, 0)
         self.assertEqual(self.guard(PROJECTS="in-immo").returncode, 0)
-        for value in ["demo, other", "Demo", "demo,", "a_b"]:
+        for value in ["demo, other", "Demo", "demo,", "a_b", "demo\nDemo Bad"]:
             with self.subTest(value=value):
                 self.assert_fails(self.guard(PROJECTS=value), "PROJECTS")
 
     def test_host_map_rules(self):
         self.assertEqual(self.guard(HOST_MAP="").returncode, 0)
         self.assertEqual(self.guard(HOST_MAP="a.me=web:prod,b.me=api:preprod").returncode, 0)
-        for value in ["example.me", "Example.me=web:prod", "a.me=web", "a.me=web:prod,", "a.me=web:staging"]:
+        for value in ["example.me", "Example.me=web:prod", "a.me=web", "a.me=web:prod,", "a.me=web:staging", "a.me=web:prod\nx"]:
             with self.subTest(value=value):
                 self.assert_fails(self.guard(HOST_MAP=value), "HOST_MAP")
 
     def test_reserved_subdomains_rules(self):
         self.assertEqual(self.guard(RESERVED_SUBDOMAINS="").returncode, 0)
-        for value in ["www,", "WWW", "www api", "www|api"]:
+        for value in ["www,", "WWW", "www api", "www|api", "www\nx y"]:
             with self.subTest(value=value):
                 self.assert_fails(self.guard(RESERVED_SUBDOMAINS=value), "RESERVED_SUBDOMAINS")
 
     def test_tenant_regex_needs_sub_group(self):
         self.assertEqual(self.guard(TENANT_HOST_REGEX="").returncode, 0)
         self.assert_fails(self.guard(TENANT_HOST_REGEX=r"^([a-z]+)\.example\.me$"), "TENANT_HOST_REGEX")
+        multiline = VALID_ENV["TENANT_HOST_REGEX"] + "\nx"
+        self.assert_fails(self.guard(TENANT_HOST_REGEX=multiline), "TENANT_HOST_REGEX")
 
 
 class DashGuardTest(GuardCases, unittest.TestCase):
