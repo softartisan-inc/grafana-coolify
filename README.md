@@ -239,14 +239,17 @@ réessai d'une heure.
 
 Le rattrapage tient souvent dans **un seul flux** (le service qui a écrit pendant la panne), or
 Loki limite aussi chaque flux (`project`, `env`, `service_name`), à 3 Mo/s (rafale 15 Mo) par
-défaut : une file pleine (1000 lots de 2048 enregistrements, ~8 Gio à ~4 Kio par enregistrement)
-mettrait ~45 min à passer, trop près de la fenêtre d'une heure. `config/loki/loki.yaml` fixe donc
+défaut. Hypothèse de taille : **1 à 4 Kio par enregistrement de log**, soit des lots de 2 à 8 Mio
+(2048 enregistrements) et une file pleine de 2 à 8 Gio. À 3 Mo/s, 8 Gio mettraient ~45 min à
+passer, trop près de la fenêtre d'une heure. `config/loki/loki.yaml` fixe donc
 `per_stream_rate_limit: 8MB` et `per_stream_rate_limit_burst: 24MB` : la **moitié** du débit du
 tenant, soit ~4 min pour 2 Gio et ~17 min pour 8 Gio sur un seul flux, sans qu'un flux (rattrapage,
-flux Faro bruyant) puisse prendre tout le budget des autres ; la rafale couvre les 10 envois
-concurrents d'~2 Mio de la file et reste sous celle du tenant (32 Mo). Au-delà d'~8 Gio de logs en
-attente sur un seul flux, des lots peuvent encore être abandonnés : raccourcir la panne ou relever
-ces deux plafonds ensemble.
+flux Faro bruyant) puisse prendre tout le budget des autres. La rafale contient au moins trois des
+plus gros lots (8 Mio à 4 Kio par enregistrement ; un envoi plus gros que la rafale ne passerait
+jamais), les 10 envois concurrents à 1 Kio par enregistrement (~20 Mio), et reste sous celle du
+tenant (32 Mo). Au-delà de ces hypothèses (enregistrements plus gros, plus de 8 Gio en attente sur
+un seul flux), des lots peuvent encore être abandonnés : raccourcir la panne ou relever ces
+plafonds ensemble.
 
 ## Envoyer des données
 
@@ -301,12 +304,14 @@ Noms à utiliser dans les requêtes Grafana :
 
 `alloy` applique, avant tout stockage :
 
-- **Cartes et tableaux aplatis d'abord** : sur le chemin OTLP, chaque carte d'attributs
-  (ressource, portée d'instrumentation `scope.attributes`, span, événement, log, point de
-  métrique) et chaque corps de log structuré passe par la fonction OTTL stable `flatten` avant les
-  règles ci-dessous : les cartes imbriquées et les tableaux deviennent des clés pointées
+- **Cartes et tableaux aplatis pour le masquage** : sur le chemin OTLP, les règles ci-dessous
+  s'appliquent à une **copie aplatie** (fonction OTTL stable `flatten`) de chaque carte
+  d'attributs (ressource, portée d'instrumentation `scope.attributes`, span, événement, log, point
+  de métrique) : les cartes imbriquées et les tableaux y deviennent des clés pointées
   (`{"user": {"email": …}}` → `user.email`, `"tags": ["a", "b"]` → `tags.0`, `tags.1`), que les
-  règles atteignent à tous les niveaux. Les valeurs numériques gardent leur type. Un corps de log
+  règles atteignent à tous les niveaux. La copie ne remplace l'original **que si une règle l'a
+  modifiée** : un enregistrement sans rien de sensible garde sa forme d'origine. Le corps de log
+  structuré, lui, est toujours aplati. Les valeurs numériques gardent leur type. Un corps de log
   en tableau devient son texte JSON, puis suit les règles du texte libre.
 - **Clés sensibles supprimées** : sur le chemin OTLP, tout attribut (ressource, portée, span,
   événement, log, point de métrique) dont la clé est sensible est **supprimé**, quelle que soit
@@ -322,7 +327,7 @@ Noms à utiliser dans les requêtes Grafana :
   `"refresh_token":"…"` (même règle de clé sensible).
 - **Emails** remplacés par `[email]`.
 - **Numéros de carte** remplacés par `[card]`, **seulement** dans le texte libre (corps,
-  `message`, `exception.*`) : tout nombre de 13 à 19 chiffres y est pris pour une carte, un
+  `message`, `exception.*`, `error.message`) : tout nombre de 13 à 19 chiffres y est pris pour une carte, un
   horodatage en millisecondes dans un message compris.
 - **Adresses IP** remplacées par `sha256(IP_HASH_SALT + ip)`, identique sur les chemins OTLP et
   Faro.
@@ -334,18 +339,33 @@ descend dans les cartes et les tableaux ; le masquage se fait donc élément par
 par suppression de l'attribut entier.
 
 > **Risque résiduel connu** (masquage) :
-> - **Forme des données** : un attribut tableau ou carte change de forme dans Tempo, Loki et
->   Prometheus (`http.request.header.accept` → `http.request.header.accept.0` ; en TraceQL,
->   `span.http.request.header.accept.0`). Dans Loki, rien ne change pour `| json` (les clés
->   imbriquées y étaient déjà jointes par `_`), sauf les tableaux, désormais indexés (`tags_0`).
+> - **Forme des données, seulement sur les enregistrements masqués** : quand une règle modifie une
+>   carte d'attributs, toute la carte est réécrite aplatie ; un attribut tableau ou carte y change
+>   alors de forme dans Tempo, Loki et Prometheus. Exemple TraceQL : un span propre garde
+>   `{ span.http.request.header.accept = "text/html" }` (tableau inchangé), mais si un autre
+>   attribut du même span contient un email, l'en-tête devient
+>   `{ span.http.request.header.accept.0 = "text/html" }`. Idem pour `process.command_args`
+>   (ressource posée par les SDK) : intact tant que la ressource ne contient rien de sensible,
+>   sinon `process.command_args.0`, `.1`… dans Tempo et dans `target_info` de Prometheus
+>   (`process_command_args_0`…). Une requête qui doit tout voir interroge les deux formes.
+> - **Corps de log structurés** : toujours aplatis (`{"user": {"email": …}}` est stocké
+>   `{"user.email": "[email]"}`). Dans Loki, `| json` sans argument donne le même nom qu'avant
+>   (`user_email`) ; les tableaux sont désormais indexés (`tags_0`). Mais une expression de chemin
+>   ne trouve plus la valeur : `| json role="user.role"` lit `user` puis `role`, absents, et
+>   renvoie une chaîne vide ; désigner la clé littérale entre crochets,
+>   ``| json role=`["user.role"]` `` (ou `| json role="[\"user.role\"]"`), vérifié sur le banc.
 > - **Collision** : une clé pointée littérale égale à un chemin imbriqué (`"a.b"` et
 >   `{"a": {"b": …}}` dans la même carte) ne garde qu'une des deux valeurs, masquée dans les deux cas.
-> - **Cartes** : le motif de carte bancaire ne s'applique qu'aux clés de texte libre de premier
->   niveau (`message`, `exception.*`) ; `error.message` imbriqué n'est pas examiné pour `[card]`
->   (les emails, secrets et IP, eux, le sont).
+> - **Cartes bancaires** : le motif ne s'applique qu'aux clés de texte libre (`message`,
+>   `exception.message`, `exception.stacktrace`, `error.message`), à ce nom pointé exact ;
+>   `details.reason` imbriqué n'est pas examiné pour `[card]` (les emails, secrets et IP, eux, le
+>   sont).
 > - **Exemptions d'IP** : une clé imbriquée hérite du nom de son parent ; tout ce qui se trouve
 >   sous une clé contenant `version` ou `user_agent` n'est pas haché.
-> - **Coût** : chaque carte d'attributs est recopiée par `flatten`, sur chaque span, log et point.
+> - **Coût** : chaque carte d'attributs est copiée, aplatie, masquée puis comparée, sur chaque
+>   span, log et point. Mesuré sur le banc (60 000 logs et spans, 1 sur 10 avec une donnée
+>   sensible) : ~11,5 s de CPU pour `alloy` avant ce masquage, ~17 s après (+45 %), soit
+>   ~0,1 ms de CPU de plus par élément ; prévoir environ 0,1 cœur de plus par 1000 éléments/s.
 > - **Octets** : les valeurs binaires (`bytesValue`) ne sont pas examinées.
 
 Logs Faro : mêmes règles. Ce sont des lignes logfmt plates (le récepteur Faro aplatit déjà
