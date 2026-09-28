@@ -10,6 +10,13 @@ Remote mode (--remote): against a Coolify deployment; set
   GC_GATEWAY_USER, GC_GATEWAY_PASSWORD, GC_REVOKED_USER, GC_REVOKED_PASSWORD, GC_ORIGIN_OK,
   FARO_API_KEY, and for item 8 GC_ALLOY_CONTAINER, GC_GATEWAY_CONTAINER,
   GC_NODE_EXPORTER_CONTAINER (run on the server).
+  Every negative check has a positive control tying its inputs to the real deployment:
+  - item 1: the public entry point (port of GC_FARO_PUBLIC_URL, 443 for https) must answer on
+    GC_PUBLIC_IP before the internal ports are asserted closed;
+  - item 7: GC_OTHER_PUBLIC_URL must be a routed service answering 2xx on /api/health;
+  - item 2: GC_REVOKED_USER must be an htpasswd line that worked, then was removed from the
+    dynamic configuration; confirm it with GC_REVOKED_WAS_VALID=1 (a user that never existed
+    also gets 401 and would prove nothing).
 
 Usage: python3 scripts/security.py [--remote] [--only 1,2,...]
 """
@@ -31,6 +38,17 @@ import gclib as g
 
 ROOT = Path(__file__).resolve().parent.parent
 INTERNAL_PORTS = [3100, 3200, 9090, 9100, 4317, 4318, 9095, 9096, 12345, 12347]
+REMOTE_ENV = (
+    "GC_PUBLIC_IP",
+    "GC_FARO_PUBLIC_URL",
+    "GC_GATEWAY_PUBLIC_URL",
+    "GC_OTHER_PUBLIC_URL",
+    "GC_GATEWAY_USER",
+    "GC_GATEWAY_PASSWORD",
+    "GC_REVOKED_USER",
+    "GC_REVOKED_PASSWORD",
+    "GC_ORIGIN_OK",
+)
 INTERNAL_NAMES = ["loki", "tempo", "prometheus", "node-exporter"]
 EVIL_ORIGINS = ["https://evil-example.me", "https://x.example.me.attacker.com"]
 HARDENED = ("alloy", "alloy-gateway")
@@ -46,6 +64,9 @@ class Target:
         self.faro_key = s["FARO_API_KEY"]
         if remote:
             env = os.environ
+            missing = [name for name in REMOTE_ENV if not env.get(name)]
+            if missing:
+                raise SystemExit("security: set " + ", ".join(missing) + " for --remote (see the module docstring)")
             self.public_ip = env["GC_PUBLIC_IP"]
             self.faro = (env["GC_FARO_PUBLIC_URL"].rstrip("/"), None)
             self.gateway = (env["GC_GATEWAY_PUBLIC_URL"].rstrip("/"), None)
@@ -53,6 +74,7 @@ class Target:
             self.user = (env["GC_GATEWAY_USER"], env["GC_GATEWAY_PASSWORD"])
             self.revoked = (env["GC_REVOKED_USER"], env["GC_REVOKED_PASSWORD"])
             self.origin_ok = env["GC_ORIGIN_OK"]
+            self.revoked_was_valid = env.get("GC_REVOKED_WAS_VALID") == "1"
         else:
             edge = s["edge"]
             if not edge:
@@ -86,6 +108,14 @@ def preflight_headers(origin):
 
 def item1_unreachable(t):
     """1. Internal services and ports unreachable from outside."""
+    if t.remote:
+        # Positive control: a wrong or unroutable GC_PUBLIC_IP would report every port closed.
+        parts = urllib.parse.urlsplit(t.faro[0])
+        entry = parts.port or (443 if parts.scheme == "https" else 80)
+        with socket.socket() as sock:
+            sock.settimeout(5)
+            answers = sock.connect_ex((t.public_ip, entry)) == 0
+        expect(answers, f"the public entry point {t.public_ip}:{entry} does not answer: check GC_PUBLIC_IP")
     for port in INTERNAL_PORTS:
         with socket.socket() as sock:
             sock.settimeout(2)
@@ -106,11 +136,13 @@ def item2_gateway_auth(t):
     expect(t.gateway_post(auth=(t.user[0], "wrong-password")).status == 401, "gateway with a wrong password is not 401")
     expect(t.gateway_post(auth=t.user).status // 100 == 2, "gateway rejects valid credentials")
     if t.remote:
+        # A user that never existed also gets 401: only a line removed after it worked proves revocation.
+        expect(t.revoked_was_valid, "set GC_REVOKED_WAS_VALID=1 once GC_REVOKED_USER worked and its line was removed")
         expect(t.gateway_post(auth=t.revoked).status == 401, "revoked credentials still accepted")
         return
     expect(t.gateway_post(auth=t.revoked).status // 100 == 2, "revocable user should work before revocation")
-    subprocess.run([sys.executable, str(ROOT / "harness" / "edge.py"), "revoke", t.revoked[0]], check=True)
     try:
+        subprocess.run([sys.executable, str(ROOT / "harness" / "edge.py"), "revoke", t.revoked[0]], check=True)
         expect(t.gateway_post(auth=t.revoked).status == 401, "revoked credentials still accepted")
         expect(t.gateway_post(auth=t.user).status // 100 == 2, "revocation broke the other project")
     finally:
@@ -130,7 +162,9 @@ def item3_cors(t):
     for origin in EVIL_ORIGINS:
         evil = t.faro_request("OPTIONS", headers=preflight_headers(origin))
         expect(not evil.header_values("Access-Control-Allow-Origin"), f"CORS header returned for {origin}")
-    post = t.faro_request("POST", {"meta": {}}, headers={"Origin": t.origin_ok, "x-api-key": t.faro_key})
+    payload = g.faro_payload({"name": "gc-security", "environment": "production"}, t.origin_ok + "/")
+    post = t.faro_request("POST", payload, headers={"Origin": t.origin_ok, "x-api-key": t.faro_key})
+    expect(post.status // 100 == 2, f"valid Faro POST: HTTP {post.status}")
     expect(len(post.header_values("Access-Control-Allow-Origin")) == 1, f"ACAO count {post.header_values('Access-Control-Allow-Origin')}")
     expect("Origin" in ",".join(post.header_values("Vary")), f"Vary {post.header_values('Vary')}")
 
@@ -160,17 +194,25 @@ def item5_rate_limit(t):
     time.sleep(5)
 
 
-def read_status(sock):
+def read_head(sock):
+    """Status and lower-cased headers of the next response head on a raw socket."""
     data = b""
     while b"\r\n\r\n" not in data:
         chunk = sock.recv(4096)
         if not chunk:
             break
         data += chunk
-    return int(data.split(b" ", 2)[1]) if data.startswith(b"HTTP/") else 0
+    if not data.startswith(b"HTTP/"):
+        return 0, {}
+    lines = data.split(b"\r\n\r\n", 1)[0].decode("latin-1").split("\r\n")
+    headers = {}
+    for line in lines[1:]:
+        name, _sep, value = line.partition(":")
+        headers.setdefault(name.strip().lower(), []).append(value.strip())
+    return int(lines[0].split(" ", 2)[1]), headers
 
 
-def oversized_post(t, size):
+def oversized_post(t, size, origin):
     """POST with `Expect: 100-continue`, like curl: Traefik answers 413 before the body is sent."""
     url, host = t.faro
     parts = urllib.parse.urlsplit(url)
@@ -180,23 +222,25 @@ def oversized_post(t, size):
     with sock:
         head = (
             f"POST /collect HTTP/1.1\r\nHost: {host or parts.netloc}\r\nContent-Type: application/json\r\n"
-            f"x-api-key: {t.faro_key}\r\nContent-Length: {size}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"
+            f"Origin: {origin}\r\nx-api-key: {t.faro_key}\r\nContent-Length: {size}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"
         )
         sock.sendall(head.encode())
-        status = read_status(sock)
+        status, headers = read_head(sock)
         if status == 100:
             try:
                 sock.sendall(b" " * size)
             except OSError:
                 pass
-            status = read_status(sock)
-        return status
+            status, headers = read_head(sock)
+        return status, headers
 
 
 def item6_body_size(t):
-    """6. A body beyond the maximum size: 413."""
-    status = oversized_post(t, 6 * 1024 * 1024)
+    """6. A body beyond the maximum size: 413, with the CORS headers a browser needs to read it."""
+    status, headers = oversized_post(t, 6 * 1024 * 1024, t.origin_ok)
     expect(status == 413, f"6 MiB body: HTTP {status}")
+    acao = headers.get("access-control-allow-origin", [])
+    expect(acao == [t.origin_ok], f"413 without Access-Control-Allow-Origin: {acao}")
 
 
 def item7_middleware_leak(t):
@@ -207,6 +251,8 @@ def item7_middleware_leak(t):
     expect(not gateway.header_values("Access-Control-Allow-Origin"), "alloy-gateway returns a CORS header")
     url, host = t.other
     other = g.http("GET", url + "/api/health", headers={"Origin": t.origin_ok}, host=host)
+    # Positive control: an unrouted domain gets Traefik's 404, which would satisfy the checks below.
+    expect(other.status // 100 == 2, f"other domain is not a routed service answering 2xx (HTTP {other.status}): check GC_OTHER_PUBLIC_URL")
     expect(other.status != 401 and "Basic" not in other.headers.get("WWW-Authenticate", ""), f"other domain asks for auth (HTTP {other.status})")
     expect(not other.header_values("Access-Control-Allow-Origin"), "other domain returns the package CORS header")
     return None if t.remote else BENCH_NOTE
@@ -233,6 +279,10 @@ def docker_inspect(container):
 
 def config_is_writable(container, path):
     """Coolify drops `read_only: true` of the content mounts: the non-root user must not be able to write."""
+    # Positive control: without it, a container lacking `sh` would fail the write and pass vacuously.
+    readable = subprocess.run(["docker", "exec", container, "sh", "-c", 'test -r "$1"', "sh", path], capture_output=True, text=True, check=False)
+    if readable.returncode != 0:
+        raise RuntimeError(f"{container}: cannot test {path} with sh (exit {readable.returncode}): {readable.stderr.strip()}")
     result = subprocess.run(["docker", "exec", container, "sh", "-c", ': >> "$1"', "sh", path], capture_output=True, text=True, check=False)
     return result.returncode == 0
 
@@ -288,13 +338,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     target = Target(args.remote)
     names = args.only.split(",") if args.only else list(ITEMS)
+    unknown = [name for name in names if name not in ITEMS]
+    if unknown:
+        parser.error(f"unknown item(s) {', '.join(unknown)}; choose among {', '.join(ITEMS)}")
     failed = 0
     for name in names:
         func = ITEMS[name]
         try:
             note = func(target)
             print(f"security: [PASS] {func.__doc__.splitlines()[0]}" + (f" ({note})" if note else ""))
-        except (AssertionError, KeyError, OSError, subprocess.CalledProcessError) as exc:
+        except (AssertionError, KeyError, OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
             failed += 1
             print(f"security: [FAIL] {func.__doc__.splitlines()[0]} -> {exc}")
     print(f"security: {len(names) - failed}/{len(names)} items passed")
