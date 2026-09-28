@@ -1,0 +1,144 @@
+# grafana-coolify — compose template (source of docker-compose.yaml; run python3 scripts/render.py).
+# - Each content placeholder is replaced by the bytes of the volume's `source:` file (spec 4.1);
+#   render.py adds the content hash to its source and target paths and to the references to them.
+# - Image tags come from tools/versions.env; config-guard gets the SHA-256 of every config file.
+# - `${VAR}` references are interpolated by Compose/Coolify and must all be in .env.example.
+# - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
+#   long-syntax binds, and the non-root users of the services cannot write those files anyway.
+# - Internal services only `expose:` ports, never `ports:` (spec 3.2).
+# - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
+services:
+  config-guard:
+    image: @@ALPINE_IMAGE@@
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - "echo '@@GUARD_SHA256@@  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
+    environment:
+      CONFIG_GUARD_EXPECTED: "@@CONFIG_GUARD_EXPECTED@@"
+      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
+      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      PROJECTS: ${PROJECTS:-}
+      HOST_MAP: ${HOST_MAP:-}
+      RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
+      TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+    volumes:
+      - type: bind
+        source: ./config/config-guard/guard.sh
+        target: /opt/config-guard/guard.sh
+        content: "@@CONTENT@@"
+        read_only: true
+      # The host directory where Coolify writes the content of every service below:
+      # config-guard checks the very files the services mount (spec 4.4). Short syntax: Coolify
+      # rebuilds bind mounts as "source:target[:mode]" and keeps only a short-syntax mode.
+      - ./config:/guard:ro
+    mem_limit: 32m
+    cpus: 0.1
+
+  loki:
+    image: grafana/loki:@@LOKI_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/etc/loki/loki.yaml
+      - -config.expand-env=true
+    environment:
+      BIND_ADDR: 0.0.0.0
+      LOKI_DATA_DIR: /loki
+      LOKI_RETENTION_PROD: ${LOKI_RETENTION_PROD:-720h}
+      LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-168h}
+    volumes:
+      - type: bind
+        source: ./config/loki/loki.yaml
+        target: /etc/loki/loki.yaml
+        content: "@@CONTENT@@"
+        read_only: true
+      - loki-data:/loki
+    expose:
+      - "3100"
+    mem_limit: 1536m
+    cpus: 1.0
+
+  tempo:
+    image: grafana/tempo:@@TEMPO_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+      - -config.expand-env=true
+    environment:
+      BIND_ADDR: 0.0.0.0
+      TEMPO_DATA_DIR: /var/tempo
+      TEMPO_RETENTION: ${TEMPO_RETENTION:-168h}
+      TEMPO_MAX_ACTIVE_SERIES: ${TEMPO_MAX_ACTIVE_SERIES:-100000}
+      ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-false}
+    volumes:
+      - type: bind
+        source: ./config/tempo/tempo.yaml
+        target: /etc/tempo/tempo.yaml
+        content: "@@CONTENT@@"
+        read_only: true
+      - tempo-data:/var/tempo
+    expose:
+      - "3200"
+      - "4317"
+    mem_limit: 1536m
+    cpus: 1.0
+
+  prometheus:
+    image: prom/prometheus:v@@PROMETHEUS_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.listen-address=0.0.0.0:9090
+      - --web.enable-otlp-receiver
+      - --web.enable-remote-write-receiver
+      - --storage.tsdb.retention.time=${PROM_RETENTION_TIME:-90d}
+      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-100GB}
+      - --enable-feature=${PROM_ENABLE_FEATURES:-}
+    volumes:
+      - type: bind
+        source: ./config/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        content: "@@CONTENT@@"
+        read_only: true
+      - prometheus-data:/prometheus
+    expose:
+      - "9090"
+    mem_limit: 1536m
+    cpus: 1.0
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v@@NODE_EXPORTER_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --web.listen-address=0.0.0.0:9100
+    # Short syntax on purpose: Coolify drops `read_only: true` of a long-syntax bind mount.
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    expose:
+      - "9100"
+    mem_limit: 64m
+    cpus: 0.2
+
+volumes:
+  loki-data:
+  tempo-data:
+  prometheus-data:

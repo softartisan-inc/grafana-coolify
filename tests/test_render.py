@@ -176,5 +176,29 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(doc["services"]["app"]["command"][0], "--config=/etc/app/tricky.txt")
 
 
+class RepositoryRenderTest(unittest.TestCase):
+    """The committed docker-compose.yaml carries every config file byte for byte (spec 12.2)."""
+
+    def test_every_content_block_matches_its_source(self):
+        doc = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+        template = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
+        repository = {item.hashed_source: item.source for item in render.content_items(ROOT, template)}
+        seen = 0
+        for name, service in doc["services"].items():
+            for volume in service.get("volumes", []):
+                if isinstance(volume, dict) and "content" in volume:
+                    data = (ROOT / repository[volume["source"]]).read_bytes()
+                    short = hashlib.sha256(data).hexdigest()[:8]
+                    with self.subTest(service=name, source=volume["source"]):
+                        self.assertEqual(volume["content"].encode("utf-8"), data)
+                        self.assertIn(f".{short}.", volume["source"])
+                        self.assertIn(f".{short}.", volume["target"])
+                    seen += 1
+        self.assertGreaterEqual(seen, 1)
+
+    def test_header_marks_the_file_as_generated(self):
+        self.assertTrue((ROOT / "docker-compose.yaml").read_text(encoding="utf-8").startswith("# GENERATED — DO NOT EDIT"))
+
+
 if __name__ == "__main__":
     unittest.main()
