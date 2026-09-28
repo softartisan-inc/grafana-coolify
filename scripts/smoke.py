@@ -378,6 +378,54 @@ def faro_traces(c):
     expect("tenant" not in by_name["badformat"], f"malformed tenant kept: {by_name['badformat']}")
 
 
+@section("spanmetrics")
+def spanmetrics(c):
+    """12.3.6: span-metrics carry tenant whether it is a resource or a span attribute."""
+    cases = {"res": ({"tenant": "t-res"}, {}), "span": ({}, {"tenant": "t-span"})}
+    for name, (resource_extra, span_attrs) in cases.items():
+        trace_id = g.new_trace_id()
+        resource = c.resource(f"sm-{name}", **resource_extra)
+        attributes = {"http.route": "/{tenant}/assets/{id}", **span_attrs}
+        g.send_otlp(c.s["GC_OTLP_URL"], "traces", g.otlp_traces(resource, [g.span(trace_id, "GET /{tenant}/assets/{id}", attributes)]))
+    for name, tenant in (("res", "t-res"), ("span", "t-span")):
+        expr = f'traces_spanmetrics_calls_total{{service="sm-{name}-{c.run}", tenant="{tenant}"}}'
+        metric = c.wait_prom(expr, timeout=150)[0]["metric"]
+        expect(metric.get("project") == c.project and metric.get("env") == "prod", f"span-metrics labels {metric}")
+        expect(metric.get("http_route") == "/{tenant}/assets/{id}", f"http.route dimension {metric}")
+
+
+@section("otlp-metrics")
+def otlp_metrics(c):
+    """12.3.7: project, env, tenant are labels of the metric (not only target_info); service is job."""
+    resource = c.resource("metrics", tenant="acme")
+    name = f"smoke_{c.run}_orders"
+    g.send_otlp(c.s["GC_OTLP_URL"], "metrics", g.otlp_sum(resource, name, 7))
+    metric = c.wait_prom(f"{name}_total")[0]["metric"]
+    expect(metric.get("job") == resource["service.name"], f"job != service.name: {metric}")
+    expect((metric.get("project"), metric.get("env"), metric.get("tenant")) == (c.project, "prod", "acme"), f"labels {metric}")
+    expect("service_name" not in metric, f"service.name promoted as a duplicate label: {metric}")
+
+
+@section("retention")
+def retention(c):
+    """12.3.11: effective retention of Loki, Tempo and Prometheus matches the variables."""
+    s = c.s
+    loki = g.http("GET", s["GC_LOKI_URL"] + "/config").body.decode()
+    limits = loki[loki.index("\nlimits_config:") :]
+    default = g.yaml_section_value(limits.lstrip("\n"), "limits_config", "retention_period")
+    expect(g.duration_seconds(default) == g.duration_seconds(s["LOKI_RETENTION_DEFAULT"]), f"Loki default retention {default}")
+    stream_period = g.yaml_section_value(limits.lstrip("\n"), "limits_config", "period")
+    expect(g.duration_seconds(stream_period) == g.duration_seconds(s["LOKI_RETENTION_PROD"]), f"Loki prod retention {stream_period}")
+    expect("selector: '{env=\"prod\"}'" in limits, "Loki retention_stream selector for env=prod missing")
+    tempo = g.http("GET", s["GC_TEMPO_URL"] + "/status/config").body.decode()
+    block = g.yaml_section_value(tempo, "compactor", "block_retention")
+    expect(g.duration_seconds(block) == g.duration_seconds(s["TEMPO_RETENTION"]), f"Tempo block_retention {block}")
+    flags = g.get_json(s["GC_PROM_URL"] + "/api/v1/status/flags")["data"]
+    expect(flags["storage.tsdb.retention.time"] == s["PROM_RETENTION_TIME"], f"Prometheus retention.time {flags['storage.tsdb.retention.time']}")
+    size = flags["storage.tsdb.retention.size"]
+    expect(g.size_bytes(size) == g.size_bytes(s["PROM_RETENTION_SIZE"]), f"Prometheus retention.size {size}")
+
+
 # --- end of sections ---
 
 
