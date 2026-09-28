@@ -8,8 +8,8 @@ from support import ROOT, binary, run
 
 GUARD = ROOT / "config" / "config-guard" / "guard.sh"
 VALID_ENV = {
-    "IP_HASH_SALT": "harnessSalt0123456789",
-    "FARO_API_KEY": "harness-faro-key-0123456789",
+    "IP_HASH_SALT": "harnessNotASecret0000000000",
+    "FARO_API_KEY": "harness-not-a-secret-0000000000",
     "HOST_MAP": "example.me=guest-front:prod",
     "RESERVED_SUBDOMAINS": "www,api",
     "TENANT_HOST_REGEX": r"^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me|app)$",
