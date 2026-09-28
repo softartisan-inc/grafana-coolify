@@ -1,3 +1,5 @@
+import json
+import os
 import shutil
 import socket
 import sys
@@ -5,6 +7,7 @@ import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from support import ROOT, require_harness, run
 
@@ -82,6 +85,41 @@ class ContentFilesTest(unittest.TestCase):
             (config / "loki" / "loki.yaml").mkdir()
             self.assertTrue(stack.materialize(self.hashed_loki(), config).is_dir())
         self.assertTrue(stack.materialize(self.hashed_loki(), ROOT / "config").is_file())
+
+
+class ProcessIdentityTest(unittest.TestCase):
+    """A state.json entry is ours only while its PID still has the start time recorded at spawn."""
+
+    def setUp(self):
+        self.pid = os.getpid()
+        self.signals = []
+        patcher = mock.patch.object(stack.os, "killpg", side_effect=lambda pid, sig: self.signals.append((pid, sig)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_matching_entry_is_recognised(self):
+        entry = {"pid": self.pid, "start": stack.start_time(self.pid)}
+        self.assertIsNotNone(entry["start"])
+        self.assertTrue(stack.alive(entry))
+
+    def test_reused_pid_is_not_ours(self):
+        entry = {"pid": self.pid, "start": str(int(stack.start_time(self.pid)) + 1)}
+        self.assertFalse(stack.alive(entry))
+        stack.terminate(entry)
+        self.assertEqual(self.signals, [])
+
+    def test_entry_without_identity_is_not_ours(self):
+        entry = {"pid": self.pid, "ip": "127.0.10.2"}
+        self.assertFalse(stack.alive(entry))
+        stack.terminate(entry)
+        self.assertEqual(self.signals, [])
+
+    def test_stale_state_does_not_block_up(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({"processes": {"loki": {"pid": self.pid, "start": "1", "ip": "127.0.10.2"}}}), encoding="utf-8")
+            with mock.patch.object(stack, "STATE", state):
+                self.assertFalse(any(stack.alive(p) for p in stack.load_state()["processes"].values()))
 
 
 class StorageTrioTest(unittest.TestCase):

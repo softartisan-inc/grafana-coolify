@@ -320,16 +320,29 @@ def save_state(state):
     STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
+def proc_stat(pid):
+    """Fields of /proc/<pid>/stat after the command name (field 3 onwards), or None."""
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8") as stat:
-            return stat.read().split(") ")[1].split()[0] != "Z"
+            return stat.read().rpartition(")")[2].split()
     except OSError:
-        return False
+        return None
+
+
+def start_time(pid):
+    """Start time of a process (field 22 of /proc/<pid>/stat): with the PID, its identity."""
+    fields = proc_stat(pid)
+    return fields[19] if fields else None
+
+
+def alive(entry):
+    """True while the state entry still designates the process the harness spawned.
+
+    A PID alone is not enough: after a crash or a reboot, state.json may hold a PID reused by an
+    unrelated process. An entry without the start time recorded at spawn is never ours.
+    """
+    fields = proc_stat(entry["pid"])
+    return bool(fields) and entry.get("start") is not None and fields[19] == entry["start"] and fields[0] != "Z"
 
 
 def log_path(name):
@@ -342,6 +355,7 @@ def tail(name, lines=30):
 
 
 def spawn(name, spec):
+    """Start a service in its own session; return its state entry {"pid", "start"}."""
     (HARNESS / "logs").mkdir(parents=True, exist_ok=True)
     workdir = HARNESS / "work" / name
     workdir.mkdir(parents=True, exist_ok=True)
@@ -349,7 +363,7 @@ def spawn(name, spec):
         proc = subprocess.Popen(
             spec["args"], env=spec["env"], cwd=workdir, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True
         )
-    return proc.pid
+    return {"pid": proc.pid, "start": start_time(proc.pid)}
 
 
 def run_oneshot(name, spec, timeout=300):
@@ -361,11 +375,11 @@ def run_oneshot(name, spec, timeout=300):
     return result.returncode
 
 
-def wait_ready(name, pid, timeout=180):
+def wait_ready(name, entry, timeout=180):
     url = READY[name].format(ip=SERVICE_IPS[name])
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not alive(pid):
+        if not alive(entry):
             raise HarnessError(f"{name} exited during startup:\n{tail(name)}")
         if http_ok(url):
             return
@@ -373,17 +387,20 @@ def wait_ready(name, pid, timeout=180):
     raise HarnessError(f"{name} not ready after {timeout}s ({url}):\n{tail(name)}")
 
 
-def terminate(pid, grace=15):
+def terminate(entry, grace=15):
+    """Stop the process group of a state entry; an entry that is not ours (gone, reused) is left alone."""
+    if not alive(entry):
+        return
     try:
-        os.killpg(pid, signal.SIGTERM)
+        os.killpg(entry["pid"], signal.SIGTERM)
     except OSError:
         return
     deadline = time.monotonic() + grace
-    while time.monotonic() < deadline and alive(pid):
+    while time.monotonic() < deadline and alive(entry):
         time.sleep(0.2)
-    if alive(pid):
+    if alive(entry):
         try:
-            os.killpg(pid, signal.SIGKILL)
+            os.killpg(entry["pid"], signal.SIGKILL)
         except OSError:
             pass
 
@@ -391,7 +408,7 @@ def terminate(pid, grace=15):
 # ------------------------------------------------------------------ commands
 def cmd_up(args):
     state = load_state()
-    if any(alive(p["pid"]) for p in state["processes"].values()):
+    if any(alive(p) for p in state["processes"].values()):
         raise HarnessError("harness already running: python3 harness/stack.py down first")
     compose = load_compose()["services"]
     env_values = load_env_values(args.set)
@@ -409,11 +426,10 @@ def cmd_up(args):
     if code != 0:
         raise HarnessError(f"config-guard failed, no service started:\n{tail('config-guard')}")
     for name in names:
-        pid = spawn(name, specs[name])
-        state["processes"][name] = {"pid": pid, "ip": SERVICE_IPS[name]}
+        state["processes"][name] = {**spawn(name, specs[name]), "ip": SERVICE_IPS[name]}
         save_state(state)
     for name in names:
-        wait_ready(name, state["processes"][name]["pid"])
+        wait_ready(name, state["processes"][name])
         print(f"stack: {name} ready on {SERVICE_IPS[name]}")
     return 0
 
@@ -421,7 +437,7 @@ def cmd_up(args):
 def cmd_down(args):
     state = load_state()
     for name, proc in state["processes"].items():
-        terminate(proc["pid"])
+        terminate(proc)
         print(f"stack: stopped {name}")
     remove_hosts()
     if args.purge and HARNESS.exists():
@@ -439,7 +455,7 @@ def cmd_stop(args):
     proc = state["processes"].get(args.service)
     if not proc:
         raise HarnessError(f"{args.service} is not managed by the harness")
-    terminate(proc["pid"])
+    terminate(proc)
     print(f"stack: stopped {args.service}")
     return 0
 
@@ -448,12 +464,11 @@ def cmd_start(args):
     state = load_state()
     compose = load_compose()["services"]
     spec = build(args.service, compose[args.service], load_env_values(state["sets"] + args.set), state["config_dir"])
-    if args.service in state["processes"] and alive(state["processes"][args.service]["pid"]):
+    if args.service in state["processes"] and alive(state["processes"][args.service]):
         raise HarnessError(f"{args.service} is already running")
-    pid = spawn(args.service, spec)
-    state["processes"][args.service] = {"pid": pid, "ip": SERVICE_IPS[args.service]}
+    state["processes"][args.service] = {**spawn(args.service, spec), "ip": SERVICE_IPS[args.service]}
     save_state(state)
-    wait_ready(args.service, pid)
+    wait_ready(args.service, state["processes"][args.service])
     print(f"stack: {args.service} ready on {SERVICE_IPS[args.service]}")
     return 0
 
@@ -473,7 +488,7 @@ def cmd_oneshot(args):
 def cmd_status(_args):
     state = load_state()
     for name, proc in state["processes"].items():
-        running = alive(proc["pid"])
+        running = alive(proc)
         ready = running and name in READY and http_ok(READY[name].format(ip=proc["ip"]))
         print(f"{name:15} pid={proc['pid']:<8} {'running' if running else 'stopped'}{' ready' if ready else ''}")
     return 0
