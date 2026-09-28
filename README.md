@@ -281,13 +281,17 @@ Noms à utiliser dans les requêtes Grafana :
 `alloy` applique, avant tout stockage :
 
 - **Clés sensibles supprimées** : sur le chemin OTLP, tout attribut (ressource, span,
-  événement, log, point de métrique) dont la clé contient `authorization`, `cookie`, `password`,
-  `token` ou `secret` est **supprimé**, quelle que soit sa valeur (pas de marqueur
-  `[redacted]`). Effet de bord : cela retire aussi des dimensions de métriques légitimes, par
-  exemple les compteurs de jetons `gen_ai.*token*`.
+  événement, log, point de métrique) dont la clé est sensible est **supprimé**, quelle que soit
+  sa valeur (pas de marqueur `[redacted]`) ; dans les logs Faro, la paire `clé=valeur` entière
+  disparaît. Une clé est sensible quand l'un des mots `authorization`, `cookie(s)`,
+  `password(s)`, `passwd`, `token`, `secret(s)`, `api_key` / `api-key` / `apikey` (casse
+  indifférente) la **termine** ou est suivi de `.`, `_`, `-` ou d'une majuscule :
+  `http.request.header.authorization`, `access_token`, `client_secret`, `x-api-token`,
+  `accessToken` sont supprimées ; `gen_ai.usage.input_tokens`, `tokenizer`, `secretary` sont
+  gardées. Effet de bord accepté : `token_type` ou `gen_ai.token.type` sont supprimées aussi.
 - **Secrets dans le texte libre** remplacés par `[redacted]` : jetons `Bearer`, identifiants
-  `Basic` / `Digest`, valeurs `*_token=…`, `*_secret=…` et JSON `"refresh_token":"…"` (toute clé
-  contenant `authorization`, `cookie`, `password`, `token` ou `secret`).
+  `Basic` / `Digest`, valeurs `access_token=…`, `client_secret=…`, `api_key=…` et JSON
+  `"refresh_token":"…"` (même règle de clé sensible).
 - **Emails** remplacés par `[email]`.
 - **Numéros de carte** remplacés par `[card]`, **seulement** dans le texte libre (corps,
   `message`, `exception.*`) : tout nombre de 13 à 19 chiffres y est pris pour une carte, un

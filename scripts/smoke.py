@@ -161,7 +161,8 @@ def masking(c):
     body = (
         f"run {c.run} mail bob@example.com from 203.0.113.9 and 2001:db8::7 "
         f"card 4111 1111 1111 1111 at {epoch_ms} time 01:30:29 App\\User::find header Bearer abc.def-ghi password=hunter2x "
-        'Authorization: Basic dXNlcjpwYXNz access_token=at7Kx2q {"refresh_token":"rt9Zq4w"}'
+        'Authorization: Basic dXNlcjpwYXNz access_token=at7Kx2q {"refresh_token":"rt9Zq4w"} api_key=ak3Rt5y '
+        "input_tokens=42 tokenizer=bpe"
     )
     attributes = {
         "created_ms": epoch_ms,
@@ -175,6 +176,16 @@ def masking(c):
         "user_agent.original": "Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36",
         "browser.version": "128.0.0.0",
         "net.peer.name": "128.0.0.0",
+        # Secret-key boundary: a word of the list ending the key, or followed by a separator or a
+        # capital, is a secret; inside a longer word it is not.
+        "access_token": "sk1Access",
+        "client_secret": "sk2Client",
+        "x-api-token": "sk3Xapi",
+        "api_key": "sk4Apikey",
+        "accessToken": "sk5Camel",
+        "gen_ai.usage.input_tokens": "42",
+        "tokenizer": "bpe",
+        "secretary": "alice",
     }
     map_body = {
         "message": f"run {c.run} card 4111 1111 1111 1111 from eve@example.com",
@@ -183,6 +194,8 @@ def masking(c):
         "note": "Bearer mb7Hs1k",
         "user_agent": "Mozilla/5.0 Chrome/128.0.0.0",
         "created_ms": epoch_ms,
+        "clientSecret": "sk6Map",
+        "tokenizer": "bpe",
     }
     resource = c.resource("masking")
     map_resource = c.resource("masking-map")
@@ -199,13 +212,13 @@ def masking(c):
 
     # String body: every secret gone, every marker present, no false positive.
     secrets = ("bob@example.com", "203.0.113.9", "2001:db8::7", "4111 1111 1111 1111", "abc.def-ghi", "hunter2x", epoch_ms)
-    for secret in (*secrets, "dXNlcjpwYXNz", "at7Kx2q", "rt9Zq4w"):
+    for secret in (*secrets, "dXNlcjpwYXNz", "at7Kx2q", "rt9Zq4w", "ak3Rt5y"):
         check(secret not in line, f"{secret!r} survived in the log body")
     markers = ("[email]", "[card]", "Bearer [redacted]", "password=[redacted]", "Authorization: [redacted]")
-    markers += ("access_token=[redacted]", '"refresh_token":"[redacted]"')
+    markers += ("access_token=[redacted]", '"refresh_token":"[redacted]"', "api_key=[redacted]")
     for marker in (*markers, c.ip_hash("203.0.113.9"), c.ip_hash("2001:db8::7")):
         check(marker in line, f"{marker!r} missing from the log body")
-    for kept in ("01:30:29", "App\\User::find"):
+    for kept in ("01:30:29", "App\\User::find", "input_tokens=42", "tokenizer=bpe"):
         check(kept in line, f"false positive: {kept!r} was altered in the log body")
 
     # Attributes: secret keys dropped whatever their type (header values are string arrays).
@@ -220,6 +233,10 @@ def masking(c):
     check(meta.get("user_agent_original") == attributes["user_agent.original"], f"user agent hashed: {meta.get('user_agent_original')!r}")
     check(meta.get("browser_version") == "128.0.0.0", f"version hashed: {meta.get('browser_version')!r}")
     check(meta.get("net_peer_name") == c.ip_hash("128.0.0.0"), f"same value under another key not hashed: {meta.get('net_peer_name')!r}")
+    for value in ("sk1Access", "sk2Client", "sk3Xapi", "sk4Apikey", "sk5Camel"):
+        check(value not in meta.values(), f"secret-named attribute kept: {value!r}")
+    for key, value in (("gen_ai_usage_input_tokens", "42"), ("tokenizer", "bpe"), ("secretary", "alice")):
+        check(meta.get(key) == value, f"false positive: attribute {key} = {meta.get(key)!r}, expected {value!r}")
 
     # Map body (top level): same rules as attributes.
     for secret in ("eve@example.com", "203.0.113.77", "tk9Vb3m", "mb7Hs1k", "4111 1111 1111 1111"):
@@ -235,6 +252,8 @@ def masking(c):
     check(mapped.get("note") == "Bearer [redacted]", f"map body note: {mapped.get('note')!r}")
     check(mapped.get("user_agent") == map_body["user_agent"], f"map body user agent altered: {mapped.get('user_agent')!r}")
     check(mapped.get("created_ms") == epoch_ms, f"map body epoch under *_ms masked: {mapped.get('created_ms')!r}")
+    check("clientSecret" not in mapped, f"camelCase secret key survived in the map body: {mapped.get('clientSecret')!r}")
+    check(mapped.get("tokenizer") == "bpe", f"false positive: map body tokenizer {mapped.get('tokenizer')!r}")
 
     expect(not problems, f"{len(problems)} problem(s):\n    " + "\n    ".join(problems) + f"\n  body: {line}\n  map body: {map_line}\n  metadata: {meta}")
 
@@ -343,7 +362,11 @@ def ip_parity(c):
     ip = "192.0.2.77"
     token = f"parity-{c.run}"
     secrets = "Authorization: Basic dXNlcjpwYXNz access_token=at7Kx2q Bearer fb3Qw8r mail bob@example.com"
-    log = g.faro_log(f"{token} from {ip} card 4111 1111 1111 1111 {secrets}", context={"ip": ip, "db_password": "hunter2x", "a:b": f"{ip} password=hunter2"})
+    context = {"ip": ip, "db_password": "hunter2x", "a:b": f"{ip} password=hunter2"}
+    # Secret-key boundary, same rule as the OTLP path.
+    context.update({"client_secret": "fk1Client", "x-api-token": "fk2Xapi", "apiKey": "fk3Camel"})
+    context.update({"input_tokens": "42", "tokenizer": "bpe", "secretary": "alice"})
+    log = g.faro_log(f"{token} from {ip} card 4111 1111 1111 1111 {secrets}", context=context)
     event = g.faro_event(f"{token}-event", {"x": ip})
     browser = {"name": "chrome", "version": "128.0.0.0"}
     faro = g.faro_payload(c.faro_app(environment="prod"), f"https://{ip}/login", logs=[log], events=[event], browser=browser)
@@ -359,10 +382,11 @@ def ip_parity(c):
     expect(f'context_a:b="{digest} password=[redacted]"' in faro_log, f"context_a:b value rewritten: {faro_log}")
     expect(f"context_ip={digest}" in faro_log, f"context_ip not hashed: {faro_log}")
     # Same free-text secret rules as the OTLP path; a secret-named key is dropped, not redacted.
-    for secret in ("dXNlcjpwYXNz", "at7Kx2q", "fb3Qw8r", "bob@example.com", "hunter2x", "context_db_password"):
+    for secret in ("dXNlcjpwYXNz", "at7Kx2q", "fb3Qw8r", "bob@example.com", "hunter2x", "context_db_password", "fk1Client", "fk2Xapi", "fk3Camel"):
         expect(secret not in faro_log, f"{secret!r} survived in the Faro line: {faro_log}")
-    for marker in ("Authorization: [redacted]", "access_token=[redacted]", "Bearer [redacted]", "[email]"):
+    for marker in ("Authorization: [redacted]", "access_token=[redacted]", "Bearer [redacted]", "[email]", "context_input_tokens=42", "context_tokenizer=bpe"):
         expect(marker in faro_log, f"{marker!r} missing from the Faro line: {faro_log}")
+    expect("context_secretary=alice" in faro_log, f"false positive: context_secretary: {faro_log}")
     expect(f"page_url=https://{digest}/login" in faro_log, f"page_url not hashed: {faro_log}")
     expect("browser_version=128.0.0.0" in faro_log, f"review focus 1: browser version hashed: {faro_log}")
     faro_event = next(line for line in lines if "kind=event" in line)

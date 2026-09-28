@@ -18,7 +18,7 @@ services:
       - -c
       - "echo 'f7d19c390dc0d92af9432e13af41d7c4bbb83bf78f09446b340e9c79d8e56e6f  /opt/config-guard/guard.f7d19c39.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.f7d19c39.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.2c949ac7.alloy=2c949ac7973d821a398131e4e481a18b82d45a01e872b3c79d14d4c4e997da47;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.ca0bfb17.yaml=ca0bfb1737c267419c3de802bff2182a25eeaaaef122333c01aaed54b7859f95;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.f3d3e206.alloy=f3d3e206b9b351862ea5a800b549ec6a0426641338abd22ac5cd4a5f5ac53319;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.ca0bfb17.yaml=ca0bfb1737c267419c3de802bff2182a25eeaaaef122333c01aaed54b7859f95;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -470,7 +470,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.2c949ac7.alloy
+      - /etc/alloy/config.f3d3e206.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -490,8 +490,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.2c949ac7.alloy
-        target: /etc/alloy/config.2c949ac7.alloy
+        source: ./config/alloy/config.f3d3e206.alloy
+        target: /etc/alloy/config.f3d3e206.alloy
         content: |2
           // grafana-coolify - main Alloy pipeline (spec 7.1).
           // In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
@@ -540,10 +540,15 @@ services:
           // 1. Short env: deployment.environment.name (or legacy deployment.environment) -> env,
           //    original attribute deleted (spec 6.1).
           // 2. Masking safety net (spec 8.1), same rule set on every attribute map and on a map log body:
-          //    - keys matching authorization|cookie|password|token|secret are deleted, whatever the value
-          //      type (replace_all_patterns only rewrites strings, and http.request.header.* are arrays);
-          //    - in string values: Bearer tokens and key=value / "key":"value" secrets -> [redacted],
-          //      emails -> [email];
+          //    - secret keys are deleted, whatever the value type (replace_all_patterns only rewrites
+          //      strings, and http.request.header.* are arrays). A key is secret when one of the words
+          //      authorization, cookie(s), password(s), passwd, token, secret(s), api_key/api-key/apikey
+          //      (any case) ends it, or is followed by . _ - or a capital: http.request.header.authorization,
+          //      access_token, client_secret, x-api-token, accessToken; not gen_ai.usage.input_tokens,
+          //      tokenizer, secretary. Same boundary on the Faro path; tests/test_alloy_masking.py checks
+          //      that every copy of a masking literal is identical;
+          //    - in string values: Bearer tokens and key=value / "key":"value" secrets (same key rule)
+          //      -> [redacted], emails -> [email];
           //    - card numbers -> [card] in free text only (string body, message, exception.*,
           //      span status message), before IP hashing so a digest is never rewritten;
           //    - IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip), except under keys holding a version or a user
@@ -552,6 +557,10 @@ services:
           //    or in attributes) pass unchanged, OTTL having no stable function that walks them.
           //    Regexes are RE2; backticks are Alloy raw strings.
           otelcol.processor.transform "default" {
+            // Fail-open trade-off: a statement that errors on one item (unexpected type, bad value) is
+            // skipped and the item goes on, possibly unmasked by that statement, instead of being dropped
+            // with its whole batch ("propagate" would return the error and reject the batch).
+            // The statements are written so that they do not error on valid OTLP data.
             error_mode = "ignore"
 
             trace_statements {
@@ -561,9 +570,9 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
-                `delete_matching_keys(resource.attributes, "(?i).*(authorization|cookie|password|token|secret).*")`,
+                `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
                 `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `set(cache["ip"], resource.attributes)`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
@@ -574,9 +583,9 @@ services:
             trace_statements {
               context    = "span"
               statements = [
-                `delete_matching_keys(span.attributes, "(?i).*(authorization|cookie|password|token|secret).*")`,
+                `delete_matching_keys(span.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
                 `replace_all_patterns(span.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(span.attributes, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(span.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_all_patterns(span.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `replace_pattern(span.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.message"] != nil`,
                 `replace_pattern(span.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.stacktrace"] != nil`,
@@ -585,7 +594,7 @@ services:
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
                 `merge_maps(span.attributes, cache["ip"], "upsert")`,
                 `replace_pattern(span.status.message, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_pattern(span.status.message, "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_pattern(span.status.message, "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_pattern(span.status.message, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `replace_pattern(span.status.message, "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]")`,
                 `replace_pattern(span.status.message, "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
@@ -594,9 +603,9 @@ services:
             trace_statements {
               context    = "spanevent"
               statements = [
-                `delete_matching_keys(spanevent.attributes, "(?i).*(authorization|cookie|password|token|secret).*")`,
+                `delete_matching_keys(spanevent.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
                 `replace_all_patterns(spanevent.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(spanevent.attributes, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(spanevent.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_all_patterns(spanevent.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `replace_pattern(spanevent.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.message"] != nil`,
                 `replace_pattern(spanevent.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.stacktrace"] != nil`,
@@ -613,9 +622,9 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
-                `delete_matching_keys(resource.attributes, "(?i).*(authorization|cookie|password|token|secret).*")`,
+                `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
                 `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `set(cache["ip"], resource.attributes)`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
@@ -627,13 +636,13 @@ services:
               context    = "log"
               statements = [
                 `replace_pattern(log.body, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsString(log.body)`,
-                `replace_pattern(log.body, "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsString(log.body)`,
+                `replace_pattern(log.body, "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsString(log.body)`,
                 `replace_pattern(log.body, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]") where IsString(log.body)`,
                 `replace_pattern(log.body, "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsString(log.body)`,
                 `replace_pattern(log.body, "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsString(log.body)`,
-                `delete_matching_keys(log.body, "(?i).*(authorization|cookie|password|token|secret).*") where IsMap(log.body)`,
+                `delete_matching_keys(log.body, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$") where IsMap(log.body)`,
                 `replace_all_patterns(log.body, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsMap(log.body)`,
-                `replace_all_patterns(log.body, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsMap(log.body)`,
+                `replace_all_patterns(log.body, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsMap(log.body)`,
                 `replace_all_patterns(log.body, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]") where IsMap(log.body)`,
                 `replace_pattern(log.body["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
                 `replace_pattern(log.body["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
@@ -642,9 +651,9 @@ services:
                 `delete_matching_keys(cache["body_ip"], "(?i).*(version|user_agent).*") where IsMap(log.body)`,
                 `replace_all_patterns(cache["body_ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsMap(log.body)`,
                 `merge_maps(log.body, cache["body_ip"], "upsert") where IsMap(log.body)`,
-                `delete_matching_keys(log.attributes, "(?i).*(authorization|cookie|password|token|secret).*")`,
+                `delete_matching_keys(log.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
                 `replace_all_patterns(log.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(log.attributes, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(log.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_all_patterns(log.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `replace_pattern(log.attributes["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["message"] != nil`,
                 `replace_pattern(log.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.message"] != nil`,
@@ -662,9 +671,9 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
-                `delete_matching_keys(resource.attributes, "(?i).*(authorization|cookie|password|token|secret).*")`,
+                `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
                 `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `set(cache["ip"], resource.attributes)`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
@@ -675,9 +684,9 @@ services:
             metric_statements {
               context    = "datapoint"
               statements = [
-                `delete_matching_keys(datapoint.attributes, "(?i).*(authorization|cookie|password|token|secret).*")`,
+                `delete_matching_keys(datapoint.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
                 `replace_all_patterns(datapoint.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(datapoint.attributes, "value", "(?i)\\b([\\w-]*(?:authorization|cookie|password|token|secret)[\\w-]*)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(datapoint.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_all_patterns(datapoint.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
                 `set(cache["ip"], datapoint.attributes)`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
@@ -1061,23 +1070,24 @@ services:
             // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair (logfmt key:
             // anything but whitespace, = and ", so context_a:b or a non-ASCII key is one pair) is consumed in
             // turn (a quoted value whole, so text inside a message is never read as a key): a pair whose
-            // key matches authorization|cookie|password|token|secret is dropped with its leading space,
-            // whatever its value (context_*, session_attr_*, event_data_* are client-controlled).
+            // key is secret (same word list and boundary as the OTLP key deletion) is dropped with its
+            // leading space, whatever its value (context_*, session_attr_*, event_data_* are
+            // client-controlled).
             stage.replace {
               expression = `((?:^|\s)[^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
-              replace    = `{{ if not (regexMatch "(?i)^\\s*[^\\s=\"]*(?:authorization|cookie|password|token|secret)[^\\s=\"]*=" .Value) }}{{ .Value }}{{ end }}`
+              replace    = `{{ if not (regexMatch "^\\s*[^\\s=\"]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][^\\s=\"]*|[A-Z][^\\s=\"]*)?=" .Value) }}{{ .Value }}{{ end }}`
             }
 
             // Then, on the whole line: Bearer tokens, secrets in free text (key=value, key: value,
             // "key":"value", logfmt-escaped \"key\":\"value\", with an optional Basic/Digest/Token/ApiKey
-            // scheme, any key containing one of the words: access_token, client_secret...), emails.
+            // scheme, any secret key: access_token, client_secret...), emails.
             stage.replace {
               expression = `(?i)\bbearer\s+([A-Za-z0-9._~+/=-]+)`
               replace    = "[redacted]"
             }
 
             stage.replace {
-              expression = `(?i)\b[\w-]*(?:authorization|cookie|password|token|secret)[\w-]*\\?"?\s*[:=]\s*\\?"?((?:(?:basic|digest|token|apikey)\s+)?[^\s"\\&,;]+)`
+              expression = `\b[\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\w-]*|[A-Z][\w-]*)?\\?"?\s*[:=]\s*\\?"?((?:(?i:basic|digest|token|apikey)\s+)?[^\s"\\&,;]+)`
               replace    = "[redacted]"
             }
 
