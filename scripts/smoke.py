@@ -7,6 +7,7 @@ Defaults target the native harness; GC_* variables (see scripts/gclib.py) target
 
 import argparse
 import hashlib
+import json
 import sys
 import time
 import traceback
@@ -146,44 +147,87 @@ def reject(c):
 
 @section("masking")
 def masking(c):
-    """12.3.4 (OTLP path): emails, Bearer, secrets, cards in free text, IPs hashed; no false positives."""
+    """12.3.4 (OTLP path): secret keys dropped, Bearer/secrets redacted, emails, cards in free text, IPs hashed; no false positives."""
     epoch_ms = "1790559058622"
     body = (
         f"run {c.run} mail bob@example.com from 203.0.113.9 and 2001:db8::7 "
-        f"card 4111 1111 1111 1111 at {epoch_ms} time 01:30:29 App\\User::find header Bearer abc.def-ghi password=hunter2x"
+        f"card 4111 1111 1111 1111 at {epoch_ms} time 01:30:29 App\\User::find header Bearer abc.def-ghi password=hunter2x "
+        'Authorization: Basic dXNlcjpwYXNz access_token=at7Kx2q {"refresh_token":"rt9Zq4w"}'
     )
     attributes = {
         "created_ms": epoch_ms,
         "event.timestamp": epoch_ms,
         "user_id": "4111111111111111",
         "message": f"attr message {epoch_ms}",
-        "http.request.header.authorization": "Basic dXNlcjpwYXNz",
+        "http.request.header.authorization": ["Basic dXNlcjpwYXNz"],
+        "http.request.header.cookie": ["session=ck5Tn8e"],
         "db.password": "hunter2",
         "client.address": "198.51.100.23",
         "user_agent.original": "Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36",
         "browser.version": "128.0.0.0",
         "net.peer.name": "128.0.0.0",
     }
+    map_body = {
+        "message": f"run {c.run} card 4111 1111 1111 1111 from eve@example.com",
+        "client_ip": "203.0.113.77",
+        "api_token": "tk9Vb3m",
+        "note": "Bearer mb7Hs1k",
+        "user_agent": "Mozilla/5.0 Chrome/128.0.0.0",
+        "created_ms": epoch_ms,
+    }
     resource = c.resource("masking")
+    map_resource = c.resource("masking-map")
     g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(resource, body, attributes))
+    g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(map_resource, map_body))
     _labels, line, meta = c.wait_logs(f'{{service_name="{resource["service.name"]}"}}')[0]
-    for secret in ("bob@example.com", "203.0.113.9", "2001:db8::7", "4111 1111 1111 1111", "abc.def-ghi", "hunter2x", epoch_ms):
-        expect(secret not in line, f"{secret!r} survived in the log body: {line}")
-    for marker in ("[email]", "[card]", "Bearer [redacted]", "password=[redacted]", c.ip_hash("203.0.113.9"), c.ip_hash("2001:db8::7")):
-        expect(marker in line, f"{marker!r} missing from the log body: {line}")
+    _labels, map_line, _meta = c.wait_logs(f'{{service_name="{map_resource["service.name"]}"}}')[0]
+
+    problems = []
+
+    def check(condition, message):
+        if not condition:
+            problems.append(message)
+
+    # String body: every secret gone, every marker present, no false positive.
+    secrets = ("bob@example.com", "203.0.113.9", "2001:db8::7", "4111 1111 1111 1111", "abc.def-ghi", "hunter2x", epoch_ms)
+    for secret in (*secrets, "dXNlcjpwYXNz", "at7Kx2q", "rt9Zq4w"):
+        check(secret not in line, f"{secret!r} survived in the log body")
+    markers = ("[email]", "[card]", "Bearer [redacted]", "password=[redacted]", "Authorization: [redacted]")
+    markers += ("access_token=[redacted]", '"refresh_token":"[redacted]"')
+    for marker in (*markers, c.ip_hash("203.0.113.9"), c.ip_hash("2001:db8::7")):
+        check(marker in line, f"{marker!r} missing from the log body")
     for kept in ("01:30:29", "App\\User::find"):
-        expect(kept in line, f"false positive: {kept!r} was altered: {line}")
-    expect(meta.get("created_ms") == epoch_ms, f"epoch under *_ms was masked: {meta.get('created_ms')}")
-    expect(meta.get("event_timestamp") == epoch_ms, f"epoch under *timestamp* was masked: {meta.get('event_timestamp')}")
-    expect(meta.get("user_id") == "4111111111111111", f"*_id value was masked: {meta.get('user_id')}")
-    expect(meta.get("message") == "attr message [card]", f"epoch in message attribute not masked: {meta.get('message')}")
-    expect(meta.get("http_request_header_authorization") == "[redacted]", f"authorization: {meta}")
-    expect(meta.get("db_password") == "[redacted]", f"password: {meta}")
-    expect(meta.get("client_address") == c.ip_hash("198.51.100.23"), f"client.address: {meta}")
+        check(kept in line, f"false positive: {kept!r} was altered in the log body")
+
+    # Attributes: secret keys dropped whatever their type (header values are string arrays).
+    for key in ("http_request_header_authorization", "http_request_header_cookie", "db_password"):
+        check(key not in meta, f"secret attribute {key} survived: {meta.get(key)!r}")
+    check(meta.get("created_ms") == epoch_ms, f"epoch under *_ms was masked: {meta.get('created_ms')!r}")
+    check(meta.get("event_timestamp") == epoch_ms, f"epoch under *timestamp* was masked: {meta.get('event_timestamp')!r}")
+    check(meta.get("user_id") == "4111111111111111", f"*_id value was masked: {meta.get('user_id')!r}")
+    check(meta.get("message") == "attr message [card]", f"epoch in message attribute not masked: {meta.get('message')!r}")
+    check(meta.get("client_address") == c.ip_hash("198.51.100.23"), f"client.address not hashed: {meta.get('client_address')!r}")
     # Review focus 1: a browser version is not an address, whatever the key holding it says.
-    expect(meta.get("user_agent_original") == attributes["user_agent.original"], f"user agent hashed: {meta.get('user_agent_original')}")
-    expect(meta.get("browser_version") == "128.0.0.0", f"version hashed: {meta.get('browser_version')}")
-    expect(meta.get("net_peer_name") == c.ip_hash("128.0.0.0"), f"same value under another key not hashed: {meta.get('net_peer_name')}")
+    check(meta.get("user_agent_original") == attributes["user_agent.original"], f"user agent hashed: {meta.get('user_agent_original')!r}")
+    check(meta.get("browser_version") == "128.0.0.0", f"version hashed: {meta.get('browser_version')!r}")
+    check(meta.get("net_peer_name") == c.ip_hash("128.0.0.0"), f"same value under another key not hashed: {meta.get('net_peer_name')!r}")
+
+    # Map body (top level): same rules as attributes.
+    for secret in ("eve@example.com", "203.0.113.77", "tk9Vb3m", "mb7Hs1k", "4111 1111 1111 1111"):
+        check(secret not in map_line, f"{secret!r} survived in the map body")
+    try:
+        mapped = json.loads(map_line)
+    except ValueError:
+        mapped = {}
+        problems.append(f"map body is not a JSON line: {map_line!r}")
+    check("api_token" not in mapped, f"secret key api_token survived in the map body: {mapped.get('api_token')!r}")
+    check(mapped.get("message") == f"run {c.run} card [card] from [email]", f"map body message: {mapped.get('message')!r}")
+    check(mapped.get("client_ip") == c.ip_hash("203.0.113.77"), f"map body client_ip: {mapped.get('client_ip')!r}")
+    check(mapped.get("note") == "Bearer [redacted]", f"map body note: {mapped.get('note')!r}")
+    check(mapped.get("user_agent") == map_body["user_agent"], f"map body user agent altered: {mapped.get('user_agent')!r}")
+    check(mapped.get("created_ms") == epoch_ms, f"map body epoch under *_ms masked: {mapped.get('created_ms')!r}")
+
+    expect(not problems, f"{len(problems)} problem(s):\n    " + "\n    ".join(problems) + f"\n  body: {line}\n  map body: {map_line}\n  metadata: {meta}")
 
 
 # --- end of sections ---

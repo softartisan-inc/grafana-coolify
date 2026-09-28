@@ -20,5 +20,27 @@ class YamlSectionValueTest(unittest.TestCase):
         self.assertIsNone(gclib.yaml_section_value("limits:\n  period: 720h\n", "retention", "period"))
 
 
+class OtlpValueTest(unittest.TestCase):
+    def test_list_attribute_is_an_array_value(self):
+        self.assertEqual(
+            gclib.attrs({"h": ["a", "b"]}),
+            [{"key": "h", "value": {"arrayValue": {"values": [{"stringValue": "a"}, {"stringValue": "b"}]}}}],
+        )
+
+    def test_dict_attribute_is_a_kvlist_value(self):
+        self.assertEqual(
+            gclib.attrs({"m": {"k": 1}}),
+            [{"key": "m", "value": {"kvlistValue": {"values": [{"key": "k", "value": {"intValue": "1"}}]}}}],
+        )
+
+    def test_dict_log_body_is_a_kvlist_value(self):
+        record = gclib.otlp_logs({}, {"k": "v"})["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+        self.assertEqual(record["body"], {"kvlistValue": {"values": [{"key": "k", "value": {"stringValue": "v"}}]}})
+
+    def test_string_log_body_stays_a_string_value(self):
+        record = gclib.otlp_logs({}, "line")["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+        self.assertEqual(record["body"], {"stringValue": "line"})
+
+
 if __name__ == "__main__":
     unittest.main()

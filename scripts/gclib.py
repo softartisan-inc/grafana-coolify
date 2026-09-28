@@ -124,20 +124,25 @@ def now_ns():
 
 
 # ------------------------------------------------------------------ OTLP/HTTP JSON builders
+def any_value(value):
+    """OTLP/JSON AnyValue: lists become arrayValue, dicts kvlistValue, scalars keep their type."""
+    if isinstance(value, bool):
+        return {"boolValue": value}
+    if isinstance(value, int):
+        return {"intValue": str(value)}
+    if isinstance(value, list):
+        return {"arrayValue": {"values": [any_value(item) for item in value]}}
+    if isinstance(value, dict):
+        return {"kvlistValue": {"values": attrs(value)}}
+    return {"stringValue": str(value)}
+
+
 def attrs(values):
-    out = []
-    for key, value in values.items():
-        if isinstance(value, bool):
-            out.append({"key": key, "value": {"boolValue": value}})
-        elif isinstance(value, int):
-            out.append({"key": key, "value": {"intValue": str(value)}})
-        else:
-            out.append({"key": key, "value": {"stringValue": str(value)}})
-    return out
+    return [{"key": key, "value": any_value(value)} for key, value in values.items()]
 
 
 def otlp_logs(resource, body, attributes=None, trace_id=None, span_id=None, severity="INFO"):
-    record = {"timeUnixNano": str(now_ns()), "severityText": severity, "body": {"stringValue": body}, "attributes": attrs(attributes or {})}
+    record = {"timeUnixNano": str(now_ns()), "severityText": severity, "body": any_value(body), "attributes": attrs(attributes or {})}
     if trace_id:
         record["traceId"] = trace_id
         record["spanId"] = span_id or new_span_id()
