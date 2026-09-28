@@ -138,7 +138,94 @@ services:
     mem_limit: 64m
     cpus: 0.2
 
+  alloy:
+    image: grafana/alloy:@@ALLOY_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    user: "473:473"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=public-preview
+    environment:
+      SERVICE_FQDN_ALLOY_12347:
+      BIND_ADDR: 0.0.0.0
+      ALLOY_QUEUE_DIR: /var/lib/alloy/queue
+      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
+      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      PROJECTS: ${PROJECTS:-}
+      FARO_RATE: ${FARO_RATE:-100}
+      FARO_BURST: ${FARO_BURST:-200}
+      FARO_MAX_PAYLOAD: ${FARO_MAX_PAYLOAD:-5MiB}
+      HOST_MAP: ${HOST_MAP:-}
+      RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
+      TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+    volumes:
+      - type: bind
+        source: ./config/alloy/config.alloy
+        target: /etc/alloy/config.alloy
+        content: "@@CONTENT@@"
+        read_only: true
+      - alloy-data:/var/lib/alloy
+    labels:
+      # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
+      - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
+    expose:
+      - "4317"
+      - "4318"
+      - "12345"
+      - "12347"
+    mem_limit: 768m
+    cpus: 1.0
+
+  alloy-gateway:
+    image: grafana/alloy:@@ALLOY_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    user: "473:473"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=public-preview
+    environment:
+      SERVICE_FQDN_ALLOY_GATEWAY_4318:
+      BIND_ADDR: 0.0.0.0
+    volumes:
+      - type: bind
+        source: ./config/alloy-gateway/config.alloy
+        target: /etc/alloy/config.alloy
+        content: "@@CONTENT@@"
+        read_only: true
+    tmpfs:
+      - /var/lib/alloy:mode=1777,size=64m
+    labels:
+      - coolify.traefik.middlewares=gc-otlp-auth@file
+    expose:
+      - "4318"
+      - "12345"
+    mem_limit: 256m
+    cpus: 0.5
+
 volumes:
   loki-data:
   tempo-data:
   prometheus-data:
+  alloy-data:

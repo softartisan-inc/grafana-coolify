@@ -18,7 +18,7 @@ services:
       - -c
       - "echo '45d62586d0ebc8789747f6d3c73acdb89fec9de5e7eaa7505048f0ed980415fa  /opt/config-guard/guard.45d62586.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.45d62586.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.37928845.alloy=37928845a3e87b1bb49e53fbd68e4f0089d5c067df70a9c0dea41a677a322fcd;/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -436,7 +436,310 @@ services:
     mem_limit: 64m
     cpus: 0.2
 
+  alloy:
+    image: grafana/alloy:v1.20.0
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    user: "473:473"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - run
+      - /etc/alloy/config.37928845.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=public-preview
+    environment:
+      SERVICE_FQDN_ALLOY_12347:
+      BIND_ADDR: 0.0.0.0
+      ALLOY_QUEUE_DIR: /var/lib/alloy/queue
+      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
+      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      PROJECTS: ${PROJECTS:-}
+      FARO_RATE: ${FARO_RATE:-100}
+      FARO_BURST: ${FARO_BURST:-200}
+      FARO_MAX_PAYLOAD: ${FARO_MAX_PAYLOAD:-5MiB}
+      HOST_MAP: ${HOST_MAP:-}
+      RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
+      TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+    volumes:
+      - type: bind
+        source: ./config/alloy/config.37928845.alloy
+        target: /etc/alloy/config.37928845.alloy
+        content: |2
+          // grafana-coolify - main Alloy pipeline (spec 7.1).
+          // In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
+          // Out: traces -> Tempo, logs -> Loki, metrics -> Prometheus.
+          // Every runtime value comes from sys.env(); Coolify writes this file byte for byte.
+
+          logging {
+            level  = "info"
+            format = "logfmt"
+          }
+
+          // Persistent sending queue of the three OTLP exporters (spec 9.2).
+          otelcol.storage.file "queue" {
+            directory = sys.env("ALLOY_QUEUE_DIR")
+          }
+
+          // ------------------------------------------------------------------ OTLP path
+          otelcol.receiver.otlp "default" {
+            grpc {
+              endpoint = sys.env("BIND_ADDR") + ":4317"
+            }
+
+            http {
+              endpoint = sys.env("BIND_ADDR") + ":4318"
+            }
+
+            output {
+              logs    = [otelcol.processor.memory_limiter.default.input]
+              metrics = [otelcol.processor.memory_limiter.default.input]
+              traces  = [otelcol.processor.memory_limiter.default.input]
+            }
+          }
+
+          otelcol.processor.memory_limiter "default" {
+            check_interval         = "1s"
+            limit_percentage       = 80
+            spike_limit_percentage = 20
+
+            output {
+              logs    = [otelcol.processor.transform.default.input]
+              metrics = [otelcol.processor.transform.default.input]
+              traces  = [otelcol.processor.transform.default.input]
+            }
+          }
+
+          // Short env: deployment.environment.name (or legacy deployment.environment) -> env,
+          // original attribute deleted (spec 6.1). Masking is added in the same transform (task 10).
+          otelcol.processor.transform "default" {
+            error_mode = "ignore"
+
+            trace_statements {
+              context    = "resource"
+              statements = [
+                `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+                `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+                `delete_key(resource.attributes, "deployment.environment.name")`,
+                `delete_key(resource.attributes, "deployment.environment")`,
+              ]
+            }
+            log_statements {
+              context    = "resource"
+              statements = [
+                `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+                `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+                `delete_key(resource.attributes, "deployment.environment.name")`,
+                `delete_key(resource.attributes, "deployment.environment")`,
+              ]
+            }
+            metric_statements {
+              context    = "resource"
+              statements = [
+                `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+                `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+                `delete_key(resource.attributes, "deployment.environment.name")`,
+                `delete_key(resource.attributes, "deployment.environment")`,
+              ]
+            }
+
+            output {
+              logs    = [otelcol.processor.filter.default.input]
+              metrics = [otelcol.processor.filter.default.input]
+              traces  = [otelcol.processor.filter.default.input]
+            }
+          }
+
+          // Drop everything without project, without env, or whose env is neither prod nor preprod; an
+          // empty string counts as missing (spec 6.3). Counters:
+          // otelcol_processor_filter_{spans,logs,datapoints}_filtered_total.
+          otelcol.processor.filter "default" {
+            error_mode = "ignore"
+
+            traces {
+              span = [
+                `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+              ]
+            }
+
+            logs {
+              log_record = [
+                `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+              ]
+            }
+
+            metrics {
+              datapoint = [
+                `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+              ]
+            }
+
+            output {
+              logs    = [otelcol.processor.batch.default.input]
+              metrics = [otelcol.processor.batch.default.input]
+              traces  = [otelcol.processor.batch.default.input]
+            }
+          }
+
+          // At most 2048 items per batch: with queue_size = 1000 batches, the persistent queue of each
+          // exporter holds at most ~2 million items on the alloy-data volume (spec 9.2).
+          otelcol.processor.batch "default" {
+            send_batch_size     = 1024
+            send_batch_max_size = 2048
+
+            output {
+              logs    = [otelcol.exporter.otlphttp.loki.input]
+              metrics = [otelcol.exporter.otlphttp.prometheus.input]
+              traces  = [otelcol.exporter.otlp.tempo.input]
+            }
+          }
+
+          otelcol.exporter.otlp "tempo" {
+            client {
+              endpoint = "tempo:4317"
+
+              tls {
+                insecure = true
+              }
+            }
+
+            sending_queue {
+              enabled    = true
+              queue_size = 1000
+              storage    = otelcol.storage.file.queue.handler
+            }
+
+            retry_on_failure {
+              max_elapsed_time = "1h"
+            }
+          }
+
+          otelcol.exporter.otlphttp "loki" {
+            client {
+              endpoint = "http://loki:3100/otlp"
+            }
+
+            sending_queue {
+              enabled    = true
+              queue_size = 1000
+              storage    = otelcol.storage.file.queue.handler
+            }
+
+            retry_on_failure {
+              max_elapsed_time = "1h"
+            }
+          }
+
+          otelcol.exporter.otlphttp "prometheus" {
+            client {
+              endpoint = "http://prometheus:9090/api/v1/otlp"
+            }
+
+            sending_queue {
+              enabled    = true
+              queue_size = 1000
+              storage    = otelcol.storage.file.queue.handler
+            }
+
+            retry_on_failure {
+              max_elapsed_time = "1h"
+            }
+          }
+        read_only: true
+      - alloy-data:/var/lib/alloy
+    labels:
+      # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
+      - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
+    expose:
+      - "4317"
+      - "4318"
+      - "12345"
+      - "12347"
+    mem_limit: 768m
+    cpus: 1.0
+
+  alloy-gateway:
+    image: grafana/alloy:v1.20.0
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    user: "473:473"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - run
+      - /etc/alloy/config.57c7d4be.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=public-preview
+    environment:
+      SERVICE_FQDN_ALLOY_GATEWAY_4318:
+      BIND_ADDR: 0.0.0.0
+    volumes:
+      - type: bind
+        source: ./config/alloy-gateway/config.57c7d4be.alloy
+        target: /etc/alloy/config.57c7d4be.alloy
+        content: |2
+          // grafana-coolify - alloy-gateway: public OTLP/HTTP relay, no processing (spec 5.2).
+          // Authentication is done by Traefik (gc-otlp-auth@file) before traffic reaches this port.
+          logging {
+            level  = "info"
+            format = "logfmt"
+          }
+
+          otelcol.receiver.otlp "gateway" {
+            http {
+              endpoint = sys.env("BIND_ADDR") + ":4318"
+            }
+
+            output {
+              logs    = [otelcol.exporter.otlp.alloy.input]
+              metrics = [otelcol.exporter.otlp.alloy.input]
+              traces  = [otelcol.exporter.otlp.alloy.input]
+            }
+          }
+
+          // No queue: when alloy is down the sender gets an error and its SDK retries (spec 9.2).
+          otelcol.exporter.otlp "alloy" {
+            client {
+              endpoint = "alloy:4317"
+
+              tls {
+                insecure = true
+              }
+            }
+
+            sending_queue {
+              enabled = false
+            }
+
+            retry_on_failure {
+              enabled = false
+            }
+          }
+        read_only: true
+    tmpfs:
+      - /var/lib/alloy:mode=1777,size=64m
+    labels:
+      - coolify.traefik.middlewares=gc-otlp-auth@file
+    expose:
+      - "4318"
+      - "12345"
+    mem_limit: 256m
+    cpus: 0.5
+
 volumes:
   loki-data:
   tempo-data:
   prometheus-data:
+  alloy-data:

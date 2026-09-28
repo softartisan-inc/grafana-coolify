@@ -1,0 +1,179 @@
+// grafana-coolify - main Alloy pipeline (spec 7.1).
+// In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
+// Out: traces -> Tempo, logs -> Loki, metrics -> Prometheus.
+// Every runtime value comes from sys.env(); Coolify writes this file byte for byte.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// Persistent sending queue of the three OTLP exporters (spec 9.2).
+otelcol.storage.file "queue" {
+  directory = sys.env("ALLOY_QUEUE_DIR")
+}
+
+// ------------------------------------------------------------------ OTLP path
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = sys.env("BIND_ADDR") + ":4317"
+  }
+
+  http {
+    endpoint = sys.env("BIND_ADDR") + ":4318"
+  }
+
+  output {
+    logs    = [otelcol.processor.memory_limiter.default.input]
+    metrics = [otelcol.processor.memory_limiter.default.input]
+    traces  = [otelcol.processor.memory_limiter.default.input]
+  }
+}
+
+otelcol.processor.memory_limiter "default" {
+  check_interval         = "1s"
+  limit_percentage       = 80
+  spike_limit_percentage = 20
+
+  output {
+    logs    = [otelcol.processor.transform.default.input]
+    metrics = [otelcol.processor.transform.default.input]
+    traces  = [otelcol.processor.transform.default.input]
+  }
+}
+
+// Short env: deployment.environment.name (or legacy deployment.environment) -> env,
+// original attribute deleted (spec 6.1). Masking is added in the same transform (task 10).
+otelcol.processor.transform "default" {
+  error_mode = "ignore"
+
+  trace_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+    ]
+  }
+  log_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+    ]
+  }
+  metric_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+    ]
+  }
+
+  output {
+    logs    = [otelcol.processor.filter.default.input]
+    metrics = [otelcol.processor.filter.default.input]
+    traces  = [otelcol.processor.filter.default.input]
+  }
+}
+
+// Drop everything without project, without env, or whose env is neither prod nor preprod; an
+// empty string counts as missing (spec 6.3). Counters:
+// otelcol_processor_filter_{spans,logs,datapoints}_filtered_total.
+otelcol.processor.filter "default" {
+  error_mode = "ignore"
+
+  traces {
+    span = [
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+    ]
+  }
+
+  logs {
+    log_record = [
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+    ]
+  }
+
+  metrics {
+    datapoint = [
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+    ]
+  }
+
+  output {
+    logs    = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+// At most 2048 items per batch: with queue_size = 1000 batches, the persistent queue of each
+// exporter holds at most ~2 million items on the alloy-data volume (spec 9.2).
+otelcol.processor.batch "default" {
+  send_batch_size     = 1024
+  send_batch_max_size = 2048
+
+  output {
+    logs    = [otelcol.exporter.otlphttp.loki.input]
+    metrics = [otelcol.exporter.otlphttp.prometheus.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+
+    tls {
+      insecure = true
+    }
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
+  }
+
+  retry_on_failure {
+    max_elapsed_time = "1h"
+  }
+}
+
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
+  }
+
+  retry_on_failure {
+    max_elapsed_time = "1h"
+  }
+}
+
+otelcol.exporter.otlphttp "prometheus" {
+  client {
+    endpoint = "http://prometheus:9090/api/v1/otlp"
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
+  }
+
+  retry_on_failure {
+    max_elapsed_time = "1h"
+  }
+}
