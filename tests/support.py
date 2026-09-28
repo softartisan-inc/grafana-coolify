@@ -52,3 +52,22 @@ def require_harness(test_case):
     """Skip unless GC_HARNESS=1: the test needs the native harness (sudo, loopback IPs)."""
     if os.environ.get("GC_HARNESS") != "1":
         raise unittest.SkipTest("needs the native harness: set GC_HARNESS=1")
+
+
+def harness_env():
+    return load_env_file(ROOT / "harness" / "harness.env")
+
+
+def validator_env(tmpdir):
+    """Environment for the official validators: harness values, loopback bind, temp data dirs."""
+    env = dict(os.environ)
+    env.update(harness_env())
+    env.update(
+        {
+            "BIND_ADDR": "127.0.0.1",
+            "LOKI_DATA_DIR": str(Path(tmpdir) / "loki"),
+            "TEMPO_DATA_DIR": str(Path(tmpdir) / "tempo"),
+            "ALLOY_QUEUE_DIR": str(Path(tmpdir) / "alloy-queue"),
+        }
+    )
+    return env

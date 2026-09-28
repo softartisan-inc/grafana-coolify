@@ -1,0 +1,75 @@
+# Loki single-binary configuration for grafana-coolify.
+# Environment variables are expanded by Loki itself (-config.expand-env=true); compose.template.yaml
+# sets every one of them (BIND_ADDR, LOKI_DATA_DIR, LOKI_RETENTION_*).
+auth_enabled: false
+
+server:
+  http_listen_address: ${BIND_ADDR}
+  http_listen_port: 3100
+  # Internal module-to-module gRPC only (single binary).
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: 9095
+  log_level: info
+
+common:
+  path_prefix: ${LOKI_DATA_DIR}
+  instance_addr: 127.0.0.1
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: ${LOKI_DATA_DIR}/chunks
+      rules_directory: ${LOKI_DATA_DIR}/rules
+
+schema_config:
+  configs:
+    - from: "2026-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: ${LOKI_DATA_DIR}/tsdb-index
+    cache_location: ${LOKI_DATA_DIR}/tsdb-cache
+
+compactor:
+  working_directory: ${LOKI_DATA_DIR}/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  delete_request_store: filesystem
+
+limits_config:
+  allow_structured_metadata: true
+  volume_enabled: true
+  discover_log_levels: true
+  # Every env except prod falls back to the short default (spec 9.1).
+  retention_period: ${LOKI_RETENTION_DEFAULT}
+  retention_stream:
+    - selector: '{env="prod"}'
+      priority: 1
+      period: ${LOKI_RETENTION_PROD}
+  # Only project, env and service.name become index labels; ignore_defaults stops Loki from
+  # indexing service.instance.id and friends. trace_id/span_id of OTLP log records are stored as
+  # structured metadata by Loki itself (spec 6.2).
+  otlp_config:
+    resource_attributes:
+      ignore_defaults: true
+      attributes_config:
+        - action: index_label
+          attributes:
+            - project
+            - env
+            - service.name
+        - action: structured_metadata
+          attributes:
+            - tenant
+
+analytics:
+  reporting_enabled: false
