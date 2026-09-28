@@ -276,37 +276,50 @@ def faro_names(c):
     expect(labels == {"project": c.faro_project, "env": "prod", "service_name": f"web-{c.run}"}, f"Faro labels {labels}")
     expect(meta.get("trace_id") == trace_id, f"trace_id not normalised from traceID: {meta}")
     expect(meta.get("detected_level") == "warn", f"detected_level: {meta}")
+    # A traceID that is not 32 lowercase hex digits is not stored (it would carry client text).
+    bad_token = f"badtrace-{c.run}"
+    payload = g.faro_payload(c.faro_app(environment="prod"), "https://inconnu.autre.org/", logs=[g.faro_log(bad_token, "info", "bob@example.com")])
+    g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    _labels, _line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{bad_token}"')[0]
+    expect("trace_id" not in meta, f"unvalidated trace_id stored: {meta}")
 
 
 @section("faro-reject")
 def faro_reject(c):
     """12.3.5 (Faro path): lines with a missing, malformed or unknown project, a missing or unexpected env, or
-    a malformed service name are dropped, each with its reason."""
+    a malformed or missing service name are dropped, each with its reason."""
     alloy = c.s["GC_ALLOY_METRICS_URL"]
     metric = "loki_process_dropped_lines_total"
     app = {"name": f"web-{c.run}", "namespace": c.faro_project, "environment": "prod"}
+    # case name -> (expected reason, app); no app.name on a host absent from HOST_MAP leaves no
+    # service_name at all, which must still be counted as invalid_service.
     cases = {
-        "missing_project": {k: v for k, v in app.items() if k != "namespace"},
-        "invalid_project": dict(app, namespace="Bad_Project"),
-        "missing_env": {k: v for k, v in app.items() if k != "environment"},
-        "invalid_env": dict(app, environment="staging"),
-        "invalid_service": dict(app, name="bad name!"),
+        "missing_project": ("missing_project", {k: v for k, v in app.items() if k != "namespace"}),
+        "invalid_project": ("invalid_project", dict(app, namespace="Bad_Project")),
+        "missing_env": ("missing_env", {k: v for k, v in app.items() if k != "environment"}),
+        "invalid_env": ("invalid_env", dict(app, environment="staging")),
+        "invalid_service": ("invalid_service", dict(app, name="bad name!")),
+        "missing_service": ("invalid_service", {k: v for k, v in app.items() if k != "name"}),
     }
     if c.s.get("PROJECTS"):
-        cases["unknown_project"] = dict(app, namespace=f"unlisted-{c.run}")
-    before = {reason: g.metric_value(g.scrape(alloy), metric, {"reason": reason}) for reason in cases}
-    for reason, case_app in cases.items():
-        payload = g.faro_payload(case_app, "https://inconnu.autre.org/", logs=[g.faro_log(f"{reason}-{c.run}")])
+        cases["unknown_project"] = ("unknown_project", dict(app, namespace=f"unlisted-{c.run}"))
+    reasons = {reason for reason, _app in cases.values()}
+    before = {reason: g.metric_value(g.scrape(alloy), metric, {"reason": reason}) for reason in reasons}
+    for name, (_reason, case_app) in cases.items():
+        payload = g.faro_payload(case_app, "https://inconnu.autre.org/", logs=[g.faro_log(f"{name}-{c.run}")])
         g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    expected = {reason: sum(1 for r, _app in cases.values() if r == reason) for reason in reasons}
 
     def counted():
         text = g.scrape(alloy)
-        return all(g.metric_value(text, metric, {"reason": reason}) > before[reason] for reason in cases)
+        return all(g.metric_value(text, metric, {"reason": r}) >= before[r] + expected[r] for r in reasons)
 
-    g.wait_for(counted, f"{metric} increments for {sorted(cases)}", timeout=30)
+    g.wait_for(counted, f"{metric} increments {expected}", timeout=30)
     time.sleep(3)
-    for reason in cases:
-        expect(not c.logs(f'{{service_name=~".+"}} |= "{reason}-{c.run}"'), f"Faro line with {reason} stored")
+    for name in cases:
+        # A stored line lacks one of the labels: search by each of them.
+        stored = [e for label in sorted(INDEXED) for e in c.logs(f'{{{label}=~".+"}} |= "{name}-{c.run}"')]
+        expect(not stored, f"Faro line {name} stored: {stored}")
 
 
 @section("ip-parity")
@@ -315,7 +328,7 @@ def ip_parity(c):
     ip = "192.0.2.77"
     token = f"parity-{c.run}"
     secrets = "Authorization: Basic dXNlcjpwYXNz access_token=at7Kx2q Bearer fb3Qw8r mail bob@example.com"
-    log = g.faro_log(f"{token} from {ip} card 4111 1111 1111 1111 {secrets}", context={"ip": ip, "db_password": "hunter2x"})
+    log = g.faro_log(f"{token} from {ip} card 4111 1111 1111 1111 {secrets}", context={"ip": ip, "db_password": "hunter2x", "a:b": f"{ip} password=hunter2"})
     event = g.faro_event(f"{token}-event", {"x": ip})
     browser = {"name": "chrome", "version": "128.0.0.0"}
     faro = g.faro_payload(c.faro_app(environment="prod"), f"https://{ip}/login", logs=[log], events=[event], browser=browser)
@@ -326,7 +339,9 @@ def ip_parity(c):
     for line in lines:
         expect(ip not in line and digest in line, f"IP not hashed as sha256(salt+ip): {line}")
     faro_log = next(line for line in lines if "kind=log" in line)
-    expect("[card]" in faro_log and "4111" not in faro_log, f"card not masked in Faro message: {faro_log}")
+    expect(f"{token} from {digest} card [card] " in faro_log, f"card not masked in Faro message: {faro_log}")
+    # A logfmt key outside [A-Za-z0-9_.-] is still one pair: IP hashed, quoted value kept whole.
+    expect(f'context_a:b="{digest} password=[redacted]"' in faro_log, f"context_a:b value rewritten: {faro_log}")
     expect(f"context_ip={digest}" in faro_log, f"context_ip not hashed: {faro_log}")
     # Same free-text secret rules as the OTLP path; a secret-named key is dropped, not redacted.
     for secret in ("dXNlcjpwYXNz", "at7Kx2q", "fb3Qw8r", "bob@example.com", "hunter2x", "context_db_password"):

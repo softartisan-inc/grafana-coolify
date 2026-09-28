@@ -403,9 +403,17 @@ loki.process "faro" {
     template = "{{ with .gc_app_namespace }}{{ . }}{{ end }}"
   }
 
+  // Structured metadata comes from client text: keep a trace_id of 32 lowercase hex digits only,
+  // and a level only from the set Loki itself uses for detected_level (LogLevels of Loki's
+  // pkg/util/constants); otherwise the value is dropped and Loki detects the level.
+  stage.template {
+    source   = "trace_id"
+    template = `{{ with .trace_id }}{{ if regexMatch "^[0-9a-f]{32}$" . }}{{ . }}{{ end }}{{ end }}`
+  }
+
   stage.template {
     source   = "detected_level"
-    template = "{{ with .gc_level }}{{ . }}{{ end }}"
+    template = `{{ with .gc_level }}{{ if has . (list "unknown" "debug" "info" "warn" "error" "fatal" "critical" "trace") }}{{ . }}{{ end }}{{ end }}`
   }
 
   stage.labels {
@@ -426,10 +434,10 @@ loki.process "faro" {
 
   // Why the line must be dropped, empty when it is valid: project missing, malformed or absent
   // from PROJECTS (when PROJECTS is set), env missing or neither prod nor preprod, service name
-  // malformed. Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
+  // missing or malformed. Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
   stage.template {
     source   = "gc_reject"
-    template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9-]{1,64}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ end }}`
+    template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9-]{1,64}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not .service_name }}invalid_service{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ end }}`
   }
 
   stage.drop {
@@ -468,13 +476,14 @@ loki.process "faro" {
     drop_counter_reason = "invalid_service"
   }
 
-  // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair is consumed in
+  // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair (logfmt key:
+  // anything but whitespace, = and ", so context_a:b or a non-ASCII key is one pair) is consumed in
   // turn (a quoted value whole, so text inside a message is never read as a key): a pair whose
   // key matches authorization|cookie|password|token|secret is dropped with its leading space,
   // whatever its value (context_*, session_attr_*, event_data_* are client-controlled).
   stage.replace {
-    expression = `((?:^|\s)[A-Za-z0-9_.-]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
-    replace    = `{{ if not (regexMatch "(?i)^\\s*[A-Za-z0-9_.-]*(?:authorization|cookie|password|token|secret)[A-Za-z0-9_.-]*=" .Value) }}{{ .Value }}{{ end }}`
+    expression = `((?:^|\s)[^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+    replace    = `{{ if not (regexMatch "(?i)^\\s*[^\\s=\"]*(?:authorization|cookie|password|token|secret)[^\\s=\"]*=" .Value) }}{{ .Value }}{{ end }}`
   }
 
   // Then, on the whole line: Bearer tokens, secrets in free text (key=value, key: value,
@@ -507,8 +516,8 @@ loki.process "faro" {
   // are not addresses: browser_*, sdk_*, app_version, *_id, *_ms, *timestamp*, *version*,
   // user_agent* (browser_version=128.0.0.0 stays intact).
   stage.replace {
-    expression = `(?:^|\s)([A-Za-z0-9_.-]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
-    replace    = `{{ $kv := .Value }}{{ $k := regexReplaceAll "=[\\s\\S]*$" $kv "" }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
+    expression = `(?:^|\s)([^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+    replace    = `{{ $kv := .Value }}{{ $k := regexFind "^[^\\s=\"]+" $kv }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
   }
 }
 

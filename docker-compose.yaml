@@ -18,7 +18,7 @@ services:
       - -c
       - "echo '45d62586d0ebc8789747f6d3c73acdb89fec9de5e7eaa7505048f0ed980415fa  /opt/config-guard/guard.45d62586.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.45d62586.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.147fea01.alloy=147fea01dc3184ede6b562f66d84cab09145aee2b7e31901c0d3e6481c2e4dec;/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.bd379961.alloy=bd379961b1c092036c30df2412adcd0b602b1cd8b0ba8fdef41d2ebe8f6dc18a;/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -450,7 +450,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.147fea01.alloy
+      - /etc/alloy/config.bd379961.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -469,8 +469,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.147fea01.alloy
-        target: /etc/alloy/config.147fea01.alloy
+        source: ./config/alloy/config.bd379961.alloy
+        target: /etc/alloy/config.bd379961.alloy
         content: |2
           // grafana-coolify - main Alloy pipeline (spec 7.1).
           // In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
@@ -877,9 +877,17 @@ services:
               template = "{{ with .gc_app_namespace }}{{ . }}{{ end }}"
             }
 
+            // Structured metadata comes from client text: keep a trace_id of 32 lowercase hex digits only,
+            // and a level only from the set Loki itself uses for detected_level (LogLevels of Loki's
+            // pkg/util/constants); otherwise the value is dropped and Loki detects the level.
+            stage.template {
+              source   = "trace_id"
+              template = `{{ with .trace_id }}{{ if regexMatch "^[0-9a-f]{32}$" . }}{{ . }}{{ end }}{{ end }}`
+            }
+
             stage.template {
               source   = "detected_level"
-              template = "{{ with .gc_level }}{{ . }}{{ end }}"
+              template = `{{ with .gc_level }}{{ if has . (list "unknown" "debug" "info" "warn" "error" "fatal" "critical" "trace") }}{{ . }}{{ end }}{{ end }}`
             }
 
             stage.labels {
@@ -900,10 +908,10 @@ services:
 
             // Why the line must be dropped, empty when it is valid: project missing, malformed or absent
             // from PROJECTS (when PROJECTS is set), env missing or neither prod nor preprod, service name
-            // malformed. Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
+            // missing or malformed. Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
             stage.template {
               source   = "gc_reject"
-              template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9-]{1,64}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ end }}`
+              template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9-]{1,64}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not .service_name }}invalid_service{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ end }}`
             }
 
             stage.drop {
@@ -942,13 +950,14 @@ services:
               drop_counter_reason = "invalid_service"
             }
 
-            // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair is consumed in
+            // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair (logfmt key:
+            // anything but whitespace, = and ", so context_a:b or a non-ASCII key is one pair) is consumed in
             // turn (a quoted value whole, so text inside a message is never read as a key): a pair whose
             // key matches authorization|cookie|password|token|secret is dropped with its leading space,
             // whatever its value (context_*, session_attr_*, event_data_* are client-controlled).
             stage.replace {
-              expression = `((?:^|\s)[A-Za-z0-9_.-]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
-              replace    = `{{ if not (regexMatch "(?i)^\\s*[A-Za-z0-9_.-]*(?:authorization|cookie|password|token|secret)[A-Za-z0-9_.-]*=" .Value) }}{{ .Value }}{{ end }}`
+              expression = `((?:^|\s)[^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+              replace    = `{{ if not (regexMatch "(?i)^\\s*[^\\s=\"]*(?:authorization|cookie|password|token|secret)[^\\s=\"]*=" .Value) }}{{ .Value }}{{ end }}`
             }
 
             // Then, on the whole line: Bearer tokens, secrets in free text (key=value, key: value,
@@ -981,8 +990,8 @@ services:
             // are not addresses: browser_*, sdk_*, app_version, *_id, *_ms, *timestamp*, *version*,
             // user_agent* (browser_version=128.0.0.0 stays intact).
             stage.replace {
-              expression = `(?:^|\s)([A-Za-z0-9_.-]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
-              replace    = `{{ $kv := .Value }}{{ $k := regexReplaceAll "=[\\s\\S]*$" $kv "" }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
+              expression = `(?:^|\s)([^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+              replace    = `{{ $kv := .Value }}{{ $k := regexFind "^[^\\s=\"]+" $kv }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
             }
           }
 
