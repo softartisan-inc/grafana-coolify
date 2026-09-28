@@ -48,6 +48,13 @@ class LokiConfigTest(unittest.TestCase):
         self.assertEqual(limits["retention_stream"], [{"selector": '{env="prod"}', "priority": 1, "period": "${LOKI_RETENTION_PROD}"}])
         self.assertIs(limits["allow_structured_metadata"], True)
 
+    def test_global_budgets_are_explicit(self):
+        """Stream cap and ingestion rate are stated, not Loki defaults (5000 streams, 4/6 MB)."""
+        limits = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))["limits_config"]
+        self.assertEqual(limits["max_global_streams_per_user"], 10000)
+        self.assertEqual(limits["ingestion_rate_mb"], 16)
+        self.assertEqual(limits["ingestion_burst_size_mb"], 32)
+
     def test_binds_to_bind_addr_and_ring_is_local(self):
         doc = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
         self.assertEqual(doc["server"]["http_listen_address"], "${BIND_ADDR}")

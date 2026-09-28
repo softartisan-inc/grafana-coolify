@@ -33,6 +33,7 @@ class ReadmeTest(unittest.TestCase):
             "[card]",
             "Risque résiduel connu",
             "${VAR:-",
+            "ingestion_rate_mb",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, README)

@@ -221,7 +221,10 @@ encore en échec sont **abandonnés** (perdus). Pendant une longue panne la file
 Gio. File pleine, `alloy` refuse les nouvelles données et les émetteurs reçoivent une erreur.
 Dimensionner le volume `alloy-data` (l'espace libre du disque qui le porte) en conséquence et
 surveiller l'espace disque de l'hôte pendant une panne prolongée ; la file se vide d'elle-même au
-retour des stockages.
+retour des stockages. Pour que Loki absorbe ce rattrapage sans répondre 429, `config/loki/loki.yaml`
+fixe `ingestion_rate_mb: 16` et `ingestion_burst_size_mb: 32` (défauts de Loki : 4 et 6) : une
+file de l'ordre de 2 Gio de logs se vide en quelques minutes, bien avant la fin de la fenêtre de
+réessai d'une heure.
 
 ## Envoyer des données
 
