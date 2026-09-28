@@ -237,6 +237,17 @@ fixe `ingestion_rate_mb: 16` et `ingestion_burst_size_mb: 32` (défauts de Loki 
 file de l'ordre de 2 Gio de logs se vide en quelques minutes, bien avant la fin de la fenêtre de
 réessai d'une heure.
 
+Le rattrapage tient souvent dans **un seul flux** (le service qui a écrit pendant la panne), or
+Loki limite aussi chaque flux (`project`, `env`, `service_name`), à 3 Mo/s (rafale 15 Mo) par
+défaut : une file pleine (1000 lots de 2048 enregistrements, ~8 Gio à ~4 Kio par enregistrement)
+mettrait ~45 min à passer, trop près de la fenêtre d'une heure. `config/loki/loki.yaml` fixe donc
+`per_stream_rate_limit: 8MB` et `per_stream_rate_limit_burst: 24MB` : la **moitié** du débit du
+tenant, soit ~4 min pour 2 Gio et ~17 min pour 8 Gio sur un seul flux, sans qu'un flux (rattrapage,
+flux Faro bruyant) puisse prendre tout le budget des autres ; la rafale couvre les 10 envois
+concurrents d'~2 Mio de la file et reste sous celle du tenant (32 Mo). Au-delà d'~8 Gio de logs en
+attente sur un seul flux, des lots peuvent encore être abandonnés : raccourcir la panne ou relever
+ces deux plafonds ensemble.
+
 ## Envoyer des données
 
 | Émetteur | Adresse | Protection |

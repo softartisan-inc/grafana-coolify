@@ -55,6 +55,18 @@ class LokiConfigTest(unittest.TestCase):
         self.assertEqual(limits["ingestion_rate_mb"], 16)
         self.assertEqual(limits["ingestion_burst_size_mb"], 32)
 
+    def test_per_stream_rate_is_explicit_and_fits_the_global_budget(self):
+        """Per-stream rate is stated, not Loki's 3 MB/s (burst 15 MB) that would 429 a single-stream backlog."""
+        limits = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))["limits_config"]
+        self.assertEqual(limits.get("per_stream_rate_limit"), "8MB")
+        self.assertEqual(limits.get("per_stream_rate_limit_burst"), "24MB")
+        rate, burst = (int(limits[key].removesuffix("MB")) for key in ("per_stream_rate_limit", "per_stream_rate_limit_burst"))
+        # Half the tenant rate: one stream (a replayed backlog, a Faro stream) cannot starve the others.
+        self.assertEqual(rate * 2, limits["ingestion_rate_mb"])
+        # The burst absorbs the 10 concurrent ~2 MiB pushes of the alloy queue, within the tenant burst.
+        self.assertGreaterEqual(burst, 10 * 2)
+        self.assertLessEqual(burst, limits["ingestion_burst_size_mb"])
+
     def test_binds_to_bind_addr_and_ring_is_local(self):
         doc = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
         self.assertEqual(doc["server"]["http_listen_address"], "${BIND_ADDR}")

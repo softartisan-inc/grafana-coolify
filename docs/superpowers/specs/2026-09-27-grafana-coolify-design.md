@@ -523,7 +523,7 @@ composants expérimentaux.
 
 | Composant | Rétention | Réglage |
 |---|---|---|
-| Loki | `env="prod"` 30 j ; **tout autre `env`** 7 j | `retention_period` = 7 j (défaut) + `retention_stream` `{env="prod"}` = 30 j ; `compactor.retention_enabled: true` ; `compactor.delete_request_store: filesystem` ; plafonds explicites `max_global_streams_per_user: 10000`, `ingestion_rate_mb: 16`, `ingestion_burst_size_mb: 32` (le point Faro public ne peut pas épuiser le budget des flux ; une file Alloy se vide plus vite) ; schéma **tsdb v13** avec `index.period: 24h` (requis pour les métadonnées structurées et la rétention) |
+| Loki | `env="prod"` 30 j ; **tout autre `env`** 7 j | `retention_period` = 7 j (défaut) + `retention_stream` `{env="prod"}` = 30 j ; `compactor.retention_enabled: true` ; `compactor.delete_request_store: filesystem` ; plafonds explicites `max_global_streams_per_user: 10000`, `ingestion_rate_mb: 16`, `ingestion_burst_size_mb: 32`, et par flux `per_stream_rate_limit: 8MB`, `per_stream_rate_limit_burst: 24MB` (le point Faro public ne peut pas épuiser le budget des flux ; une file Alloy se vide plus vite, même concentrée sur un seul flux, qui ne prend jamais plus de la moitié du débit du tenant) ; schéma **tsdb v13** avec `index.period: 24h` (requis pour les métadonnées structurées et la rétention) |
 | Tempo | 7 j | `compactor.compaction.block_retention` (clé de Tempo 2.x ; à revérifier avant un passage en 3.x) |
 | Prometheus | 90 j | `--storage.tsdb.retention.time` + `--storage.tsdb.retention.size` en garde-fou |
 

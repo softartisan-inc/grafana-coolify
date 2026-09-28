@@ -37,6 +37,7 @@ class ReadmeTest(unittest.TestCase):
             "FARO_SERVICES",
             "unknown_service",
             "max_global_streams_per_user",
+            "per_stream_rate_limit",
             "Ne pas ajouter soi-même",
             "--only 1,2,7,8",
             "600 requêtes",
