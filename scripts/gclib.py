@@ -298,7 +298,7 @@ def size_bytes(text):
 
 def yaml_section_value(text, section, key):
     """Value of `key` inside the top-level `section:` block of a YAML dump (first occurrence)."""
-    match = re.search(rf"(?ms)^{re.escape(section)}:\n(?P<body>(?:^[ \-].*\n?)*)", text)
+    match = re.search(rf"(?m)^{re.escape(section)}:\n(?P<body>(?:[ \-].*\n?)*)", text)
     if not match:
         return None
     found = re.search(rf"(?m)^\s+-?\s*{re.escape(key)}: ?(.*)$", match.group("body"))
