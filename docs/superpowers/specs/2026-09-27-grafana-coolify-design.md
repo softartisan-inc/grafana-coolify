@@ -208,7 +208,9 @@ long ».
 ### 4.4 `config-guard`
 
 - Image `alpine` (officielle). `restart: "no"`.
-- Il monte **exactement les mêmes volumes de config** que les services.
+- Il monte en lecture seule le **dossier `./config`** de l'application (`./config:/guard:ro`), là où
+  Coolify écrit les fichiers `content:` : il contrôle donc exactement les fichiers que les services
+  montent, sans en porter une seconde copie (budget de taille, § 4.3).
 - Il échoue si un chemin est absent, vide ou **un dossier**, ou si son empreinte SHA-256 diffère de
   celle que `render.py` a calculée sur la source (injectée dans l'environnement de `config-guard`).
 - Tous les autres services en dépendent (`depends_on: condition: service_completed_successfully`).
@@ -555,7 +557,8 @@ Seul le PostgreSQL de Grafana l'est, par les backups Coolify, hors package.
     d'`alloy` et le répertoire `--storage.path` des deux services (un volume pour `alloy`, un `tmpfs`
     pour `alloy-gateway`) ;
   - `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`.
-- `node-exporter` est le **seul** service à monter l'hôte : `/proc`, `/sys` et `/` en **lecture
+- `node-exporter` est le **seul** service à monter des chemins système de l'hôte (`config-guard` ne
+  monte que `./config`, en lecture seule) : `/proc`, `/sys` et `/` en **lecture
   seule**, en syntaxe courte `:ro` (Coolify reconstruit les montages `bind` en `source:cible` et ne
   garde que le mode d'une syntaxe courte : un `read_only: true` de syntaxe longue disparaît). Il
   n'est pas exposé publiquement.
@@ -717,9 +720,9 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 
 ### 12.3 Bout en bout — `scripts/smoke.py`
 
-Envois par `ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen` (`-otlp-http`,
-`-otlp-attributes`, `-telemetry-attributes`, `-otlp-header`), plus des charges Faro envoyées par
-`curl`. Puis interrogation de Loki, Tempo et Prometheus.
+Envois OTLP/HTTP JSON écrits en Python standard (`scripts/gclib.py` : attributs de ressource et de
+span, en-têtes), `telemetrygen` n'ayant pas de binaire publié pour la version visée, plus des
+charges Faro envoyées de la même façon. Puis interrogation de Loki, Tempo et Prometheus.
 
 1. Log, trace et métrique arrivés avec les **noms effectifs** du § 6.2, par les chemins interne et
    `alloy-gateway` ; log et trace par le chemin Faro, qui n'a pas de chemin métriques (ses mesures
