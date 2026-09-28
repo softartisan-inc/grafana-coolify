@@ -16,9 +16,9 @@ services:
     command:
       - sh
       - -c
-      - "echo '45d62586d0ebc8789747f6d3c73acdb89fec9de5e7eaa7505048f0ed980415fa  /opt/config-guard/guard.45d62586.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.45d62586.sh"
+      - "echo 'e9bdf4fea8ccebe1d5fc11a19ddd3b9e968734112c565735f8d81053444dce1b  /opt/config-guard/guard.e9bdf4fe.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.e9bdf4fe.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.0077ea90.alloy=0077ea90764c07ba4585f045ba771a393496f02e364681268eb9f5fc20862f22;/guard/grafana-setup/setup.9f693cba.py=9f693cbad1972ebe34e01e257194aba1efe9cef484fca4ce6044cfd01283755e;/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.0077ea90.alloy=0077ea90764c07ba4585f045ba771a393496f02e364681268eb9f5fc20862f22;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.15fc4662.yaml=15fc46623a64e87e0a2f6cf7ad70474c4f6d3c41863782af88a4d6a738165393;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -27,8 +27,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.45d62586.sh
-        target: /opt/config-guard/guard.45d62586.sh
+        source: ./config/config-guard/guard.e9bdf4fe.sh
+        target: /opt/config-guard/guard.e9bdf4fe.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -101,8 +101,9 @@ services:
             error "FARO_API_KEY must be at least 16 characters from [A-Za-z0-9._~+/=-] (openssl rand -hex 24)"
           fi
           # PROJECTS is split on commas by a Go template (Faro allow-list): no spaces, no empty item.
+          # Each item: ^[a-z0-9][a-z0-9-]{0,63}$, the rule of grafana-setup (no leading hyphen).
           projects=${PROJECTS:-}
-          if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9-]{1,64}(,[a-z0-9-]{1,64})*$'; then
+          if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
             error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
           fi
           host_map=${HOST_MAP:-}
@@ -1140,7 +1141,7 @@ services:
         condition: service_completed_successfully
     command:
       - python3
-      - /opt/grafana-setup/setup.9f693cba.py
+      - /opt/grafana-setup/setup.f6429835.py
     environment:
       GRAFANA_URL: ${GRAFANA_URL:?GRAFANA_URL is required}
       GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}
@@ -1159,8 +1160,8 @@ services:
       CARDINALITY_ALERT_THRESHOLD: ${CARDINALITY_ALERT_THRESHOLD:-200000}
     volumes:
       - type: bind
-        source: ./config/grafana-setup/setup.9f693cba.py
-        target: /opt/grafana-setup/setup.9f693cba.py
+        source: ./config/grafana-setup/setup.f6429835.py
+        target: /opt/grafana-setup/setup.f6429835.py
         content: |2
           #!/usr/bin/env python3
           """grafana-setup (plan A): idempotently provision datasources and project folders in Grafana.
@@ -1185,7 +1186,8 @@ services:
           LOKI_UID = "gc-loki"
           TEMPO_UID = "gc-tempo"
           PROMETHEUS_UID = "gc-prometheus"
-          PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+          # Same rule as config-guard (guard.sh) for each item of PROJECTS.
+          PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
           # Trace -> logs: every log of the trace, whatever its path (OTLP or Faro), via trace_id metadata.
           TRACE_TO_LOGS_QUERY = '{project=~".+"} | trace_id="${__trace.traceId}"'
           # Fields compared to decide whether an existing datasource must be updated. isDefault is left to
@@ -1275,7 +1277,7 @@ services:
                   if not name:
                       continue
                   if not PROJECT_RE.match(name):
-                      raise SetupError(f"invalid project name in PROJECTS: {name!r} (expected [a-z0-9-]+)")
+                      raise SetupError(f"invalid project name in PROJECTS: {name!r} (expected [a-z0-9][a-z0-9-]{{0,63}})")
                   if name not in projects:
                       projects.append(name)
               return projects

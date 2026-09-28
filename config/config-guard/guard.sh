@@ -69,8 +69,9 @@ if ! matches "${FARO_API_KEY:-}" '^[A-Za-z0-9._~+/=-]{16,}$'; then
   error "FARO_API_KEY must be at least 16 characters from [A-Za-z0-9._~+/=-] (openssl rand -hex 24)"
 fi
 # PROJECTS is split on commas by a Go template (Faro allow-list): no spaces, no empty item.
+# Each item: ^[a-z0-9][a-z0-9-]{0,63}$, the rule of grafana-setup (no leading hyphen).
 projects=${PROJECTS:-}
-if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9-]{1,64}(,[a-z0-9-]{1,64})*$'; then
+if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
   error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
 fi
 host_map=${HOST_MAP:-}

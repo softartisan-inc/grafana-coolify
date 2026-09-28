@@ -21,7 +21,8 @@ MIN_MAJOR = 12
 LOKI_UID = "gc-loki"
 TEMPO_UID = "gc-tempo"
 PROMETHEUS_UID = "gc-prometheus"
-PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Same rule as config-guard (guard.sh) for each item of PROJECTS.
+PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 # Trace -> logs: every log of the trace, whatever its path (OTLP or Faro), via trace_id metadata.
 TRACE_TO_LOGS_QUERY = '{project=~".+"} | trace_id="${__trace.traceId}"'
 # Fields compared to decide whether an existing datasource must be updated. isDefault is left to
@@ -111,7 +112,7 @@ def parse_projects(value):
         if not name:
             continue
         if not PROJECT_RE.match(name):
-            raise SetupError(f"invalid project name in PROJECTS: {name!r} (expected [a-z0-9-]+)")
+            raise SetupError(f"invalid project name in PROJECTS: {name!r} (expected [a-z0-9][a-z0-9-]{{0,63}})")
         if name not in projects:
             projects.append(name)
     return projects

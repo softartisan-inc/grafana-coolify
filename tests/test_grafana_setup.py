@@ -155,6 +155,15 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("invalid project name", result.stdout)
 
+    def test_project_rule_matches_config_guard(self):
+        """Same rule as config-guard: ^[a-z0-9][a-z0-9-]{0,63}$ per item."""
+        self.assertEqual(self.setup_run(PROJECTS="a" * 64).returncode, 0)
+        for value in ("-leading", "a" * 65):
+            with self.subTest(value=value):
+                result = self.setup_run(PROJECTS=f"ok,{value}")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("invalid project name", result.stdout)
+
     def test_missing_variable(self):
         result = self.setup_run(TEMPO_INTERNAL_URL="")
         self.assertEqual(result.returncode, 1)
