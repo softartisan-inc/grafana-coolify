@@ -301,7 +301,14 @@ Noms à utiliser dans les requêtes Grafana :
 
 `alloy` applique, avant tout stockage :
 
-- **Clés sensibles supprimées** : sur le chemin OTLP, tout attribut (ressource, span,
+- **Cartes et tableaux aplatis d'abord** : sur le chemin OTLP, chaque carte d'attributs
+  (ressource, portée d'instrumentation `scope.attributes`, span, événement, log, point de
+  métrique) et chaque corps de log structuré passe par la fonction OTTL stable `flatten` avant les
+  règles ci-dessous : les cartes imbriquées et les tableaux deviennent des clés pointées
+  (`{"user": {"email": …}}` → `user.email`, `"tags": ["a", "b"]` → `tags.0`, `tags.1`), que les
+  règles atteignent à tous les niveaux. Les valeurs numériques gardent leur type. Un corps de log
+  en tableau devient son texte JSON, puis suit les règles du texte libre.
+- **Clés sensibles supprimées** : sur le chemin OTLP, tout attribut (ressource, portée, span,
   événement, log, point de métrique) dont la clé est sensible est **supprimé**, quelle que soit
   sa valeur (pas de marqueur `[redacted]`) ; dans les logs Faro, la paire `clé=valeur` entière
   disparaît. Une clé est sensible quand l'un des mots `authorization`, `cookie(s)`,
@@ -320,11 +327,30 @@ Noms à utiliser dans les requêtes Grafana :
 - **Adresses IP** remplacées par `sha256(IP_HASH_SALT + ip)`, identique sur les chemins OTLP et
   Faro.
 
-Corps de log structurés (cartes) : seul le **premier niveau** est masqué ; les cartes et
-tableaux imbriqués passent **inchangés**. Préférer des corps texte ou plats pour tout ce qui peut
-contenir des données personnelles.
+Pourquoi aplatir : `replace_all_patterns` ne réécrit que les chaînes, et parcourir un tableau
+élément par élément exige les lambdas OTTL, **alpha** (porte `ottl.functions.enableLambda`) et
+exclues par `stability.level = "public-preview"`. `flatten` est la seule fonction stable qui
+descend dans les cartes et les tableaux ; le masquage se fait donc élément par élément plutôt que
+par suppression de l'attribut entier.
 
-Logs Faro : mêmes règles. En plus, `trace_id` n'est conservé que s'il fait 32 caractères
+> **Risque résiduel connu** (masquage) :
+> - **Forme des données** : un attribut tableau ou carte change de forme dans Tempo, Loki et
+>   Prometheus (`http.request.header.accept` → `http.request.header.accept.0` ; en TraceQL,
+>   `span.http.request.header.accept.0`). Dans Loki, rien ne change pour `| json` (les clés
+>   imbriquées y étaient déjà jointes par `_`), sauf les tableaux, désormais indexés (`tags_0`).
+> - **Collision** : une clé pointée littérale égale à un chemin imbriqué (`"a.b"` et
+>   `{"a": {"b": …}}` dans la même carte) ne garde qu'une des deux valeurs, masquée dans les deux cas.
+> - **Cartes** : le motif de carte bancaire ne s'applique qu'aux clés de texte libre de premier
+>   niveau (`message`, `exception.*`) ; `error.message` imbriqué n'est pas examiné pour `[card]`
+>   (les emails, secrets et IP, eux, le sont).
+> - **Exemptions d'IP** : une clé imbriquée hérite du nom de son parent ; tout ce qui se trouve
+>   sous une clé contenant `version` ou `user_agent` n'est pas haché.
+> - **Coût** : chaque carte d'attributs est recopiée par `flatten`, sur chaque span, log et point.
+> - **Octets** : les valeurs binaires (`bytesValue`) ne sont pas examinées.
+
+Logs Faro : mêmes règles. Ce sont des lignes logfmt plates (le récepteur Faro aplatit déjà
+`context_*`, `event_data_*`) : rien d'imbriqué à aplatir. Les traces Faro passent par la même
+transformation que le chemin OTLP (aplatissement et portée compris). En plus, `trace_id` n'est conservé que s'il fait 32 caractères
 hexadécimaux minuscules, et `detected_level` seulement s'il appartient aux niveaux connus de
 Loki ; le niveau Faro `log` n'en fait pas partie, Loki déduit alors le niveau lui-même.
 

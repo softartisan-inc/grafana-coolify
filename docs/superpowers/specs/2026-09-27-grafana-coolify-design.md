@@ -488,13 +488,23 @@ rattrape ce qui a échappé :
 |---|---|---|
 | Email | adresse RFC 5322 simplifiée | `[email]` |
 | Secrets (texte libre) | `Bearer <jeton>`, `Basic`/`Digest <jeton>`, `*_token=`, `*_secret=`, `"refresh_token":"…"` | `[redacted]` |
-| Secrets (attributs) | clés dont un mot vaut `authorization`, `cookie`, `password`, `token`, `secret`… (borné : `input_tokens`, `tokenizer` sont conservés) | **attribut supprimé** (une valeur en liste, comme un en-tête OTel, ne peut pas être réécrite) |
+| Secrets (attributs) | clés dont un mot vaut `authorization`, `cookie`, `password`, `token`, `secret`… (borné : `input_tokens`, `tokenizer` sont conservés), à tout niveau après aplatissement (`user.credentials.password`) | **attribut supprimé** |
 | Numéro de carte | `\b(?:\d[ -]?){12,18}\d\b`, appliqué **seulement** au texte libre (`body`, `message`, `exception.*`), jamais aux clés `*_id`, `*timestamp*`, `*_ms` | `[card]` |
 | Adresse IP (v4 et v6) | adresse complète, dans toutes les valeurs (URL comprises) **sauf** les clés techniques où un nombre pointé est une version : chemin OTLP, clés contenant `version` ou `user_agent` ; logs Faro, `browser_*`, `sdk_*`, `app_version`, `*_id`, `*_ms`, `*timestamp*`, `*version*`, `user_agent*` | SHA-256 de la chaîne **`IP_HASH_SALT` suivi de l'IP**, en hexadécimal complet |
 
+Portée : sur le chemin OTLP, toutes les cartes d'attributs (ressource, **portée
+d'instrumentation** `scope.attributes`, span, événement, log, point de métrique) et le corps de log
+structuré. Chaque carte est d'abord **aplatie** (`flatten`, stable) : cartes imbriquées et tableaux
+deviennent des clés pointées (`user.email`, `tags.0`), masquées élément par élément ; un corps en
+tableau devient son texte JSON. `replace_all_patterns` ne lit que les chaînes et parcourir un tableau
+exigerait les lambdas OTTL (alpha, porte `ottl.functions.enableLambda`) : `flatten` est la seule voie
+stable. Contrepartie acceptée : un attribut tableau ou carte change de forme dans les stockages
+(`k` → `k.0`, `k.1`). Reste hors d'atteinte : le motif de carte bancaire sur les clés de texte libre
+imbriquées, et les valeurs binaires.
+
 Composants :
 
-- Chemin OTLP et traces Faro : `otelcol.processor.transform`, en OTTL, stable :
+- Chemin OTLP et traces Faro : `otelcol.processor.transform`, en OTTL, stable : `flatten`,
   `replace_all_patterns`, et `SHA256(Concat([sel, ip], ""))` pour les IP.
 - Logs Faro : `loki.process` `stage.replace`, stable, avec la fonction de gabarit **`Sha2Hash`**.
   Sa signature est `Sha2Hash(salt, input)` et elle calcule `sha256(salt + input)`. Il faut donc
