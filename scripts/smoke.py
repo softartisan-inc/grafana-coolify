@@ -144,6 +144,48 @@ def reject(c):
     expect(not g.prom_query(c.s["GC_PROM_URL"], f"smoke_{c.run}_orphan_total"), "metric without project reached Prometheus")
 
 
+@section("masking")
+def masking(c):
+    """12.3.4 (OTLP path): emails, Bearer, secrets, cards in free text, IPs hashed; no false positives."""
+    epoch_ms = "1790559058622"
+    body = (
+        f"run {c.run} mail bob@example.com from 203.0.113.9 and 2001:db8::7 "
+        f"card 4111 1111 1111 1111 at {epoch_ms} time 01:30:29 App\\User::find header Bearer abc.def-ghi password=hunter2x"
+    )
+    attributes = {
+        "created_ms": epoch_ms,
+        "event.timestamp": epoch_ms,
+        "user_id": "4111111111111111",
+        "message": f"attr message {epoch_ms}",
+        "http.request.header.authorization": "Basic dXNlcjpwYXNz",
+        "db.password": "hunter2",
+        "client.address": "198.51.100.23",
+        "user_agent.original": "Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36",
+        "browser.version": "128.0.0.0",
+        "net.peer.name": "128.0.0.0",
+    }
+    resource = c.resource("masking")
+    g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(resource, body, attributes))
+    _labels, line, meta = c.wait_logs(f'{{service_name="{resource["service.name"]}"}}')[0]
+    for secret in ("bob@example.com", "203.0.113.9", "2001:db8::7", "4111 1111 1111 1111", "abc.def-ghi", "hunter2x", epoch_ms):
+        expect(secret not in line, f"{secret!r} survived in the log body: {line}")
+    for marker in ("[email]", "[card]", "Bearer [redacted]", "password=[redacted]", c.ip_hash("203.0.113.9"), c.ip_hash("2001:db8::7")):
+        expect(marker in line, f"{marker!r} missing from the log body: {line}")
+    for kept in ("01:30:29", "App\\User::find"):
+        expect(kept in line, f"false positive: {kept!r} was altered: {line}")
+    expect(meta.get("created_ms") == epoch_ms, f"epoch under *_ms was masked: {meta.get('created_ms')}")
+    expect(meta.get("event_timestamp") == epoch_ms, f"epoch under *timestamp* was masked: {meta.get('event_timestamp')}")
+    expect(meta.get("user_id") == "4111111111111111", f"*_id value was masked: {meta.get('user_id')}")
+    expect(meta.get("message") == "attr message [card]", f"epoch in message attribute not masked: {meta.get('message')}")
+    expect(meta.get("http_request_header_authorization") == "[redacted]", f"authorization: {meta}")
+    expect(meta.get("db_password") == "[redacted]", f"password: {meta}")
+    expect(meta.get("client_address") == c.ip_hash("198.51.100.23"), f"client.address: {meta}")
+    # Review focus 1: a browser version is not an address, whatever the key holding it says.
+    expect(meta.get("user_agent_original") == attributes["user_agent.original"], f"user agent hashed: {meta.get('user_agent_original')}")
+    expect(meta.get("browser_version") == "128.0.0.0", f"version hashed: {meta.get('browser_version')}")
+    expect(meta.get("net_peer_name") == c.ip_hash("128.0.0.0"), f"same value under another key not hashed: {meta.get('net_peer_name')}")
+
+
 # --- end of sections ---
 
 

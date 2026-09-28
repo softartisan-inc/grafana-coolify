@@ -42,8 +42,13 @@ otelcol.processor.memory_limiter "default" {
   }
 }
 
-// Short env: deployment.environment.name (or legacy deployment.environment) -> env,
-// original attribute deleted (spec 6.1). Masking is added in the same transform (task 10).
+// 1. Short env: deployment.environment.name (or legacy deployment.environment) -> env,
+//    original attribute deleted (spec 6.1).
+// 2. Masking safety net (spec 8.1): secret keys and Bearer tokens -> [redacted], emails ->
+//    [email], card numbers -> [card] in free text only (body, message, exception.*),
+//    IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip), except in keys holding a version or a user agent
+//    (a browser version 128.0.0.0 is not an address). Regexes are RE2; backticks are Alloy raw
+//    strings.
 otelcol.processor.transform "default" {
   error_mode = "ignore"
 
@@ -54,6 +59,52 @@ otelcol.processor.transform "default" {
       `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
       `delete_key(resource.attributes, "deployment.environment.name")`,
       `delete_key(resource.attributes, "deployment.environment")`,
+      `set(cache["sens"], resource.attributes)`,
+      `keep_matching_keys(cache["sens"], "(?i).*(authorization|cookie|password|token|secret).*")`,
+      `replace_all_patterns(cache["sens"], "value", "^[\\s\\S]*$", "[redacted]")`,
+      `merge_maps(resource.attributes, cache["sens"], "upsert")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  trace_statements {
+    context    = "span"
+    statements = [
+      `set(cache["sens"], span.attributes)`,
+      `keep_matching_keys(cache["sens"], "(?i).*(authorization|cookie|password|token|secret).*")`,
+      `replace_all_patterns(cache["sens"], "value", "^[\\s\\S]*$", "[redacted]")`,
+      `merge_maps(span.attributes, cache["sens"], "upsert")`,
+      `replace_all_patterns(span.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(span.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(span.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], span.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(span.attributes, cache["ip"], "upsert")`,
+      `replace_pattern(span.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.message"] != nil`,
+    ]
+  }
+  trace_statements {
+    context    = "spanevent"
+    statements = [
+      `set(cache["sens"], spanevent.attributes)`,
+      `keep_matching_keys(cache["sens"], "(?i).*(authorization|cookie|password|token|secret).*")`,
+      `replace_all_patterns(cache["sens"], "value", "^[\\s\\S]*$", "[redacted]")`,
+      `merge_maps(spanevent.attributes, cache["sens"], "upsert")`,
+      `replace_all_patterns(spanevent.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(spanevent.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(spanevent.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], spanevent.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(spanevent.attributes, cache["ip"], "upsert")`,
+      `replace_pattern(spanevent.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.message"] != nil`,
+      `replace_pattern(spanevent.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.stacktrace"] != nil`,
     ]
   }
   log_statements {
@@ -63,6 +114,41 @@ otelcol.processor.transform "default" {
       `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
       `delete_key(resource.attributes, "deployment.environment.name")`,
       `delete_key(resource.attributes, "deployment.environment")`,
+      `set(cache["sens"], resource.attributes)`,
+      `keep_matching_keys(cache["sens"], "(?i).*(authorization|cookie|password|token|secret).*")`,
+      `replace_all_patterns(cache["sens"], "value", "^[\\s\\S]*$", "[redacted]")`,
+      `merge_maps(resource.attributes, cache["sens"], "upsert")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  log_statements {
+    context    = "log"
+    statements = [
+      `replace_pattern(log.body, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_pattern(log.body, "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_pattern(log.body, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `replace_pattern(log.body, "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]")`,
+      `replace_pattern(log.body, "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["sens"], log.attributes)`,
+      `keep_matching_keys(cache["sens"], "(?i).*(authorization|cookie|password|token|secret).*")`,
+      `replace_all_patterns(cache["sens"], "value", "^[\\s\\S]*$", "[redacted]")`,
+      `merge_maps(log.attributes, cache["sens"], "upsert")`,
+      `replace_all_patterns(log.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(log.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(log.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], log.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(log.attributes, cache["ip"], "upsert")`,
+      `replace_pattern(log.attributes["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["message"] != nil`,
+      `replace_pattern(log.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.message"] != nil`,
+      `replace_pattern(log.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.stacktrace"] != nil`,
     ]
   }
   metric_statements {
@@ -72,6 +158,33 @@ otelcol.processor.transform "default" {
       `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
       `delete_key(resource.attributes, "deployment.environment.name")`,
       `delete_key(resource.attributes, "deployment.environment")`,
+      `set(cache["sens"], resource.attributes)`,
+      `keep_matching_keys(cache["sens"], "(?i).*(authorization|cookie|password|token|secret).*")`,
+      `replace_all_patterns(cache["sens"], "value", "^[\\s\\S]*$", "[redacted]")`,
+      `merge_maps(resource.attributes, cache["sens"], "upsert")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  metric_statements {
+    context    = "datapoint"
+    statements = [
+      `set(cache["sens"], datapoint.attributes)`,
+      `keep_matching_keys(cache["sens"], "(?i).*(authorization|cookie|password|token|secret).*")`,
+      `replace_all_patterns(cache["sens"], "value", "^[\\s\\S]*$", "[redacted]")`,
+      `merge_maps(datapoint.attributes, cache["sens"], "upsert")`,
+      `replace_all_patterns(datapoint.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(datapoint.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(datapoint.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], datapoint.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(datapoint.attributes, cache["ip"], "upsert")`,
     ]
   }
 
