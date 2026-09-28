@@ -63,8 +63,9 @@ class LokiConfigTest(unittest.TestCase):
         rate, burst = (int(limits[key].removesuffix("MB")) for key in ("per_stream_rate_limit", "per_stream_rate_limit_burst"))
         # Half the tenant rate: one stream (a replayed backlog, a Faro stream) cannot starve the others.
         self.assertEqual(rate * 2, limits["ingestion_rate_mb"])
-        # The burst absorbs the 10 concurrent ~2 MiB pushes of the alloy queue, within the tenant burst.
-        self.assertGreaterEqual(burst, 10 * 2)
+        # Records of 1 to 4 KiB: the burst holds 10 concurrent 2 MiB batches and 3 of the largest (8 MiB),
+        # within the tenant burst.
+        self.assertGreaterEqual(burst, max(10 * 2, 3 * 8))
         self.assertLessEqual(burst, limits["ingestion_burst_size_mb"])
 
     def test_binds_to_bind_addr_and_ring_is_local(self):
