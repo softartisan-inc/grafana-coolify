@@ -1,0 +1,8 @@
+# Downloaded release binaries (tools/fetch-binaries.sh)
+/.bin/
+# Native harness state: logs, data, pids (harness/stack.py)
+/.harness/
+# Local operator values
+/.env
+__pycache__/
+*.pyc

@@ -1,0 +1,267 @@
+# grafana-coolify — compose template (source of docker-compose.yaml; run python3 scripts/render.py).
+# - Each content placeholder is replaced by the bytes of the volume's `source:` file (spec 4.1);
+#   render.py adds the content hash to its source and target paths and to the references to them.
+# - Image tags come from tools/versions.env; config-guard gets the SHA-256 of every config file.
+# - `${VAR}` references are interpolated by Compose/Coolify and must all be in .env.example.
+# - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
+#   long-syntax binds, and the non-root users of the services cannot write those files anyway.
+# - Internal services only `expose:` ports, never `ports:` (spec 3.2).
+# - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
+services:
+  config-guard:
+    image: @@ALPINE_IMAGE@@
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - "echo '@@GUARD_SHA256@@  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
+    environment:
+      CONFIG_GUARD_EXPECTED: "@@CONFIG_GUARD_EXPECTED@@"
+      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
+      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      PROJECTS: ${PROJECTS:-}
+      FARO_SERVICES: ${FARO_SERVICES:-}
+      HOST_MAP: ${HOST_MAP:-}
+      RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
+      TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+    volumes:
+      - type: bind
+        source: ./config/config-guard/guard.sh
+        target: /opt/config-guard/guard.sh
+        content: "@@CONTENT@@"
+        read_only: true
+      # The host directory where Coolify writes the content of every service below:
+      # config-guard checks the very files the services mount (spec 4.4). Short syntax: Coolify
+      # rebuilds bind mounts as "source:target[:mode]" and keeps only a short-syntax mode.
+      - ./config:/guard:ro
+    mem_limit: 32m
+    cpus: 0.1
+
+  loki:
+    image: grafana/loki:@@LOKI_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/etc/loki/loki.yaml
+      - -config.expand-env=true
+    environment:
+      BIND_ADDR: 0.0.0.0
+      LOKI_DATA_DIR: /loki
+      LOKI_RETENTION_PROD: ${LOKI_RETENTION_PROD:-720h}
+      LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-168h}
+    volumes:
+      - type: bind
+        source: ./config/loki/loki.yaml
+        target: /etc/loki/loki.yaml
+        content: "@@CONTENT@@"
+        read_only: true
+      - loki-data:/loki
+    expose:
+      - "3100"
+    mem_limit: 1536m
+    cpus: 1.0
+
+  tempo:
+    image: grafana/tempo:@@TEMPO_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+      - -config.expand-env=true
+    environment:
+      BIND_ADDR: 0.0.0.0
+      TEMPO_DATA_DIR: /var/tempo
+      TEMPO_RETENTION: ${TEMPO_RETENTION:-168h}
+      TEMPO_MAX_ACTIVE_SERIES: ${TEMPO_MAX_ACTIVE_SERIES:-100000}
+      ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-false}
+    volumes:
+      - type: bind
+        source: ./config/tempo/tempo.yaml
+        target: /etc/tempo/tempo.yaml
+        content: "@@CONTENT@@"
+        read_only: true
+      - tempo-data:/var/tempo
+    expose:
+      - "3200"
+      - "4317"
+    mem_limit: 1536m
+    cpus: 1.0
+
+  prometheus:
+    image: prom/prometheus:v@@PROMETHEUS_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.listen-address=0.0.0.0:9090
+      - --web.enable-otlp-receiver
+      - --web.enable-remote-write-receiver
+      - --storage.tsdb.retention.time=${PROM_RETENTION_TIME:-90d}
+      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-100GB}
+      - --enable-feature=${PROM_ENABLE_FEATURES:-}
+    volumes:
+      - type: bind
+        source: ./config/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        content: "@@CONTENT@@"
+        read_only: true
+      - prometheus-data:/prometheus
+    expose:
+      - "9090"
+    mem_limit: 1536m
+    cpus: 1.0
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v@@NODE_EXPORTER_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --web.listen-address=0.0.0.0:9100
+    # Short syntax on purpose: Coolify drops `read_only: true` of a long-syntax bind mount.
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    expose:
+      - "9100"
+    mem_limit: 64m
+    cpus: 0.2
+
+  alloy:
+    image: grafana/alloy:@@ALLOY_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    user: "473:473"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=public-preview
+    environment:
+      SERVICE_FQDN_ALLOY_12347:
+      BIND_ADDR: 0.0.0.0
+      ALLOY_QUEUE_DIR: /var/lib/alloy/queue
+      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
+      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      PROJECTS: ${PROJECTS:-}
+      FARO_SERVICES: ${FARO_SERVICES:-}
+      FARO_RATE: ${FARO_RATE:-100}
+      FARO_BURST: ${FARO_BURST:-200}
+      FARO_MAX_PAYLOAD: ${FARO_MAX_PAYLOAD:-5MiB}
+      HOST_MAP: ${HOST_MAP:-}
+      RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
+      TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+    volumes:
+      - type: bind
+        source: ./config/alloy/config.alloy
+        target: /etc/alloy/config.alloy
+        content: "@@CONTENT@@"
+        read_only: true
+      - alloy-data:/var/lib/alloy
+    labels:
+      # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
+      - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
+    expose:
+      - "4317"
+      - "4318"
+      - "12345"
+      - "12347"
+    mem_limit: 768m
+    cpus: 1.0
+
+  alloy-gateway:
+    image: grafana/alloy:@@ALLOY_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    user: "473:473"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=public-preview
+    environment:
+      SERVICE_FQDN_ALLOY_GATEWAY_4318:
+      BIND_ADDR: 0.0.0.0
+    volumes:
+      - type: bind
+        source: ./config/alloy-gateway/config.alloy
+        target: /etc/alloy/config.alloy
+        content: "@@CONTENT@@"
+        read_only: true
+    tmpfs:
+      - /var/lib/alloy:mode=1777,size=64m
+    labels:
+      - coolify.traefik.middlewares=gc-otlp-auth@file
+    expose:
+      - "4318"
+      - "12345"
+    mem_limit: 256m
+    cpus: 0.5
+
+  grafana-setup:
+    image: @@PYTHON_IMAGE@@
+    restart: "no"
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - python3
+      - /opt/grafana-setup/setup.py
+    environment:
+      GRAFANA_URL: ${GRAFANA_URL:?GRAFANA_URL is required}
+      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}
+      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:?LOKI_INTERNAL_URL is required}
+      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:?TEMPO_INTERNAL_URL is required}
+      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:?PROMETHEUS_INTERNAL_URL is required}
+      PROJECTS: ${PROJECTS:-}
+      # Plan B (dashboards and alerts) reads these; declared now so .env.example stays exhaustive.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      ALERT_EMAILS: ${ALERT_EMAILS:-}
+      ALERT_ERROR_RATE: ${ALERT_ERROR_RATE:-0.05}
+      ALERT_P95_MS: ${ALERT_P95_MS:-1500}
+      ALERT_SILENCE_MIN: ${ALERT_SILENCE_MIN:-15}
+      ALERT_DISK_PCT: ${ALERT_DISK_PCT:-80}
+      CARDINALITY_ALERT_THRESHOLD: ${CARDINALITY_ALERT_THRESHOLD:-200000}
+    volumes:
+      - type: bind
+        source: ./config/grafana-setup/setup.py
+        target: /opt/grafana-setup/setup.py
+        content: "@@CONTENT@@"
+        read_only: true
+    mem_limit: 128m
+    cpus: 0.2
+
+volumes:
+  loki-data:
+  tempo-data:
+  prometheus-data:
+  alloy-data:

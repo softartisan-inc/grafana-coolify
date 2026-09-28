@@ -1,0 +1,9 @@
+# Project ruff configuration: overrides any user-level ruff config so results are reproducible.
+line-length = 160
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[lint.isort]
+known-first-party = ["support", "render", "check", "gclib", "setup", "stack", "edge"]

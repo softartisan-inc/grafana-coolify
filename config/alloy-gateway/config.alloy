@@ -1,0 +1,37 @@
+// grafana-coolify - alloy-gateway: public OTLP/HTTP relay, no processing (spec 5.2).
+// Authentication is done by Traefik (gc-otlp-auth@file) before traffic reaches this port.
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+otelcol.receiver.otlp "gateway" {
+  http {
+    endpoint = sys.env("BIND_ADDR") + ":4318"
+  }
+
+  output {
+    logs    = [otelcol.exporter.otlp.alloy.input]
+    metrics = [otelcol.exporter.otlp.alloy.input]
+    traces  = [otelcol.exporter.otlp.alloy.input]
+  }
+}
+
+// No queue: when alloy is down the sender gets an error and its SDK retries (spec 9.2).
+otelcol.exporter.otlp "alloy" {
+  client {
+    endpoint = "alloy:4317"
+
+    tls {
+      insecure = true
+    }
+  }
+
+  sending_queue {
+    enabled = false
+  }
+
+  retry_on_failure {
+    enabled = false
+  }
+}

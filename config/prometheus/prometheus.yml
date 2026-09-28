@@ -1,0 +1,39 @@
+# Prometheus configuration for grafana-coolify.
+# Flags (listen address, OTLP and remote-write receivers, retention, feature flags) are in the
+# `command:` of compose.template.yaml: that is the only place Compose interpolates variables.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+# OTLP: project, env and tenant become labels instead of ending in target_info.
+# service.name is always translated to `job` (spec 6.2).
+otlp:
+  promote_resource_attributes:
+    - project
+    - env
+    - tenant
+
+storage:
+  tsdb:
+    out_of_order_time_window: 30m
+
+# Internal scrape of the stack (spec 7.4). Names resolve inside the package network.
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+  - job_name: alloy-gateway
+    static_configs:
+      - targets: ["alloy-gateway:12345"]
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]

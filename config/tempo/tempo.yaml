@@ -1,0 +1,85 @@
+# Tempo 2.x monolithic configuration for grafana-coolify.
+# Environment variables are expanded by Tempo itself (-config.expand-env=true); compose.template.yaml
+# sets every one of them (BIND_ADDR, TEMPO_DATA_DIR, TEMPO_RETENTION, TEMPO_MAX_ACTIVE_SERIES, ENABLE_EXEMPLARS).
+stream_over_http_enabled: true
+
+server:
+  http_listen_address: ${BIND_ADDR}
+  http_listen_port: 3200
+  # Internal module-to-module gRPC only; single-binary Tempo registers its rings on 127.0.0.1.
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: 9096
+  log_level: info
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${BIND_ADDR}:4317
+        http:
+          endpoint: ${BIND_ADDR}:4318
+
+ingester:
+  max_block_duration: 5m
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+
+querier:
+  frontend_worker:
+    frontend_address: 127.0.0.1:9096
+
+compactor:
+  compaction:
+    # Tempo 2.x key; re-check before any move to Tempo 3.x (spec 9.1).
+    block_retention: ${TEMPO_RETENTION}
+
+# Span-metrics and service graphs replace PHP request counters (spec 7.2).
+metrics_generator:
+  ring:
+    kvstore:
+      store: inmemory
+  processor:
+    span_metrics:
+      dimensions:
+        - project
+        - env
+        - tenant
+        - http.route
+    service_graphs:
+      dimensions:
+        - project
+        - env
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: ${TEMPO_DATA_DIR}/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        # Exemplars need PROM_ENABLE_FEATURES=exemplar-storage on Prometheus (spec 7.3).
+        send_exemplars: ${ENABLE_EXEMPLARS}
+  traces_storage:
+    path: ${TEMPO_DATA_DIR}/generator/traces
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: ${TEMPO_DATA_DIR}/wal
+    local:
+      path: ${TEMPO_DATA_DIR}/blocks
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors:
+        - span-metrics
+        - service-graphs
+      max_active_series: ${TEMPO_MAX_ACTIVE_SERIES}
+
+usage_report:
+  reporting_enabled: false

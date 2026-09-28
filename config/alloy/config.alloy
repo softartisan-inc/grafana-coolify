@@ -1,0 +1,626 @@
+// grafana-coolify - main Alloy pipeline (spec 7.1).
+// In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
+// Out: traces -> Tempo, logs -> Loki, metrics -> Prometheus.
+// Every runtime value comes from sys.env(); Coolify writes this file byte for byte.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// Persistent sending queue of the three OTLP exporters (spec 9.2).
+otelcol.storage.file "queue" {
+  directory = sys.env("ALLOY_QUEUE_DIR")
+}
+
+// ------------------------------------------------------------------ OTLP path
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = sys.env("BIND_ADDR") + ":4317"
+  }
+
+  http {
+    endpoint = sys.env("BIND_ADDR") + ":4318"
+  }
+
+  output {
+    logs    = [otelcol.processor.memory_limiter.default.input]
+    metrics = [otelcol.processor.memory_limiter.default.input]
+    traces  = [otelcol.processor.memory_limiter.default.input]
+  }
+}
+
+otelcol.processor.memory_limiter "default" {
+  check_interval         = "1s"
+  limit_percentage       = 80
+  spike_limit_percentage = 20
+
+  output {
+    logs    = [otelcol.processor.transform.default.input]
+    metrics = [otelcol.processor.transform.default.input]
+    traces  = [otelcol.processor.transform.default.input]
+  }
+}
+
+// 1. Short env: deployment.environment.name (or legacy deployment.environment) -> env,
+//    original attribute deleted (spec 6.1).
+// 2. Masking safety net (spec 8.1), same rule set on every attribute map and on a map log body:
+//    - secret keys are deleted, whatever the value type (replace_all_patterns only rewrites
+//      strings, and http.request.header.* are arrays). A key is secret when one of the words
+//      authorization, cookie(s), password(s), passwd, token, secret(s), api_key/api-key/apikey
+//      (any case) ends it, or is followed by . _ - or a capital: http.request.header.authorization,
+//      access_token, client_secret, x-api-token, accessToken; not gen_ai.usage.input_tokens,
+//      tokenizer, secretary. Same boundary on the Faro path; tests/test_alloy_masking.py checks
+//      that every copy of a masking literal is identical;
+//    - in string values: Bearer tokens and key=value / "key":"value" secrets (same key rule)
+//      -> [redacted], emails -> [email];
+//    - card numbers -> [card] in free text only (string body, message, exception.*,
+//      span status message), before IP hashing so a digest is never rewritten;
+//    - IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip), except under keys holding a version or a user
+//      agent (a browser version 128.0.0.0 is not an address).
+//    Residual: a map body is masked at its top level only; nested maps and arrays (in the body
+//    or in attributes) pass unchanged, OTTL having no stable function that walks them.
+//    Regexes are RE2; backticks are Alloy raw strings.
+otelcol.processor.transform "default" {
+  // Fail-open trade-off: a statement that errors on one item (unexpected type, bad value) is
+  // skipped and the item goes on, possibly unmasked by that statement, instead of being dropped
+  // with its whole batch ("propagate" would return the error and reject the batch).
+  // The statements are written so that they do not error on valid OTLP data.
+  error_mode = "ignore"
+
+  trace_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+      `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  trace_statements {
+    context    = "span"
+    statements = [
+      `delete_matching_keys(span.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(span.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(span.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(span.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `replace_pattern(span.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.message"] != nil`,
+      `replace_pattern(span.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.stacktrace"] != nil`,
+      `set(cache["ip"], span.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(span.attributes, cache["ip"], "upsert")`,
+      `replace_pattern(span.status.message, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_pattern(span.status.message, "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_pattern(span.status.message, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `replace_pattern(span.status.message, "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]")`,
+      `replace_pattern(span.status.message, "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+    ]
+  }
+  trace_statements {
+    context    = "spanevent"
+    statements = [
+      `delete_matching_keys(spanevent.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(spanevent.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(spanevent.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(spanevent.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `replace_pattern(spanevent.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.message"] != nil`,
+      `replace_pattern(spanevent.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.stacktrace"] != nil`,
+      `set(cache["ip"], spanevent.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(spanevent.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  log_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+      `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  log_statements {
+    context    = "log"
+    statements = [
+      `replace_pattern(log.body, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsString(log.body)`,
+      `replace_pattern(log.body, "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsString(log.body)`,
+      `replace_pattern(log.body, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]") where IsString(log.body)`,
+      `replace_pattern(log.body, "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsString(log.body)`,
+      `replace_pattern(log.body, "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsString(log.body)`,
+      `delete_matching_keys(log.body, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$") where IsMap(log.body)`,
+      `replace_all_patterns(log.body, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsMap(log.body)`,
+      `replace_all_patterns(log.body, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsMap(log.body)`,
+      `replace_all_patterns(log.body, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]") where IsMap(log.body)`,
+      `replace_pattern(log.body["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
+      `replace_pattern(log.body["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
+      `replace_pattern(log.body["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
+      `set(cache["body_ip"], log.body) where IsMap(log.body)`,
+      `delete_matching_keys(cache["body_ip"], "(?i).*(version|user_agent).*") where IsMap(log.body)`,
+      `replace_all_patterns(cache["body_ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsMap(log.body)`,
+      `merge_maps(log.body, cache["body_ip"], "upsert") where IsMap(log.body)`,
+      `delete_matching_keys(log.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(log.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(log.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(log.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `replace_pattern(log.attributes["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["message"] != nil`,
+      `replace_pattern(log.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.message"] != nil`,
+      `replace_pattern(log.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.stacktrace"] != nil`,
+      `set(cache["ip"], log.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(log.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  metric_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+      `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  metric_statements {
+    context    = "datapoint"
+    statements = [
+      `delete_matching_keys(datapoint.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(datapoint.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(datapoint.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(datapoint.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], datapoint.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(datapoint.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+
+  output {
+    logs    = [otelcol.processor.filter.default.input]
+    metrics = [otelcol.processor.filter.default.input]
+    traces  = [otelcol.processor.filter.default.input]
+  }
+}
+
+// Drop everything without project, without env, or whose env is neither prod nor preprod; an
+// empty string counts as missing (spec 6.3). Counters:
+// otelcol_processor_filter_{spans,logs,datapoints}_filtered_total.
+otelcol.processor.filter "default" {
+  error_mode = "ignore"
+
+  traces {
+    span = [
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+    ]
+  }
+
+  logs {
+    log_record = [
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+    ]
+  }
+
+  metrics {
+    datapoint = [
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
+    ]
+  }
+
+  output {
+    logs    = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+// At most 2048 items per batch: with queue_size = 1000 batches, the persistent queue of each
+// exporter holds at most ~2 million items on the alloy-data volume (spec 9.2).
+otelcol.processor.batch "default" {
+  send_batch_size     = 1024
+  send_batch_max_size = 2048
+
+  output {
+    logs    = [otelcol.exporter.otlphttp.loki.input]
+    metrics = [otelcol.exporter.otlphttp.prometheus.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+
+    tls {
+      insecure = true
+    }
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
+  }
+
+  retry_on_failure {
+    max_elapsed_time = "1h"
+  }
+}
+
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
+  }
+
+  retry_on_failure {
+    max_elapsed_time = "1h"
+  }
+}
+
+otelcol.exporter.otlphttp "prometheus" {
+  client {
+    endpoint = "http://prometheus:9090/api/v1/otlp"
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
+  }
+
+  retry_on_failure {
+    max_elapsed_time = "1h"
+  }
+}
+
+// ------------------------------------------------------------------ Faro path
+faro.receiver "default" {
+  server {
+    listen_address = sys.env("BIND_ADDR")
+    listen_port    = 12347
+    // Mandatory: config-guard refuses a key shorter than 16 characters (an empty api_key would
+    // disable the check of faro.receiver).
+    api_key = sys.env("FARO_API_KEY")
+    // CORS is answered by Traefik (gc-faro-cors@file): a second header would break browsers.
+    cors_allowed_origins     = []
+    max_allowed_payload_size = coalesce(sys.env("FARO_MAX_PAYLOAD"), "5MiB")
+
+    rate_limiting {
+      enabled    = true
+      rate       = coalesce(sys.env("FARO_RATE"), "100")
+      burst_size = coalesce(sys.env("FARO_BURST"), "200")
+    }
+  }
+
+  output {
+    logs   = [loki.process.faro.receiver]
+    traces = [otelcol.processor.memory_limiter.faro.input]
+  }
+}
+
+// Faro traces carry no page URL: validate instead of deducing (spec 6.5). project comes from
+// the Faro SDK resource (service.namespace = app.namespace); client tenant/env must match
+// [a-z0-9-]+ and must not be a reserved subdomain, otherwise they are deleted. The "faro"
+// filter then drops a trace whose project or service is not allowed; masking and the
+// project/env filter happen in the shared "default" transform.
+// Like the OTLP path, the Faro trace path starts with a memory limiter.
+otelcol.processor.memory_limiter "faro" {
+  check_interval         = "1s"
+  limit_percentage       = 80
+  spike_limit_percentage = 20
+
+  output {
+    traces = [otelcol.processor.transform.faro.input]
+  }
+}
+
+otelcol.processor.transform "faro" {
+  error_mode = "ignore"
+
+  trace_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["project"], resource.attributes["service.namespace"]) where resource.attributes["project"] == nil and resource.attributes["service.namespace"] != nil`,
+      `set(resource.attributes["project"], resource.attributes["app.namespace"]) where resource.attributes["project"] == nil and resource.attributes["app.namespace"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+      `delete_key(resource.attributes, "env") where resource.attributes["env"] != nil and (not IsMatch(resource.attributes["env"], "^[a-z0-9-]+$") or IsMatch(resource.attributes["env"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
+      `delete_key(resource.attributes, "tenant") where resource.attributes["tenant"] != nil and (not IsMatch(resource.attributes["tenant"], "^[a-z0-9-]+$") or IsMatch(resource.attributes["tenant"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
+    ]
+  }
+
+  trace_statements {
+    context    = "span"
+    statements = [
+      `delete_key(span.attributes, "tenant") where span.attributes["tenant"] != nil and (not IsMatch(span.attributes["tenant"], "^[a-z0-9-]+$") or IsMatch(span.attributes["tenant"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
+    ]
+  }
+
+  output {
+    traces = [otelcol.processor.filter.faro.input]
+  }
+}
+
+// The public Faro endpoint must not mint identities (Loki streams, Tempo series are global
+// budgets shared with the server-side OTLP path). Drop a Faro trace when:
+// - PROJECTS is set and its project is not in it (same rule as the Faro logs);
+// - its service.name is neither in FARO_SERVICES nor a service of HOST_MAP. Closed by default:
+//   both empty, every Faro trace is dropped. The HOST_MAP pattern turns
+//   "example.me=guest-front:prod" into ^(?:(?:example\.me=)?guest-front(?::prod)?)$, a finite set.
+// Counter: otelcol_processor_filter_spans_filtered_total{component_id="otelcol.processor.filter.faro"}.
+otelcol.processor.filter "faro" {
+  // Fail-open like the other processors: a condition error keeps the span (see "default").
+  error_mode = "ignore"
+
+  traces {
+    span = [
+      `not IsMatch("` + sys.env("PROJECTS") + `", "^$") and not IsMatch(resource.attributes["project"], "^(` + string.replace(sys.env("PROJECTS"), ",", "|") + `)$")`,
+      `resource.attributes["service.name"] == nil or resource.attributes["service.name"] == "" or (not IsMatch(resource.attributes["service.name"], "^(` + string.replace(sys.env("FARO_SERVICES"), ",", "|") + `)$") and not IsMatch(resource.attributes["service.name"], "^(?:(?:` + string.replace(string.replace(string.replace(string.replace(sys.env("HOST_MAP"), ".", "\\\\."), "=", "=)?"), ":", "(?::"), ",", ")?|(?:") + `)?)$"))`,
+    ]
+  }
+
+  output {
+    traces = [otelcol.processor.transform.default.input]
+  }
+}
+
+// Faro logs (logfmt lines): deduce env/tenant from the page host (normative algorithm,
+// spec 6.4), map app_* to the contract, emit exactly the Loki names of the OTLP path,
+// validate project/env/service (drop with a reason) and the client tenant, then mask.
+loki.process "faro" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.logfmt {
+    mapping = {
+      "gc_page_url"        = "page_url",
+      "gc_app_name"        = "app_name",
+      "gc_app_namespace"   = "app_namespace",
+      "gc_app_environment" = "app_environment",
+      "gc_client_tenant"   = "session_attr_tenant",
+      "gc_level"           = "level",
+      "trace_id"           = "traceID",
+    }
+  }
+
+  // host := lowercase host of page_url
+  stage.regex {
+    source     = "gc_page_url"
+    expression = `^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]*@)?(?P<gc_host>[^:/?#]+)`
+  }
+
+  stage.template {
+    source   = "gc_host"
+    template = "{{ ToLower .Value }}"
+  }
+
+  // Rules come from the environment. A leading comma keeps the template non-empty.
+  stage.template {
+    source   = "gc_host_map"
+    template = "," + sys.env("HOST_MAP")
+  }
+
+  stage.template {
+    source   = "gc_reserved"
+    template = "," + sys.env("RESERVED_SUBDOMAINS")
+  }
+
+  stage.template {
+    source   = "gc_projects"
+    template = "," + sys.env("PROJECTS")
+  }
+
+  stage.template {
+    source   = "gc_services"
+    template = "," + sys.env("FARO_SERVICES")
+  }
+
+  // HOST_MAP lookup (exact match, has priority): "service:env" or empty.
+  stage.template {
+    source   = "gc_hm_hit"
+    template = `{{ $h := .gc_host }}{{ $r := "" }}{{ if $h }}{{ range $e := splitList "," .gc_host_map }}{{ $kv := splitList "=" $e }}{{ if and (eq (len $kv) 2) (eq (index $kv 0) $h) }}{{ $r = index $kv 1 }}{{ end }}{{ end }}{{ end }}{{ $r }}`
+  }
+
+  stage.regex {
+    source     = "gc_hm_hit"
+    expression = `^(?P<gc_hm_service>[^:]+):(?P<gc_hm_env>.+)$`
+  }
+
+  // Services of HOST_MAP (",guest-front,..."): allowed Faro service names, like FARO_SERVICES.
+  stage.template {
+    source   = "gc_hm_services"
+    template = `{{ range $e := splitList "," .gc_host_map }}{{ $kv := splitList "=" $e }}{{ if eq (len $kv) 2 }},{{ index (splitList ":" (index $kv 1)) 0 }}{{ end }}{{ end }}`
+  }
+
+  // TENANT_HOST_REGEX (named groups sub and dev). Empty variable: a class that never matches.
+  stage.regex {
+    source     = "gc_host"
+    expression = "(?P<gc_host_match>" + coalesce(sys.env("TENANT_HOST_REGEX"), "[^\\s\\S]") + ")"
+  }
+
+  stage.template {
+    source   = "env"
+    template = `{{ if .gc_hm_env }}{{ .gc_hm_env }}{{ else if .gc_host_match }}{{ if .dev }}preprod{{ else }}prod{{ end }}{{ else }}{{ with .gc_app_environment }}{{ . }}{{ end }}{{ end }}`
+  }
+
+  // A tenant sent by the client (unknown host) is validated like on Faro traces (spec 6.5):
+  // [a-z0-9-]+ and not a reserved subdomain, otherwise it is removed.
+  stage.template {
+    source   = "tenant"
+    template = `{{ if .gc_hm_env }}{{ else if .gc_host_match }}{{ if not (has .sub (splitList "," .gc_reserved)) }}{{ .sub }}{{ end }}{{ else }}{{ with .gc_client_tenant }}{{ if and (regexMatch "^[a-z0-9-]+$" .) (not (has . (splitList "," $.gc_reserved))) }}{{ . }}{{ end }}{{ end }}{{ end }}`
+  }
+
+  stage.template {
+    source   = "service_name"
+    template = `{{ if .gc_hm_service }}{{ .gc_hm_service }}{{ else }}{{ with .gc_app_name }}{{ . }}{{ end }}{{ end }}`
+  }
+
+  stage.template {
+    source   = "project"
+    template = "{{ with .gc_app_namespace }}{{ . }}{{ end }}"
+  }
+
+  // Structured metadata comes from client text: keep a trace_id of 32 lowercase hex digits only,
+  // and a level only from the set Loki itself uses for detected_level (LogLevels of Loki's
+  // pkg/util/constants); otherwise the value is dropped and Loki detects the level.
+  stage.template {
+    source   = "trace_id"
+    template = `{{ with .trace_id }}{{ if regexMatch "^[0-9a-f]{32}$" . }}{{ . }}{{ end }}{{ end }}`
+  }
+
+  stage.template {
+    source   = "detected_level"
+    template = `{{ with .gc_level }}{{ if has . (list "unknown" "debug" "info" "warn" "error" "fatal" "critical" "trace") }}{{ . }}{{ end }}{{ end }}`
+  }
+
+  stage.labels {
+    values = {
+      project      = "",
+      env          = "",
+      service_name = "",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      tenant         = "",
+      trace_id       = "",
+      detected_level = "",
+    }
+  }
+
+  // Why the line must be dropped, empty when it is valid: project missing, malformed or absent
+  // from PROJECTS (when PROJECTS is set), env missing or neither prod nor preprod, service name
+  // missing or malformed, or neither in FARO_SERVICES nor a service of HOST_MAP (closed by
+  // default: a client-chosen name must be listed, so the public endpoint cannot mint streams).
+  // Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
+  stage.template {
+    source   = "gc_reject"
+    template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9][a-z0-9-]{0,63}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not .service_name }}invalid_service{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ else if not (or (has .service_name (splitList "," .gc_services)) (has .service_name (splitList "," .gc_hm_services))) }}unknown_service{{ end }}`
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "missing_project"
+    drop_counter_reason = "missing_project"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "invalid_project"
+    drop_counter_reason = "invalid_project"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "unknown_project"
+    drop_counter_reason = "unknown_project"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "missing_env"
+    drop_counter_reason = "missing_env"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "invalid_env"
+    drop_counter_reason = "invalid_env"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "invalid_service"
+    drop_counter_reason = "invalid_service"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "unknown_service"
+    drop_counter_reason = "unknown_service"
+  }
+
+  // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair (logfmt key:
+  // anything but whitespace, = and ", so context_a:b or a non-ASCII key is one pair) is consumed in
+  // turn (a quoted value whole, so text inside a message is never read as a key): a pair whose
+  // key is secret (same word list and boundary as the OTLP key deletion) is dropped with its
+  // leading space, whatever its value (context_*, session_attr_*, event_data_* are
+  // client-controlled).
+  stage.replace {
+    expression = `((?:^|\s)[^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+    replace    = `{{ if not (regexMatch "^\\s*[^\\s=\"]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][^\\s=\"]*|[A-Z][^\\s=\"]*)?=" .Value) }}{{ .Value }}{{ end }}`
+  }
+
+  // Then, on the whole line: Bearer tokens, secrets in free text (key=value, key: value,
+  // "key":"value", logfmt-escaped \"key\":\"value\", with an optional Basic/Digest/Token/ApiKey
+  // scheme, any secret key: access_token, client_secret...), emails.
+  stage.replace {
+    expression = `(?i)\bbearer\s+([A-Za-z0-9._~+/=-]+)`
+    replace    = "[redacted]"
+  }
+
+  stage.replace {
+    expression = `\b[\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\w-]*|[A-Z][\w-]*)?\\?"?\s*[:=]\s*\\?"?((?:(?i:basic|digest|token|apikey)\s+)?[^\s"\\&,;]+)`
+    replace    = "[redacted]"
+  }
+
+  stage.replace {
+    expression = `([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})`
+    replace    = "[email]"
+  }
+
+  // Card numbers in free text only: message, value, stacktrace (spec 8.1), before IP hashing
+  // so a digest is never rewritten.
+  stage.replace {
+    expression = `(?:^|\s)(?:message|value|stacktrace)=("(?:[^"\\]|\\.)*"|\S*)`
+    replace    = `{{ regexReplaceAll "\\b(?:\\d[ -]?){12,18}\\d\\b" .Value "[card]" }}`
+  }
+
+  // Every IPv4/IPv6 of every key=value pair hashed as sha256(salt + ip) - Sha2Hash(salt, input),
+  // salt first, same digest as the OTTL SHA256 - except in technical keys whose dotted numbers
+  // are not addresses: browser_*, sdk_*, app_version, *_id, *_ms, *timestamp*, *version*,
+  // user_agent* (browser_version=128.0.0.0 stays intact).
+  stage.replace {
+    expression = `(?:^|\s)([^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+    replace    = `{{ $kv := .Value }}{{ $k := regexFind "^[^\\s=\"]+" $kv }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
+  }
+}
+
+// No WAL for Faro logs: loki.write's WAL is experimental; a limited loss is accepted (spec 9.2).
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
