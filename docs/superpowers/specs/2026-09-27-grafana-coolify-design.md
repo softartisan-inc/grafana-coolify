@@ -36,7 +36,7 @@ Le package ne réinvente rien de ce que Coolify fournit déjà :
 Le premier consommateur est **IN IMMO** : un SaaS multi-tenant de 7 projets, en prod et en préprod,
 sur un seul serveur Coolify (48 Go RAM, 500 Go NVMe). Le package est **générique** : aucun domaine,
 aucune règle et aucun secret propres à IN IMMO n'y figurent. Tout passe par les variables
-d'environnement Coolify, et `check.sh` refuse tout secret écrit en dur (§ 12.1).
+d'environnement Coolify, et `check.py` refuse tout secret écrit en dur (§ 12.1).
 
 ### 1.2 Vocabulaire
 
@@ -122,7 +122,7 @@ Coolify (un serveur) — réseau partagé « coolify »
 - **Hypothèse de sécurité :** le serveur a un seul opérateur, et **tout conteneur du réseau
   `coolify` est de confiance**. Un voisin compromis pourrait lire les logs (masqués) et envoyer des
   données.
-- **Règle vérifiée par `check.sh` :** aucun service interne ne déclare `ports:`, seulement `expose:`.
+- **Règle vérifiée par `check.py` :** aucun service interne ne déclare `ports:`, seulement `expose:`.
 - **Évolution possible** (§ 15) : un réseau interne dédié, avec Grafana rattaché à la main.
 
 ### 3.3 Noms internes
@@ -152,7 +152,7 @@ Grafana, sur une vraie instance.
 - `config/` contient les **fichiers sources lisibles** : `alloy/config.alloy`,
   `alloy-gateway/config.alloy`, `loki/loki.yaml`, `tempo/tempo.yaml`,
   `prometheus/prometheus.yml`, `grafana-setup/…`.
-- `scripts/render.sh` **génère** `docker-compose.yaml` à partir de `compose.template.yaml`, en
+- `scripts/render.py` **génère** `docker-compose.yaml` à partir de `compose.template.yaml`, en
   insérant chaque fichier dans un bloc `content:` de volume `bind`. Le fichier généré commence par
   « généré — ne pas modifier » et **est versionné** : c'est lui que Coolify déploie.
 - `compose.dev.yaml` (local uniquement) monte directement `config/` et ajoute un **Grafana de test**.
@@ -163,7 +163,7 @@ Grafana, sur une vraie instance.
 - Le code de Coolify (`parsers.php`, `LocalFileVolume::saveStorageOnServer`) montre que le bloc
   `content:` **ne passe jamais par Docker Compose**. Coolify le retire du compose, puis l'écrit sur
   l'hôte **octet pour octet**, sans substitution.
-- Règle : **`render.sh` insère chaque fichier sans aucune transformation**, et en particulier sans
+- Règle : **`render.py` insère chaque fichier sans aucune transformation**, et en particulier sans
   échapper les `$`. `$__rate_interval`, `${DS_X}` ou `$1` arrivent intacts.
 - Les variables d'environnement sont résolues **par l'outil lui-même**, à l'exécution :
   - Alloy : `sys.env("VAR")` ;
@@ -182,7 +182,7 @@ long ».
 
 - La limite du noyau (`MAX_ARG_STRLEN`, 128 Kio) porte sur la chaîne **encodée en base64**, qui
   pèse environ 4/3 du fichier brut.
-- `check.sh` mesure donc la **taille base64** de `docker-compose.yaml` et **échoue au-delà de
+- `check.py` mesure donc la **taille base64** de `docker-compose.yaml` et **échoue au-delà de
   120 Kio**, ce qui laisse de la marge pour le reste de la commande. Cela représente environ 90 Ko
   bruts.
 - Les tableaux de bord (plan B) sont les plus lourds. S'ils font dépasser le budget, ils sortent du
@@ -194,7 +194,7 @@ long ».
 - Image `alpine` (officielle). `restart: "no"`.
 - Il monte **exactement les mêmes volumes de config** que les services.
 - Il échoue si un chemin est absent, vide ou **un dossier**, ou si son empreinte SHA-256 diffère de
-  celle que `render.sh` a calculée sur la source (injectée dans l'environnement de `config-guard`).
+  celle que `render.py` a calculée sur la source (injectée dans l'environnement de `config-guard`).
 - Tous les autres services en dépendent (`depends_on: condition: service_completed_successfully`).
 
 Une régression Coolify produit ainsi un échec clair au déploiement, au lieu d'un service qui démarre
@@ -611,9 +611,9 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 
 ## 11. Variables d'environnement
 
-- `.env.example` fait foi. `check.sh` vérifie que **chaque** `${VAR}` de `compose.template.yaml`
+- `.env.example` fait foi. `check.py` vérifie que **chaque** `${VAR}` de `compose.template.yaml`
   y figure, et inversement, à l'exception des variables purement documentaires (`ALLOY_INTERNAL_URL`),
-  listées dans `check.sh`. Les blocs `content:` sont **exclus** de ce contrôle : leurs `${…}` sont
+  listées dans `check.py`. Les blocs `content:` sont **exclus** de ce contrôle : leurs `${…}` sont
   résolus par les outils (§ 4.2), ou sont des variables de tableaux de bord.
 - Les réglages Traefik (htpasswd, regex d'origines, débit et taille côté Traefik) ne sont **pas**
   des variables. Ils sont dans la configuration dynamique (§ 5.4), décrite par
@@ -643,12 +643,18 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 
 ## 12. Tests et vérification
 
-- Tous les tests tournent **en local** (Docker, via `compose.dev.yaml`) **et** sur un **déploiement
-  de recette** Coolify.
+- Tous les tests tournent **en local** **et** sur un **déploiement de recette** Coolify.
+- En local, deux bancs :
+  - `compose.dev.yaml`, pour une machine avec Docker ;
+  - `harness/`, un **banc natif sans Docker**. Il lance les binaires officiels (téléchargés et
+    vérifiés par `tools/fetch-binaries.sh` aux versions de `tools/versions.env`) avec les **mêmes
+    commandes, variables et fichiers** que ceux lus dans `compose.template.yaml`, chaque service
+    sur sa propre adresse de boucle locale. C'est le banc de la CI et des environnements où Docker
+    ne peut pas créer de conteneurs.
 - Chaque test est **prouvé capable d'échouer** : chaque assertion est jouée une fois contre une
   config volontairement cassée.
 
-### 12.1 Statique — `scripts/check.sh`
+### 12.1 Statique — `scripts/check.py`
 
 1. `docker-compose.yaml` à jour : rendu puis `diff` avec la version versionnée.
 2. Taille encodée en base64 ≤ 120 Kio (§ 4.3).
@@ -660,11 +666,11 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
    littérale non vide.
 7. Validateurs officiels : `alloy validate` (les deux configs), `loki -verify-config`,
    `tempo -config.verify`, `promtool check config`.
-8. `shellcheck` et `ruff` sur les scripts.
+8. `ruff` sur les scripts Python ; `shellcheck` sur les scripts shell (`config-guard`, outils).
 
 ### 12.2 Unitaires
 
-- **`render.sh`** :
+- **`render.py`** :
   - chaque bloc `content:`, relu par un parseur YAML, est **identique octet pour octet** au fichier de
     `config/`. Le test utilise un fichier contenant `$__rate_interval`, `${DS_X}`, `$$`, `$1`, des
     tabulations, des lignes vides en fin de fichier et des caractères non ASCII ;
@@ -679,7 +685,7 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
   - version de Grafana < 12 : arrêt propre ;
   - token jamais présent dans la sortie.
 
-### 12.3 Bout en bout — `scripts/smoke.sh`
+### 12.3 Bout en bout — `scripts/smoke.py`
 
 Envois par `ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen` (`-otlp-http`,
 `-otlp-attributes`, `-telemetry-attributes`, `-otlp-header`), plus des charges Faro envoyées par
@@ -709,7 +715,7 @@ Envois par `ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen`
 11. Rétention effective, lue dans `/config` de Loki, dans la config de Tempo et dans les flags de
    Prometheus : conforme aux variables.
 
-### 12.4 Sécurité — `scripts/security.sh`
+### 12.4 Sécurité — `scripts/security.py`
 
 1. Loki, Tempo, Prometheus, node-exporter, les ports 4317, 4318, 12345 d'`alloy` et 12345
    d'`alloy-gateway` : **injoignables** depuis l'extérieur.
@@ -765,7 +771,9 @@ grafana-coolify/
 │   ├── prometheus/prometheus.yml
 │   └── grafana-setup/         # setup.py, dashboards/*.json, alerts/*.json
 ├── traefik/grafana-coolify.yaml.example   # middlewares @file (modèle, sans secret)
-├── scripts/                   # render.sh, check.sh, smoke.sh, security.sh
+├── scripts/                   # render.py, check.py, smoke.py, security.py (Python, stdlib)
+├── harness/                   # banc natif sans Docker (§ 12)
+├── tools/                     # fetch-binaries.sh, versions.env
 ├── docs/superpowers/specs/
 ├── .env.example
 ├── README.md                  # déploiement pas à pas (FR)
@@ -788,7 +796,7 @@ messages de commit et branches en **anglais**.
 5. Dans Grafana : créer un compte de service (rôle **Admin**), puis copier son token dans
    `GRAFANA_SA_TOKEN`.
 6. Déployer : `config-guard` démarre en premier, puis les services, puis `grafana-setup`.
-7. Lancer `smoke.sh` et `security.sh` contre le déploiement.
+7. Lancer `smoke.py` et `security.py` contre le déploiement.
 8. Configurer une **sonde externe** (hors serveur) sur les URL publiques. C'est la seule alerte qui
    survit à une panne du serveur.
 
@@ -802,7 +810,7 @@ messages de commit et branches en **anglais**.
 | Voisin compromis sur le réseau `coolify` : lecture des logs, injection de données | Moyenne | Hypothèse énoncée (§ 3.2) ; évolution possible : réseau interne dédié |
 | Régression Coolify sur les montages de fichiers | Moyenne | Blocs `content:` + `config-guard` |
 | Compose au-delà de la limite de la ligne de commande | Moyenne | Budget de 120 Kio encodés en base64, vérifié ; tableaux de bord téléchargés au besoin (§ 4.3) |
-| Configuration dynamique Traefik hors dépôt : oubliée lors d'un redéploiement sur un autre serveur | Moyenne | `security.sh` échoue tant que les middlewares `@file` sont absents ; étape 3 du README |
+| Configuration dynamique Traefik hors dépôt : oubliée lors d'un redéploiement sur un autre serveur | Moyenne | `security.py` échoue tant que les middlewares `@file` sont absents ; étape 3 du README |
 | Fuite de middlewares Traefik (Coolify #9886) | Moyenne | Test § 12.4.7 après chaque mise à jour de Coolify |
 | API d'alerting Grafana dépréciée | Moyenne | Appels isolés, bascule localisée |
 | Explosion de cardinalité via `tenant` | Moyenne | Garde-fous § 8.2 |
