@@ -315,7 +315,51 @@ faro.receiver "default" {
 
   output {
     logs   = [loki.process.faro.receiver]
-    traces = [otelcol.processor.memory_limiter.default.input]
+    traces = [otelcol.processor.memory_limiter.faro.input]
+  }
+}
+
+// Faro traces carry no page URL: validate instead of deducing (spec 6.5). project comes from
+// the Faro SDK resource (service.namespace = app.namespace); client tenant/env must match
+// [a-z0-9-]+ and must not be a reserved subdomain, otherwise they are deleted.
+// Masking and the project/env filter then happen in the shared "default" transform.
+// Like the OTLP path, the Faro trace path starts with a memory limiter.
+otelcol.processor.memory_limiter "faro" {
+  check_interval         = "1s"
+  limit_percentage       = 80
+  spike_limit_percentage = 20
+
+  output {
+    traces = [otelcol.processor.transform.faro.input]
+  }
+}
+
+otelcol.processor.transform "faro" {
+  error_mode = "ignore"
+
+  trace_statements {
+    context    = "resource"
+    statements = [
+      `set(resource.attributes["project"], resource.attributes["service.namespace"]) where resource.attributes["project"] == nil and resource.attributes["service.namespace"] != nil`,
+      `set(resource.attributes["project"], resource.attributes["app.namespace"]) where resource.attributes["project"] == nil and resource.attributes["app.namespace"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil`,
+      `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
+      `delete_key(resource.attributes, "deployment.environment.name")`,
+      `delete_key(resource.attributes, "deployment.environment")`,
+      `delete_key(resource.attributes, "env") where resource.attributes["env"] != nil and (not IsMatch(resource.attributes["env"], "^[a-z0-9-]+$") or IsMatch(resource.attributes["env"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
+      `delete_key(resource.attributes, "tenant") where resource.attributes["tenant"] != nil and (not IsMatch(resource.attributes["tenant"], "^[a-z0-9-]+$") or IsMatch(resource.attributes["tenant"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
+    ]
+  }
+
+  trace_statements {
+    context    = "span"
+    statements = [
+      `delete_key(span.attributes, "tenant") where span.attributes["tenant"] != nil and (not IsMatch(span.attributes["tenant"], "^[a-z0-9-]+$") or IsMatch(span.attributes["tenant"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
+    ]
+  }
+
+  output {
+    traces = [otelcol.processor.transform.default.input]
   }
 }
 

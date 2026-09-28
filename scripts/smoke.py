@@ -354,6 +354,30 @@ def ip_parity(c):
     expect(f"event_data_x={digest}" in faro_event, f"event_data_x not hashed: {faro_event}")
 
 
+@section("faro-traces")
+def faro_traces(c):
+    """12.3.3 + 12.3.9 (traces): tenant/env validation, legacy deployment.environment -> env."""
+    trace_id = g.new_trace_id()
+    resource = {"service.name": f"web-{c.run}", "service.namespace": c.project, "deployment.environment": "prod", "tenant": "ACME"}
+    spans = [
+        g.span(trace_id, "valid", {"tenant": "acme"}, kind=3),
+        g.span(trace_id, "reserved", {"tenant": "www"}, kind=3),
+        g.span(trace_id, "badformat", {"tenant": "Acme Corp"}, kind=3),
+    ]
+    payload = g.faro_payload(c.faro_app(environment="prod"), "https://acme.example.me/", traces=g.otlp_traces(resource, spans))
+    g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    resource_attrs, _ = g.trace_resources_and_spans(c.wait_trace(trace_id))[0]
+    expect(resource_attrs.get("project") == c.project, f"project not mapped from service.namespace: {resource_attrs}")
+    expect(resource_attrs.get("env") == "prod", f"env not moved from deployment.environment: {resource_attrs}")
+    expect("deployment.environment" not in resource_attrs, f"legacy attribute kept: {resource_attrs}")
+    expect("tenant" not in resource_attrs, f"malformed resource tenant kept: {resource_attrs}")
+    trace = g.tempo_trace(c.s["GC_TEMPO_URL"], trace_id)
+    by_name = {s["name"]: g.otlp_attr_map(s.get("attributes")) for rs in trace["resourceSpans"] for sc in rs["scopeSpans"] for s in sc["spans"]}
+    expect(by_name["valid"].get("tenant") == "acme", f"valid tenant removed: {by_name['valid']}")
+    expect("tenant" not in by_name["reserved"], f"reserved tenant kept: {by_name['reserved']}")
+    expect("tenant" not in by_name["badformat"], f"malformed tenant kept: {by_name['badformat']}")
+
+
 # --- end of sections ---
 
 
