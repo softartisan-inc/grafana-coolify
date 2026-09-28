@@ -44,7 +44,15 @@ otelcol.processor.memory_limiter "default" {
 
 // 1. Short env: deployment.environment.name (or legacy deployment.environment) -> env,
 //    original attribute deleted (spec 6.1).
-// 2. Masking safety net (spec 8.1), same rule set on every attribute map and on a map log body:
+// 2. Masking safety net (spec 8.1), same rule set on every attribute map (resource, scope, span,
+//    span event, log, data point) and on a map log body:
+//    - every such map is first flattened (flatten, stable): nested maps and arrays become dotted
+//      leaves (user.profile.email, tags.0), so the rules below reach them; replace_all_patterns
+//      only rewrites string values, and walking a slice element-wise needs lambdas (alpha,
+//      ottl.functions.enableLambda gate). Scalar types are kept. No resolveConflicts: it would
+//      name array elements k, k.0, k.1 instead of k.0, k.1, k.2; a literal dotted key equal to a
+//      nested path keeps one of the two values (both masked). A list log body becomes its JSON
+//      text first;
 //    - secret keys are deleted, whatever the value type (replace_all_patterns only rewrites
 //      strings, and http.request.header.* are arrays). A key is secret when one of the words
 //      authorization, cookie(s), password(s), passwd, token, secret(s), api_key/api-key/apikey
@@ -58,8 +66,9 @@ otelcol.processor.memory_limiter "default" {
 //      span status message), before IP hashing so a digest is never rewritten;
 //    - IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip), except under keys holding a version or a user
 //      agent (a browser version 128.0.0.0 is not an address).
-//    Residual: a map body is masked at its top level only; nested maps and arrays (in the body
-//    or in attributes) pass unchanged, OTTL having no stable function that walks them.
+//    Residual: card numbers are only looked for under the top-level free-text keys (message,
+//    exception.*), not in their nested copies; flattening changes the shape of array and map
+//    attributes (k -> k.0, k.1) in Tempo, Loki and Prometheus.
 //    Regexes are RE2; backticks are Alloy raw strings.
 otelcol.processor.transform "default" {
   // Fail-open trade-off: a statement that errors on one item (unexpected type, bad value) is
@@ -75,6 +84,7 @@ otelcol.processor.transform "default" {
       `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
       `delete_key(resource.attributes, "deployment.environment.name")`,
       `delete_key(resource.attributes, "deployment.environment")`,
+      `flatten(resource.attributes)`,
       `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
       `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
@@ -86,8 +96,23 @@ otelcol.processor.transform "default" {
     ]
   }
   trace_statements {
+    context    = "scope"
+    statements = [
+      `flatten(scope.attributes)`,
+      `delete_matching_keys(scope.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(scope.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(scope.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(scope.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], scope.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(scope.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  trace_statements {
     context    = "span"
     statements = [
+      `flatten(span.attributes)`,
       `delete_matching_keys(span.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
       `replace_all_patterns(span.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(span.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
@@ -108,6 +133,7 @@ otelcol.processor.transform "default" {
   trace_statements {
     context    = "spanevent"
     statements = [
+      `flatten(spanevent.attributes)`,
       `delete_matching_keys(spanevent.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
       `replace_all_patterns(spanevent.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(spanevent.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
@@ -127,6 +153,7 @@ otelcol.processor.transform "default" {
       `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
       `delete_key(resource.attributes, "deployment.environment.name")`,
       `delete_key(resource.attributes, "deployment.environment")`,
+      `flatten(resource.attributes)`,
       `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
       `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
@@ -138,13 +165,29 @@ otelcol.processor.transform "default" {
     ]
   }
   log_statements {
+    context    = "scope"
+    statements = [
+      `flatten(scope.attributes)`,
+      `delete_matching_keys(scope.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(scope.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(scope.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(scope.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], scope.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(scope.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  log_statements {
     context    = "log"
     statements = [
+      `set(log.body, String(log.body)) where IsList(log.body)`,
       `replace_pattern(log.body, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsString(log.body)`,
       `replace_pattern(log.body, "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsString(log.body)`,
       `replace_pattern(log.body, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]") where IsString(log.body)`,
       `replace_pattern(log.body, "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsString(log.body)`,
       `replace_pattern(log.body, "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsString(log.body)`,
+      `flatten(log.body) where IsMap(log.body)`,
       `delete_matching_keys(log.body, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$") where IsMap(log.body)`,
       `replace_all_patterns(log.body, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsMap(log.body)`,
       `replace_all_patterns(log.body, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsMap(log.body)`,
@@ -156,6 +199,7 @@ otelcol.processor.transform "default" {
       `delete_matching_keys(cache["body_ip"], "(?i).*(version|user_agent).*") where IsMap(log.body)`,
       `replace_all_patterns(cache["body_ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsMap(log.body)`,
       `merge_maps(log.body, cache["body_ip"], "upsert") where IsMap(log.body)`,
+      `flatten(log.attributes)`,
       `delete_matching_keys(log.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
       `replace_all_patterns(log.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(log.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
@@ -176,6 +220,7 @@ otelcol.processor.transform "default" {
       `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
       `delete_key(resource.attributes, "deployment.environment.name")`,
       `delete_key(resource.attributes, "deployment.environment")`,
+      `flatten(resource.attributes)`,
       `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
       `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
@@ -187,8 +232,23 @@ otelcol.processor.transform "default" {
     ]
   }
   metric_statements {
+    context    = "scope"
+    statements = [
+      `flatten(scope.attributes)`,
+      `delete_matching_keys(scope.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+      `replace_all_patterns(scope.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+      `replace_all_patterns(scope.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+      `replace_all_patterns(scope.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+      `set(cache["ip"], scope.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(scope.attributes, cache["ip"], "upsert")`,
+    ]
+  }
+  metric_statements {
     context    = "datapoint"
     statements = [
+      `flatten(datapoint.attributes)`,
       `delete_matching_keys(datapoint.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
       `replace_all_patterns(datapoint.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(datapoint.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
