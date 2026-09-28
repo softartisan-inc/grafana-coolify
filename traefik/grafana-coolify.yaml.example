@@ -1,0 +1,49 @@
+# grafana-coolify - Traefik middlewares (dynamic configuration, spec 5.4).
+# Paste into Coolify -> Servers -> Proxy -> Dynamic Configurations (one file per server).
+# Replace before use:
+#   - the htpasswd lines: one per project, generated with `openssl passwd -apr1`, written between
+#     double quotes, with `$` NOT doubled;
+#   - the regular expression of the origins allowed to send Faro data.
+# Revoking a project = deleting its line: Traefik reloads this file without any redeployment.
+# The services reference these middlewares through the coolify.traefik.middlewares labels of
+# compose.template.yaml (alloy-gateway: gc-otlp-auth; alloy: gc-faro-cors, then gc-faro-ratelimit,
+# then gc-faro-body). CORS comes first so that every answer, a 429 included, carries the CORS
+# headers; Traefik answers the preflight OPTIONS requests itself, before the rate limit.
+http:
+  middlewares:
+    gc-otlp-auth:
+      basicAuth:
+        # Do not forward the credentials to alloy-gateway.
+        removeHeader: true
+        users:
+          - "example-project:$apr1$CHANGEME$0000000000000000000000"
+    gc-faro-cors:
+      headers:
+        accessControlAllowOriginListRegex:
+          - "^https://([a-z0-9-]+\\.)?example\\.com$"
+        accessControlAllowMethods:
+          - POST
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Content-Type
+          - x-api-key
+          - x-faro-session-id
+        accessControlMaxAge: 600
+        addVaryHeader: true
+    gc-faro-ratelimit:
+      # Per source IP. An agency behind one NAT shares this quota: keep it generous.
+      rateLimit:
+        average: 50
+        burst: 100
+        period: 1s
+        # Behind another proxy (Cloudflare...), every request comes from the proxy's IP: count
+        # the client IP instead, the one the proxy appends to X-Forwarded-For. Also declare the
+        # proxy's ranges in forwardedHeaders.trustedIPs of the Traefik entry point, otherwise
+        # Traefik discards that header.
+        # sourceCriterion:
+        #   ipStrategy:
+        #     depth: 1
+    gc-faro-body:
+      buffering:
+        # Same value as FARO_MAX_PAYLOAD (5MiB).
+        maxRequestBodyBytes: 5242880
