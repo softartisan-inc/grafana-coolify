@@ -185,7 +185,9 @@ Attendu :
 
 Le compose donne une valeur de repli à `TEMPO_MAX_ACTIVE_SERIES` (`${TEMPO_MAX_ACTIVE_SERIES:-100000}`)
 et à `ENABLE_EXEMPLARS` (`${ENABLE_EXEMPLARS:-false}`) : si l'une d'elles arrive vide, Tempo
-pourrait mal lire sa configuration (valeur nulle : exemplars coupés, plafond de séries à 0).
+pourrait mal lire sa configuration (valeur nulle : exemplars coupés et, pour
+`max_active_series`, `0` signifie **plafond illimité** : plus aucune borne sur les séries des
+span-metrics).
 
 1. Vérifier que Coolify garde la syntaxe de repli dans le compose qu'il écrit, puis la valeur
    reçue par Tempo :
@@ -207,11 +209,13 @@ pourrait mal lire sa configuration (valeur nulle : exemplars coupés, plafond de
    ```
 
    Attendu : Tempo reçoit `ENABLE_EXEMPLARS=false` (le repli `:-` couvre aussi la valeur vide) et
-   reste `Up`. Si Tempo reçoit une **chaîne vide**, qu'il redémarre ou non, noter KO : la consigne
-   du README devient obligatoire (ne jamais vider ces variables ; les supprimer ou remettre la
-   valeur de `.env.example`). Remettre ensuite
-   `ENABLE_EXEMPLARS=false` et redéployer. Même vérification, si le temps le permet, avec
-   `TEMPO_MAX_ACTIVE_SERIES`.
+   reste `Up`. Si Tempo reçoit une **chaîne vide**, noter KO : la consigne du README devient
+   obligatoire (ne jamais vider ces variables ; les supprimer ou remettre la valeur de
+   `.env.example`). Le symptôme est **silencieux** : Tempo accepte la valeur vide, démarre et
+   reste `Up` sans message d'erreur ; seule la valeur reçue (commande `docker inspect` ci-dessus)
+   révèle le KO. Remettre ensuite `ENABLE_EXEMPLARS=false` et redéployer. Même vérification, si
+   le temps le permet, avec `TEMPO_MAX_ACTIVE_SERIES` : vide, Tempo tourne avec un **plafond
+   illimité** de séries (`0`), sans erreur non plus.
 
 ## Résultats
 

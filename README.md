@@ -57,6 +57,9 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 - Les domaines publics `SERVICE_FQDN_ALLOY_12347` (Faro) et `SERVICE_FQDN_ALLOY_GATEWAY_4318`
   (OTLP) sont générés par Coolify : renseigner le domaine de chaque service dans l'onglet de la
   ressource, par exemple `https://faro.example.com:12347` et `https://otlp.example.com:4318`.
+  **Ne pas ajouter soi-même** de variable `SERVICE_FQDN_*` dans **Environment Variables** :
+  Coolify les crée quand un domaine est renseigné (et n'en crée aucune pour un service sans
+  domaine, ce qui garde le point Faro fermé).
 - **Point Faro fermé** : `alloy` écoute toujours Faro, la clé reste donc obligatoire. Pour ne
   pas exposer Faro, ne donner **aucun domaine** au service `alloy` dans Coolify : sans domaine,
   Traefik n'a aucun routeur vers le port 12347.
@@ -170,6 +173,11 @@ Chaque contrôle négatif a son témoin positif, qui dépend de ces variables :
   Elle traverse le Traefik et l'`alloy` de **production** (elle est comptée dans les métriques du
   récepteur Faro), mais la charge ne contient ni log, ni événement, ni mesure, ni exception :
   **rien n'est écrit dans Loki**.
+- **Contrôle 5** (limite de débit) : envoie une rafale d'environ **600 requêtes** POST au point
+  Faro de **production**. Pendant quelques secondes, les vrais clients derrière la même IP que le
+  poste de l'opérateur (même agence, même NAT) reçoivent eux aussi des 429 : le lancer hors des
+  heures d'usage. **Point Faro fermé** (aucun domaine pour `alloy`) : les contrôles 3 à 6 n'ont
+  pas de cible, lancer `security.py --remote --only 1,2,7,8`.
 - **Contrôle 7** : `GC_OTHER_PUBLIC_URL` doit être un autre service routé par Traefik qui répond
   2xx sur `/api/health` (Grafana convient).
 - **Contrôle 8** (durcissement) : `GC_ALLOY_CONTAINER`, `GC_GATEWAY_CONTAINER` et
@@ -184,9 +192,11 @@ réseau `coolify` : le lancer depuis un conteneur rattaché à ce réseau, avec 
 `GC_OTLP_URL`, `GC_FARO_URL`, `GC_LOKI_URL`, `GC_TEMPO_URL`, `GC_PROM_URL`,
 `GC_ALLOY_METRICS_URL` pointant vers les noms réels, `GC_GATEWAY_URL`, `GC_GATEWAY_HOST`,
 `GC_GATEWAY_USER`, `GC_GATEWAY_PASSWORD` pour la passerelle OTLP (leurs valeurs par défaut
-viennent de `.harness/edge.json`, absent sur un serveur), et les mêmes valeurs de `HOST_MAP`,
-`RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` que le banc (`harness/harness.env`) sur un
-**déploiement de recette**.
+viennent de `.harness/edge.json`, absent sur un serveur), et, exportées elles aussi, les valeurs
+du déploiement pour `IP_HASH_SALT` (empreintes des IP), `FARO_API_KEY`, `PROJECTS` et
+`FARO_SERVICES` (projet et service des envois Faro), ainsi que les mêmes valeurs de `HOST_MAP`,
+`RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` que le banc (`harness/harness.env`) : à défaut,
+`smoke.py` prend celles du banc et échoue. Uniquement sur un **déploiement de recette**.
 
 Rejouer `security.py --remote` (contrôle 7, fuite de middlewares, bug Coolify #9886) **après
 chaque mise à jour de Coolify**.

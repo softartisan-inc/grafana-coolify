@@ -37,9 +37,24 @@ class ReadmeTest(unittest.TestCase):
             "FARO_SERVICES",
             "unknown_service",
             "max_global_streams_per_user",
+            "Ne pas ajouter soi-même",
+            "--only 1,2,7,8",
+            "600 requêtes",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, README)
+
+    def test_smoke_on_a_deployment_lists_its_variables(self):
+        section = README[README.index("`scripts/smoke.py` interroge") :]
+        section = section[: section.index("\n\n")]
+        for name in ("IP_HASH_SALT", "FARO_API_KEY", "PROJECTS", "FARO_SERVICES"):
+            with self.subTest(name=name):
+                self.assertIn(f"`{name}`", section)
+
+    def test_spikes_tempo_zero_means_unlimited(self):
+        spikes = (ROOT / "docs" / "spikes.md").read_text(encoding="utf-8")
+        self.assertNotIn("plafond de séries à 0", spikes)
+        self.assertIn("plafond illimité", spikes)
 
     def test_mandatory_variables_are_explained(self):
         for name in ("IP_HASH_SALT", "FARO_API_KEY", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL", "GRAFANA_URL", "GRAFANA_SA_TOKEN"):
