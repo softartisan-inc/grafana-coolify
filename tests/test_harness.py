@@ -59,6 +59,29 @@ class RewriteTest(unittest.TestCase):
         self.assertIn("127.0.10.2 loki", with_block)
         self.assertEqual(stack.without_block(with_block), original)
 
+    def test_dangling_begin_is_stripped(self):
+        """A write cut short leaves BEGIN without END: its partial lines go, other lines stay."""
+        original = "127.0.0.1 localhost\n"
+        truncated = stack.hosts_block()[:60]
+        self.assertNotIn(stack.HOSTS_END, truncated)
+        self.assertEqual(stack.without_block(original + truncated), original)
+        self.assertEqual(stack.without_block(original + truncated.rstrip("\n") + "\n10.0.0.1 other\n"), original + "10.0.0.1 other\n")
+        self.assertEqual(stack.without_block(original + stack.HOSTS_BEGIN + "\n"), original)
+
+    def test_hosts_written_from_a_complete_temp_file(self):
+        seen = []
+
+        def fake_run(cmd, **kwargs):
+            seen.append((cmd, Path(cmd[-2]).read_text(encoding="utf-8")))
+
+        with mock.patch.object(stack.subprocess, "run", side_effect=fake_run):
+            stack.write_hosts("127.0.0.1 localhost\n")
+        [(cmd, content)] = seen
+        self.assertEqual(cmd[:3], ["sudo", "-n", "cp"])
+        self.assertEqual(cmd[-1], str(stack.HOSTS))
+        self.assertEqual(content, "127.0.0.1 localhost\n")
+        self.assertFalse(Path(cmd[-2]).exists(), "temp file left behind")
+
 
 class ContentFilesTest(unittest.TestCase):
     """.harness/coolify/ holds what Coolify writes: each content file under its hashed name."""

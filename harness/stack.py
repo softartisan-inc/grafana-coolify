@@ -30,6 +30,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -259,11 +260,32 @@ def hosts_block():
 
 
 def without_block(text):
-    return re.sub(rf"(?ms)^{re.escape(HOSTS_BEGIN)}\n.*?^{re.escape(HOSTS_END)}\n?", "", text)
+    """`text` without the harness block; a dangling BEGIN (a write cut short) goes with the lines
+    that follow it as long as they are lines, or the cut last line, of the block."""
+    text = re.sub(rf"(?ms)^{re.escape(HOSTS_BEGIN)}\n.*?^{re.escape(HOSTS_END)}\n?", "", text)
+    lines = text.splitlines(keepends=True)
+    starts = [i for i, line in enumerate(lines) if line.rstrip("\n") == HOSTS_BEGIN]
+    if not starts:
+        return text
+    start = starts[0]
+    block = hosts_block().splitlines()
+    end = start + 1
+    while end < len(lines) and lines[end].rstrip("\n") and any(entry.startswith(lines[end].rstrip("\n")) for entry in block):
+        end += 1
+    return "".join(lines[:start] + lines[end:])
 
 
 def write_hosts(text):
-    subprocess.run(["sudo", "-n", "tee", str(HOSTS)], input=text, text=True, stdout=subprocess.DEVNULL, check=True)
+    """Write the whole new content to a temp file first, then copy it over /etc/hosts in one go:
+    an interrupted run never leaves a half-written block."""
+    HARNESS.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix="hosts.", dir=HARNESS)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        subprocess.run(["sudo", "-n", "cp", tmp, str(HOSTS)], stdout=subprocess.DEVNULL, check=True)
+    finally:
+        os.unlink(tmp)
 
 
 def install_hosts():
