@@ -60,6 +60,17 @@ def default_blocks(text):
     return blocks
 
 
+def copy_segments(statements):
+    """{map: statements from set(cache["flat"], map) to its conditional write-back}."""
+    segments = {}
+    for i, (function, first, statement) in enumerate(statements):
+        if function == "set" and first == 'cache["flat"]':
+            target = statement.split(", ", 1)[1].split(")", 1)[0]
+            end = next(j for j in range(i, len(statements)) if statements[j][0] == "set" and statements[j][1] == target)
+            segments[target] = statements[i : end + 1]
+    return segments
+
+
 def drift(text):
     """Rule kinds whose literal differs between two contexts."""
     return sorted(kind for kind, patterns in masking_literals(text).items() if len(patterns) != 1)
@@ -95,21 +106,51 @@ class MaskingLiteralsTest(unittest.TestCase):
         masked = {}
         for key, statements in default_blocks(self.text).items():
             targets = {target for function, target, _ in statements if function in MASKING and not target.startswith("cache")}
+            targets |= set(copy_segments(statements))
             if targets:
                 masked[key] = targets
         self.assertEqual(masked, MASKED_MAPS)
 
-    def test_every_masked_map_is_flattened_first(self):
-        """Nested maps and arrays reach the rules as dotted leaves (replace_all_patterns reads strings only)."""
+    def test_attribute_maps_are_masked_on_a_flattened_copy(self):
+        """Flattened copy, rules on the copy, written back only when a rule changed it (clean data keeps its shape)."""
         blocks = default_blocks(self.text)
         for key, targets in MASKED_MAPS.items():
-            statements = blocks[key]
+            for target in targets - {"log.body"}:
+                with self.subTest(block=key, target=target):
+                    statements = blocks[key]
+                    segment = copy_segments(statements)[target]
+                    prologue = [f'`set(cache["flat"], {target})`,', '`flatten(cache["flat"])`,', '`set(cache["orig"], cache["flat"])`,']
+                    self.assertEqual([s.strip() for _, _, s in segment[:3]], prologue)
+                    self.assertEqual(segment[-1][2].strip(), f'`set({target}, cache["flat"]) where cache["flat"] != cache["orig"]`,')
+                    kinds = masking_literals("\n".join(s for _, _, s in segment))
+                    self.assertEqual(sorted(set(kinds) - {"card"}), ["bearer", "email", "free-text secrets", "ip", "ip-exempt keys", "secret keys"])
+                    for function, first, statement in segment:
+                        if function in MASKING or function == "replace_pattern":
+                            self.assertTrue(first.startswith(('cache["flat"]', 'cache["ip"]')), statement)
+                    direct = [s for f, t, s in statements if f in (*MASKING, "replace_pattern", "merge_maps") and t.split("[")[0] == target]
+                    self.assertEqual(direct, [])
+
+    def test_map_log_body_is_flattened_first(self):
+        """The map body is flattened in place: nested maps and arrays reach the rules as dotted leaves."""
+        statements = default_blocks(self.text)[("log", "log")]
+        first_mask = next(i for i, (f, t, _) in enumerate(statements) if f in MASKING and t == "log.body")
+        # Plain flatten: resolveConflicts would name array elements k, k.0, k.1 instead of k.0, k.1, k.2.
+        flattens = [i for i, (f, t, s) in enumerate(statements) if f == "flatten" and "flatten(log.body) where IsMap(log.body)" in s]
+        self.assertTrue(flattens and flattens[0] < first_mask, statements[:first_mask])
+
+    def test_error_message_is_free_text(self):
+        """error.message (OTel semantic conventions) gets the card rule like exception.message."""
+        blocks = default_blocks(self.text)
+        expected = {
+            ("trace", "span"): ['cache["flat"]["error.message"]'],
+            ("trace", "spanevent"): ['cache["flat"]["error.message"]'],
+            ("log", "log"): ['log.body["error.message"]', 'cache["flat"]["error.message"]'],
+        }
+        for key, targets in expected.items():
             for target in targets:
                 with self.subTest(block=key, target=target):
-                    first_mask = next(i for i, (f, t, _) in enumerate(statements) if f in MASKING and t == target)
-                    # Plain flatten: resolveConflicts would name array elements k, k.0, k.1 instead of k.0, k.1, k.2.
-                    flattens = [i for i, (f, t, s) in enumerate(statements) if f == "flatten" and f"flatten({target})" in s]
-                    self.assertTrue(flattens and flattens[0] < first_mask, statements[:first_mask])
+                    rules = [s for f, t, s in blocks[key] if f == "replace_pattern" and t == target]
+                    self.assertEqual([kind for s in rules for kind in masking_literals(s)], ["card"])
 
     def test_scope_attributes_get_every_attribute_rule(self):
         blocks = default_blocks(self.text)

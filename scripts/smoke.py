@@ -268,8 +268,15 @@ def masking_nested(c):
         "tags": ["tag-a", "list@example.com"],
         "client": {"browser": {"version": "128.0.0.0"}, "stats": {"count": 3, "created_ms": epoch_ms}},
         "request": {"headers": {"x-trace-token": "xt6Nest"}},
+        "error": {"message": "charge 4111 1111 1111 1111 refused"},
     }
-    attributes = {"emails": ["arr@example.com", "plain"], "peers": ["198.51.100.44"], "ctx": {"inner": {"mail": "deep@example.com"}}, "tokenizer": "bpe"}
+    attributes = {
+        "emails": ["arr@example.com", "plain"],
+        "peers": ["198.51.100.44"],
+        "ctx": {"inner": {"mail": "deep@example.com"}},
+        "tokenizer": "bpe",
+        "error.message": "charge 4111 1111 1111 1111 refused",
+    }
     scope = {"owner.email": "scope@example.com", "scope.token": "st5Scope", "scope.host": "198.51.100.45", "lib.version": "128.0.0.0"}
     resource = c.resource("masking-nested")
     trace_id = g.new_trace_id()
@@ -277,10 +284,21 @@ def masking_nested(c):
     list_resource = c.resource("masking-list")
     g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(list_resource, [f"run {c.run}", "listbody@example.com", {"api_key": "lk8List"}]))
     span_attributes = {"http.request.header.accept": ["text/html", "span@example.com"], "db.meta": {"conn": {"password": "sp9Span"}}}
+    span_attributes["error.message"] = "charge 4111 1111 1111 1111 refused"
     g.send_otlp(c.s["GC_OTLP_URL"], "traces", g.otlp_traces(resource, [g.span(trace_id, "GET /nested", span_attributes)], scope=scope))
+    # Nothing sensitive: every map keeps its original shape (arrays stay arrays, nested maps stay nested).
+    clean_resource = c.resource("masking-clean")
+    clean_resource["process.command_args"] = ["/usr/bin/app", "--port", "8080"]
+    clean_attributes = {"tags": ["alpha", "beta"], "ctx": {"inner": {"step": "checkout"}}}
+    clean_trace_id = g.new_trace_id()
+    g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(clean_resource, f"run {c.run} clean", clean_attributes))
+    clean_span = {"http.request.header.accept": ["text/html", "application/json"], "http.route": "/clean"}
+    g.send_otlp(c.s["GC_OTLP_URL"], "traces", g.otlp_traces(clean_resource, [g.span(clean_trace_id, "GET /clean", clean_span)]))
     _labels, line, meta = c.wait_logs(f'{{service_name="{resource["service.name"]}"}}')[0]
     _labels, list_line, _meta = c.wait_logs(f'{{service_name="{list_resource["service.name"]}"}}')[0]
+    _labels, _clean_line, clean_meta = c.wait_logs(f'{{service_name="{clean_resource["service.name"]}"}}')[0]
     trace = c.wait_trace(trace_id)
+    clean_trace = c.wait_trace(clean_trace_id)
 
     problems = []
 
@@ -305,6 +323,9 @@ def masking_nested(c):
     check(body.get("client.browser.version") == "128.0.0.0", f"nested version hashed: {body.get('client.browser.version')!r}")
     check(body.get("client.stats.count") == 3, f"nested int altered: {body.get('client.stats.count')!r}")
     check(body.get("client.stats.created_ms") == epoch_ms, f"nested epoch masked: {body.get('client.stats.created_ms')!r}")
+
+    check(body.get("error.message") == "charge [card] refused", f"nested error.message card: {body.get('error.message')!r}")
+    check(meta.get("error_message") == "charge [card] refused", f"error.message attribute card: {meta.get('error_message')!r}")
 
     # Attributes: string arrays and nested maps are masked element-wise (flattened: emails.0...).
     check(meta.get("emails_0") == "[email]" and meta.get("emails_1") == "plain", f"attribute string array: {meta}")
@@ -333,6 +354,18 @@ def masking_nested(c):
                 check(span_attrs.get("http.request.header.accept.1") == "[email]", f"Tempo span array: {span_attrs}")
                 check(span_attrs.get("http.request.header.accept.0") == "text/html", f"Tempo span array: {span_attrs}")
                 check("sp9Span" not in json.dumps(span_attrs), f"Tempo nested secret kept: {span_attrs}")
+                check(span_attrs.get("error.message") == "charge [card] refused", f"Tempo span error.message: {span_attrs}")
+
+    # Clean record: nothing is reshaped (a masked record only is written back flattened).
+    check(clean_meta.get("tags") == '["alpha","beta"]' and "tags_0" not in clean_meta, f"clean log array reshaped: {clean_meta}")
+    check(clean_meta.get("ctx_inner_step") == "checkout", f"clean nested attribute lost: {clean_meta}")
+    for resource_attrs, spans in g.trace_resources_and_spans(clean_trace):
+        args = resource_attrs.get("process.command_args")
+        check(isinstance(args, dict) and len(args.get("values", [])) == 3, f"clean process.command_args reshaped in Tempo: {resource_attrs}")
+        check("process.command_args.0" not in resource_attrs, f"clean resource flattened in Tempo: {resource_attrs}")
+        for span_attrs in spans:
+            accept = [v.get("stringValue") for v in (span_attrs.get("http.request.header.accept") or {}).get("values", [])]
+            check(accept == ["text/html", "application/json"], f"clean span array reshaped in Tempo: {span_attrs}")
 
     expect(not problems, f"{len(problems)} problem(s):\n    " + "\n    ".join(problems) + f"\n  body: {line}\n  list body: {list_line}\n  metadata: {meta}")
 
@@ -553,6 +586,16 @@ def otlp_metrics(c):
     expect(metric.get("job") == resource["service.name"], f"job != service.name: {metric}")
     expect((metric.get("project"), metric.get("env"), metric.get("tenant")) == (c.project, "prod", "acme"), f"labels {metric}")
     expect("service_name" not in metric, f"service.name promoted as a duplicate label: {metric}")
+    # Masking on data point attributes: an email inside a string array is masked (the attribute map is
+    # then written back flattened); a clean array keeps its shape (one label holding the whole array).
+    masked_name, clean_name = f"smoke_{c.run}_masked", f"smoke_{c.run}_clean"
+    g.send_otlp(c.s["GC_OTLP_URL"], "metrics", g.otlp_sum(resource, masked_name, 1, {"owner.emails": ["ops@example.com", "plain"]}))
+    g.send_otlp(c.s["GC_OTLP_URL"], "metrics", g.otlp_sum(resource, clean_name, 1, {"zones": ["eu-1", "eu-2"]}))
+    masked = c.wait_prom(f"{masked_name}_total")[0]["metric"]
+    clean = c.wait_prom(f"{clean_name}_total")[0]["metric"]
+    expect(not any("ops@example.com" in value for value in masked.values()), f"email in a data point array survived: {masked}")
+    expect(masked.get("owner_emails_0") == "[email]" and masked.get("owner_emails_1") == "plain", f"data point array not masked element-wise: {masked}")
+    expect("zones_0" not in clean and "eu-1" in clean.get("zones", ""), f"clean data point array reshaped: {clean}")
 
 
 @section("correlation")
