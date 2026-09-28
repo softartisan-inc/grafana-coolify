@@ -16,19 +16,20 @@ services:
     command:
       - sh
       - -c
-      - "echo 'e9bdf4fea8ccebe1d5fc11a19ddd3b9e968734112c565735f8d81053444dce1b  /opt/config-guard/guard.e9bdf4fe.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.e9bdf4fe.sh"
+      - "echo 'f7d19c390dc0d92af9432e13af41d7c4bbb83bf78f09446b340e9c79d8e56e6f  /opt/config-guard/guard.f7d19c39.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.f7d19c39.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.0077ea90.alloy=0077ea90764c07ba4585f045ba771a393496f02e364681268eb9f5fc20862f22;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.ca0bfb17.yaml=ca0bfb1737c267419c3de802bff2182a25eeaaaef122333c01aaed54b7859f95;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.2c949ac7.alloy=2c949ac7973d821a398131e4e481a18b82d45a01e872b3c79d14d4c4e997da47;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.ca0bfb17.yaml=ca0bfb1737c267419c3de802bff2182a25eeaaaef122333c01aaed54b7859f95;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
+      FARO_SERVICES: ${FARO_SERVICES:-}
       HOST_MAP: ${HOST_MAP:-}
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.e9bdf4fe.sh
-        target: /opt/config-guard/guard.e9bdf4fe.sh
+        source: ./config/config-guard/guard.f7d19c39.sh
+        target: /opt/config-guard/guard.f7d19c39.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -105,6 +106,12 @@ services:
           projects=${PROJECTS:-}
           if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
             error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
+          fi
+          # FARO_SERVICES (Faro service allow-list) is spliced into an OTTL regex and a Go template: same
+          # rule as PROJECTS.
+          faro_services=${FARO_SERVICES:-}
+          if [ -n "$faro_services" ] && ! matches "$faro_services" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
+            error "FARO_SERVICES must look like web-app,desktop (lowercase, comma separated, no spaces)"
           fi
           host_map=${HOST_MAP:-}
           if [ -n "$host_map" ] && ! matches "$host_map" '^[a-z0-9.-]+=[a-z0-9-]+:(prod|preprod)(,[a-z0-9.-]+=[a-z0-9-]+:(prod|preprod))*$'; then
@@ -463,7 +470,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.0077ea90.alloy
+      - /etc/alloy/config.2c949ac7.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -474,6 +481,7 @@ services:
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
+      FARO_SERVICES: ${FARO_SERVICES:-}
       FARO_RATE: ${FARO_RATE:-100}
       FARO_BURST: ${FARO_BURST:-200}
       FARO_MAX_PAYLOAD: ${FARO_MAX_PAYLOAD:-5MiB}
@@ -482,8 +490,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.0077ea90.alloy
-        target: /etc/alloy/config.0077ea90.alloy
+        source: ./config/alloy/config.2c949ac7.alloy
+        target: /etc/alloy/config.2c949ac7.alloy
         content: |2
           // grafana-coolify - main Alloy pipeline (spec 7.1).
           // In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
@@ -808,8 +816,9 @@ services:
 
           // Faro traces carry no page URL: validate instead of deducing (spec 6.5). project comes from
           // the Faro SDK resource (service.namespace = app.namespace); client tenant/env must match
-          // [a-z0-9-]+ and must not be a reserved subdomain, otherwise they are deleted.
-          // Masking and the project/env filter then happen in the shared "default" transform.
+          // [a-z0-9-]+ and must not be a reserved subdomain, otherwise they are deleted. The "faro"
+          // filter then drops a trace whose project or service is not allowed; masking and the
+          // project/env filter happen in the shared "default" transform.
           // Like the OTLP path, the Faro trace path starts with a memory limiter.
           otelcol.processor.memory_limiter "faro" {
             check_interval         = "1s"
@@ -842,6 +851,29 @@ services:
               context    = "span"
               statements = [
                 `delete_key(span.attributes, "tenant") where span.attributes["tenant"] != nil and (not IsMatch(span.attributes["tenant"], "^[a-z0-9-]+$") or IsMatch(span.attributes["tenant"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
+              ]
+            }
+
+            output {
+              traces = [otelcol.processor.filter.faro.input]
+            }
+          }
+
+          // The public Faro endpoint must not mint identities (Loki streams, Tempo series are global
+          // budgets shared with the server-side OTLP path). Drop a Faro trace when:
+          // - PROJECTS is set and its project is not in it (same rule as the Faro logs);
+          // - its service.name is neither in FARO_SERVICES nor a service of HOST_MAP. Closed by default:
+          //   both empty, every Faro trace is dropped. The HOST_MAP pattern turns
+          //   "example.me=guest-front:prod" into ^(?:(?:example\.me=)?guest-front(?::prod)?)$, a finite set.
+          // Counter: otelcol_processor_filter_spans_filtered_total{component_id="otelcol.processor.filter.faro"}.
+          otelcol.processor.filter "faro" {
+            // Fail-open like the other processors: a condition error keeps the span (see "default").
+            error_mode = "ignore"
+
+            traces {
+              span = [
+                `not IsMatch("` + sys.env("PROJECTS") + `", "^$") and not IsMatch(resource.attributes["project"], "^(` + string.replace(sys.env("PROJECTS"), ",", "|") + `)$")`,
+                `resource.attributes["service.name"] == nil or resource.attributes["service.name"] == "" or (not IsMatch(resource.attributes["service.name"], "^(` + string.replace(sys.env("FARO_SERVICES"), ",", "|") + `)$") and not IsMatch(resource.attributes["service.name"], "^(?:(?:` + string.replace(string.replace(string.replace(string.replace(sys.env("HOST_MAP"), ".", "\\\\."), "=", "=)?"), ":", "(?::"), ",", ")?|(?:") + `)?)$"))`,
               ]
             }
 
@@ -895,6 +927,11 @@ services:
               template = "," + sys.env("PROJECTS")
             }
 
+            stage.template {
+              source   = "gc_services"
+              template = "," + sys.env("FARO_SERVICES")
+            }
+
             // HOST_MAP lookup (exact match, has priority): "service:env" or empty.
             stage.template {
               source   = "gc_hm_hit"
@@ -904,6 +941,12 @@ services:
             stage.regex {
               source     = "gc_hm_hit"
               expression = `^(?P<gc_hm_service>[^:]+):(?P<gc_hm_env>.+)$`
+            }
+
+            // Services of HOST_MAP (",guest-front,..."): allowed Faro service names, like FARO_SERVICES.
+            stage.template {
+              source   = "gc_hm_services"
+              template = `{{ range $e := splitList "," .gc_host_map }}{{ $kv := splitList "=" $e }}{{ if eq (len $kv) 2 }},{{ index (splitList ":" (index $kv 1)) 0 }}{{ end }}{{ end }}`
             }
 
             // TENANT_HOST_REGEX (named groups sub and dev). Empty variable: a class that never matches.
@@ -965,10 +1008,12 @@ services:
 
             // Why the line must be dropped, empty when it is valid: project missing, malformed or absent
             // from PROJECTS (when PROJECTS is set), env missing or neither prod nor preprod, service name
-            // missing or malformed. Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
+            // missing or malformed, or neither in FARO_SERVICES nor a service of HOST_MAP (closed by
+            // default: a client-chosen name must be listed, so the public endpoint cannot mint streams).
+            // Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
             stage.template {
               source   = "gc_reject"
-              template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9-]{1,64}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not .service_name }}invalid_service{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ end }}`
+              template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9][a-z0-9-]{0,63}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not .service_name }}invalid_service{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ else if not (or (has .service_name (splitList "," .gc_services)) (has .service_name (splitList "," .gc_hm_services))) }}unknown_service{{ end }}`
             }
 
             stage.drop {
@@ -1005,6 +1050,12 @@ services:
               source              = "gc_reject"
               value               = "invalid_service"
               drop_counter_reason = "invalid_service"
+            }
+
+            stage.drop {
+              source              = "gc_reject"
+              value               = "unknown_service"
+              drop_counter_reason = "unknown_service"
             }
 
             // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair (logfmt key:

@@ -34,6 +34,9 @@ class ReadmeTest(unittest.TestCase):
             "Risque résiduel connu",
             "${VAR:-",
             "ingestion_rate_mb",
+            "FARO_SERVICES",
+            "unknown_service",
+            "max_global_streams_per_user",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, README)

@@ -47,6 +47,7 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 | `IP_HASH_SALT` | Obligatoire. Au moins 16 caractères `[A-Za-z0-9]`, par exemple `openssl rand -hex 24`. |
 | `FARO_API_KEY` | Obligatoire. Clé des SDK Faro (navigateur, poste de travail, mobile), au moins 16 caractères : `openssl rand -hex 24`. |
 | `PROJECTS` | Projets autorisés, séparés par des virgules **sans espace** (`in-immo,autre-projet`) : logs Faro d'un autre projet rejetés, un dossier Grafana `gc-<projet>` par projet. |
+| `FARO_SERVICES` | Services Faro autorisés (`app.name`), mêmes règles d'écriture que `PROJECTS` (`web-app,desktop`). Les services de `HOST_MAP` sont toujours acceptés ; tout autre nom choisi par le client est rejeté. **Fermé par défaut** : vide, seuls les services de `HOST_MAP` passent. |
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | Règles de déduction depuis l'hôte (voir plus bas). |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Noms réels sur le réseau `coolify` (étape 4). |
 | `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | URL **publique** de Grafana et jeton du compte de service (étape 5). |
@@ -60,7 +61,7 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
   pas exposer Faro, ne donner **aucun domaine** au service `alloy` dans Coolify : sans domaine,
   Traefik n'a aucun routeur vers le port 12347.
 - `config-guard` refuse de démarrer la stack si `IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`,
-  `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide : le message
+  `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide : le message
   d'erreur est dans les logs de `config-guard`.
 
 ### 3. Configurer les middlewares Traefik
@@ -243,10 +244,13 @@ dont l'environnement n'est ni `prod` ni `preprod` est rejetée (compteurs
 Faro : `app.namespace` → `project`, `app.name` → `service_name`, `app.environment` → `env` ;
 le tenant déclaré par le client passe par l'attribut de session `tenant`. Un log Faro est rejeté,
 avec son motif dans `loki_process_dropped_lines_total{reason=...}`, si son projet manque
-(`missing_project`), est mal formé (`invalid_project`, attendu `[a-z0-9-]{1,64}`) ou absent de
+(`missing_project`), est mal formé (`invalid_project`, attendu `[a-z0-9][a-z0-9-]{0,63}`) ou absent de
 `PROJECTS` (`unknown_project`), si son environnement manque (`missing_env`) ou n'est ni `prod` ni
-`preprod` (`invalid_env`), ou si son nom de service est mal formé (`invalid_service`). Un tenant
-client hors de `[a-z0-9-]+` ou réservé est retiré. Pour les logs Faro, `env` et `tenant` sont
+`preprod` (`invalid_env`), si son nom de service est mal formé (`invalid_service`), ou s'il n'est
+ni dans `FARO_SERVICES` ni un service de `HOST_MAP` (`unknown_service`). Une trace Faro dont le
+projet est absent de `PROJECTS` (liste renseignée) ou dont le service n'est pas autorisé est
+supprimée (`otelcol_processor_filter_spans_filtered_total{component_id="otelcol.processor.filter.faro"}`).
+Un tenant client hors de `[a-z0-9-]+` ou réservé est retiré. Pour les logs Faro, `env` et `tenant` sont
 **déduits de l'hôte de la page** :
 
 | Variable | Exemple |
@@ -255,11 +259,12 @@ client hors de `[a-z0-9-]+` ou réservé est retiré. Pour les logs Faro, `env` 
 | `RESERVED_SUBDOMAINS` | `www,api` (jamais des tenants) |
 | `TENANT_HOST_REGEX` | `^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me\|app)$` |
 
-> **Risque résiduel connu** : pour un hôte de page absent de `HOST_MAP`, `service_name` vient du
-> client (`app.name`, format validé). Le point Faro public peut donc créer de nouveaux flux Loki,
-> au rythme de la limite de débit (seule la limite de flux par défaut de Loki les borne). Garder
-> `PROJECTS` renseigné (une liste vide accepte tout projet au bon format) pour borner `project`,
-> et déclarer chaque frontal connu dans `HOST_MAP`.
+> **Risque résiduel connu** : le point Faro public ne crée plus d'identités (flux Loki, séries
+> Tempo) : le service vient de `HOST_MAP` ou de `FARO_SERVICES`, jamais librement du client.
+> Garder `PROJECTS` renseigné : une liste vide accepte tout projet au bon format, donc autant de
+> flux que de projets inventés. Reste qu'un détenteur de la clé peut remplir les flux autorisés au
+> rythme de `FARO_RATE`. Loki plafonne le tout à `max_global_streams_per_user: 10000` flux
+> (`config/loki/loki.yaml`, deux fois le défaut de Loki), budget partagé avec le chemin OTLP.
 
 Noms à utiliser dans les requêtes Grafana :
 

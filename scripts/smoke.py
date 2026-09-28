@@ -35,6 +35,10 @@ class Ctx:
         # Faro logs only accept the projects of PROJECTS (any well-formed one when it is empty).
         allowed = [p for p in self.s.get("PROJECTS", "").split(",") if p]
         self.faro_project = allowed[0] if allowed else self.project
+        # Faro service names are closed: FARO_SERVICES plus the services of HOST_MAP.
+        services = [x for x in self.s.get("FARO_SERVICES", "").split(",") if x]
+        services += [e.split("=", 1)[1].split(":", 1)[0] for e in self.s.get("HOST_MAP", "").split(",") if "=" in e]
+        self.faro_service = services[0] if services else None
 
     def resource(self, service, env_attr="deployment.environment.name", env="prod", **extra):
         values = {"project": self.project, env_attr: env, "service.name": f"{service}-{self.run}"}
@@ -46,8 +50,10 @@ class Ctx:
         auth = (s["GC_GATEWAY_USER"], s["GC_GATEWAY_PASSWORD"]) if s["GC_GATEWAY_USER"] else None
         return s["GC_GATEWAY_URL"], (s["GC_GATEWAY_HOST"] or None), auth
 
-    def faro_app(self, name="web", environment="preprod", namespace=None):
-        return {"name": f"{name}-{self.run}", "namespace": namespace or self.faro_project, "environment": environment, "version": "1.0.0"}
+    def faro_app(self, environment="preprod", namespace=None):
+        if not self.faro_service:
+            raise AssertionError("Faro needs an allowed service name: set FARO_SERVICES (or HOST_MAP) like the deployment")
+        return {"name": self.faro_service, "namespace": namespace or self.faro_project, "environment": environment, "version": "1.0.0"}
 
     def logs(self, query, since_s=900):
         return g.loki_entries(self.s["GC_LOKI_URL"], query, since_s)
@@ -62,7 +68,10 @@ class Ctx:
         return g.wait_for(lambda: g.prom_query(self.s["GC_PROM_URL"], expr), f"Prometheus {expr}", timeout, interval=5)
 
     def ip_hash(self, ip):
-        return hashlib.sha256((self.s["IP_HASH_SALT"] + ip).encode()).hexdigest()
+        salt = self.s.get("IP_HASH_SALT")
+        if not salt:
+            raise AssertionError("IP_HASH_SALT is not set: export the salt of the deployment to check IP digests")
+        return hashlib.sha256((salt + ip).encode()).hexdigest()
 
 
 def expect(condition, message):
@@ -233,7 +242,7 @@ def masking(c):
 # 12.3.2: the reference table of spec 6.4 (harness values of HOST_MAP, RESERVED_SUBDOMAINS,
 # TENANT_HOST_REGEX), plus the validation of the client tenant on an unknown host (spec 6.5):
 # (page host, tenant sent by the client, service_name, env, stored tenant). None = absent;
-# "client" = the app name; the client environment is "preprod".
+# "client" = the app name (an allowed Faro service); the client environment is "preprod".
 HOST_CASES = [
     ("example.me", "clienttenant", "guest-front", "prod", None),
     ("www.example.me", "clienttenant", "client", "prod", None),
@@ -256,7 +265,7 @@ def faro_hosts(c):
         payload = g.faro_payload(c.faro_app(), f"https://{host}/path?q=1", logs=[g.faro_log(token)], session_attributes={"tenant": client_tenant})
         g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
         labels, line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{token}"')[0]
-        expected_service = f"web-{c.run}" if service == "client" else service
+        expected_service = c.faro_service if service == "client" else service
         expect(labels.get("service_name") == expected_service, f"{host}: service_name {labels.get('service_name')} != {expected_service}")
         expect(labels.get("env") == env, f"{host}: env {labels.get('env')} != {env}")
         expect(meta.get("tenant") == tenant, f"{host} ({client_tenant}): tenant {meta.get('tenant')} != {tenant}")
@@ -273,7 +282,7 @@ def faro_names(c):
     g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
     labels, _line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{token}"')[0]
     expect(set(labels) == INDEXED, f"Faro indexed labels {sorted(labels)}")
-    expect(labels == {"project": c.faro_project, "env": "prod", "service_name": f"web-{c.run}"}, f"Faro labels {labels}")
+    expect(labels == {"project": c.faro_project, "env": "prod", "service_name": c.faro_service}, f"Faro labels {labels}")
     expect(meta.get("trace_id") == trace_id, f"trace_id not normalised from traceID: {meta}")
     expect(meta.get("detected_level") == "warn", f"detected_level: {meta}")
     # A traceID that is not 32 lowercase hex digits is not stored (it would carry client text).
@@ -287,10 +296,10 @@ def faro_names(c):
 @section("faro-reject")
 def faro_reject(c):
     """12.3.5 (Faro path): lines with a missing, malformed or unknown project, a missing or unexpected env, or
-    a malformed or missing service name are dropped, each with its reason."""
+    a malformed, missing or unlisted service name are dropped, each with its reason; a listed service is kept."""
     alloy = c.s["GC_ALLOY_METRICS_URL"]
     metric = "loki_process_dropped_lines_total"
-    app = {"name": f"web-{c.run}", "namespace": c.faro_project, "environment": "prod"}
+    app = {k: v for k, v in c.faro_app(environment="prod").items() if k != "version"}
     # case name -> (expected reason, app); no app.name on a host absent from HOST_MAP leaves no
     # service_name at all, which must still be counted as invalid_service.
     cases = {
@@ -300,6 +309,8 @@ def faro_reject(c):
         "invalid_env": ("invalid_env", dict(app, environment="staging")),
         "invalid_service": ("invalid_service", dict(app, name="bad name!")),
         "missing_service": ("invalid_service", {k: v for k, v in app.items() if k != "name"}),
+        # A well-formed name the client chose, absent from FARO_SERVICES and HOST_MAP.
+        "unknown_service": ("unknown_service", dict(app, name=f"unlisted-{c.run}")),
     }
     if c.s.get("PROJECTS"):
         cases["unknown_project"] = ("unknown_project", dict(app, namespace=f"unlisted-{c.run}"))
@@ -315,7 +326,11 @@ def faro_reject(c):
         return all(g.metric_value(text, metric, {"reason": r}) >= before[r] + expected[r] for r in reasons)
 
     g.wait_for(counted, f"{metric} increments {expected}", timeout=30)
-    time.sleep(3)
+    # Positive control: the same line with a listed service is stored.
+    payload = g.faro_payload(app, "https://inconnu.autre.org/", logs=[g.faro_log(f"listed_service-{c.run}")])
+    g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    labels, _line, _meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "listed_service-{c.run}"')[0]
+    expect(labels.get("service_name") == c.faro_service, f"listed service stored as {labels}")
     for name in cases:
         # A stored line lacks one of the labels: search by each of them.
         stored = [e for label in sorted(INDEXED) for e in c.logs(f'{{{label}=~".+"}} |= "{name}-{c.run}"')]
@@ -356,9 +371,29 @@ def ip_parity(c):
 
 @section("faro-traces")
 def faro_traces(c):
-    """12.3.3 + 12.3.9 (traces): tenant/env validation, legacy deployment.environment -> env."""
+    """12.3.3 + 12.3.9 (traces): tenant/env validation, legacy deployment.environment -> env; a trace whose
+    project is absent from PROJECTS or whose service is not an allowed Faro service is dropped."""
+    alloy = c.s["GC_ALLOY_METRICS_URL"]
+    metric, faro_filter = "otelcol_processor_filter_spans_filtered_total", {"component_id": "otelcol.processor.filter.faro"}
+    before = g.metric_value(g.scrape(alloy), metric, faro_filter)
+    dropped = {"unknown_service": (c.faro_project, f"unlisted-{c.run}")}
+    if c.s.get("PROJECTS"):
+        dropped["unknown_project"] = (f"unlisted-{c.run}", c.faro_service)
+    hm_services = [e.split("=", 1)[1].split(":", 1)[0] for e in c.s.get("HOST_MAP", "").split(",") if "=" in e]
+    if hm_services:
+        # The dots of a HOST_MAP host are literal in the derived pattern.
+        host, _rest = c.s["HOST_MAP"].split(",")[0].split("=", 1)
+        dropped["regex_service"] = (c.faro_project, host.replace(".", "X") + "=" + hm_services[0])
+    dropped_ids = {}
+    for name, (project, service) in dropped.items():
+        dropped_ids[name] = g.new_trace_id()
+        bad = {"service.name": service, "service.namespace": project, "deployment.environment": "prod"}
+        traces = g.otlp_traces(bad, [g.span(dropped_ids[name], name, kind=3)])
+        payload = g.faro_payload(c.faro_app(environment="prod"), "https://acme.example.me/", traces=traces)
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    g.wait_for(lambda: g.metric_value(g.scrape(alloy), metric, faro_filter) >= before + len(dropped), f"{metric} {faro_filter} +{len(dropped)}", timeout=30)
     trace_id = g.new_trace_id()
-    resource = {"service.name": f"web-{c.run}", "service.namespace": c.project, "deployment.environment": "prod", "tenant": "ACME"}
+    resource = {"service.name": c.faro_service, "service.namespace": c.faro_project, "deployment.environment": "prod", "tenant": "ACME"}
     spans = [
         g.span(trace_id, "valid", {"tenant": "acme"}, kind=3),
         g.span(trace_id, "reserved", {"tenant": "www"}, kind=3),
@@ -367,7 +402,7 @@ def faro_traces(c):
     payload = g.faro_payload(c.faro_app(environment="prod"), "https://acme.example.me/", traces=g.otlp_traces(resource, spans))
     g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
     resource_attrs, _ = g.trace_resources_and_spans(c.wait_trace(trace_id))[0]
-    expect(resource_attrs.get("project") == c.project, f"project not mapped from service.namespace: {resource_attrs}")
+    expect(resource_attrs.get("project") == c.faro_project, f"project not mapped from service.namespace: {resource_attrs}")
     expect(resource_attrs.get("env") == "prod", f"env not moved from deployment.environment: {resource_attrs}")
     expect("deployment.environment" not in resource_attrs, f"legacy attribute kept: {resource_attrs}")
     expect("tenant" not in resource_attrs, f"malformed resource tenant kept: {resource_attrs}")
@@ -376,6 +411,17 @@ def faro_traces(c):
     expect(by_name["valid"].get("tenant") == "acme", f"valid tenant removed: {by_name['valid']}")
     expect("tenant" not in by_name["reserved"], f"reserved tenant kept: {by_name['reserved']}")
     expect("tenant" not in by_name["badformat"], f"malformed tenant kept: {by_name['badformat']}")
+    for name, dropped_id in dropped_ids.items():
+        expect(g.tempo_trace(c.s["GC_TEMPO_URL"], dropped_id) is None, f"Faro trace with {name} reached Tempo")
+    if hm_services:
+        # A service of HOST_MAP is allowed on Faro traces too.
+        hm_trace = g.new_trace_id()
+        hm_resource = {"service.name": hm_services[0], "service.namespace": c.faro_project, "deployment.environment.name": "prod"}
+        traces = g.otlp_traces(hm_resource, [g.span(hm_trace, "hm", kind=3)])
+        payload = g.faro_payload(c.faro_app(environment="prod"), "https://acme.example.me/", traces=traces)
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+        hm_attrs, _ = g.trace_resources_and_spans(c.wait_trace(hm_trace))[0]
+        expect(hm_attrs.get("service.name") == hm_services[0], f"HOST_MAP service trace: {hm_attrs}")
 
 
 @section("spanmetrics")

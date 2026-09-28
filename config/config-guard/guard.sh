@@ -74,6 +74,12 @@ projects=${PROJECTS:-}
 if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
   error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
 fi
+# FARO_SERVICES (Faro service allow-list) is spliced into an OTTL regex and a Go template: same
+# rule as PROJECTS.
+faro_services=${FARO_SERVICES:-}
+if [ -n "$faro_services" ] && ! matches "$faro_services" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
+  error "FARO_SERVICES must look like web-app,desktop (lowercase, comma separated, no spaces)"
+fi
 host_map=${HOST_MAP:-}
 if [ -n "$host_map" ] && ! matches "$host_map" '^[a-z0-9.-]+=[a-z0-9-]+:(prod|preprod)(,[a-z0-9.-]+=[a-z0-9-]+:(prod|preprod))*$'; then
   error "HOST_MAP must look like host=service:env[,host=service:env...] (lowercase, env prod or preprod)"

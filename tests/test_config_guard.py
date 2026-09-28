@@ -14,6 +14,7 @@ VALID_ENV = {
     "RESERVED_SUBDOMAINS": "www,api",
     "TENANT_HOST_REGEX": r"^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me|app)$",
     "PROJECTS": "demo,other-project",
+    "FARO_SERVICES": "web-app,desktop-app",
 }
 
 
@@ -101,6 +102,14 @@ class GuardCases:
         for value in ["demo, other", "Demo", "demo,", "a_b", "demo\nDemo Bad", "-demo", "demo,-other", "a" * 65]:
             with self.subTest(value=value):
                 self.assert_fails(self.guard(PROJECTS=value), "PROJECTS")
+
+    def test_faro_services_rules(self):
+        """Same rule as PROJECTS: the list is spliced into a regex and a Go template."""
+        self.assertEqual(self.guard(FARO_SERVICES="").returncode, 0)
+        self.assertEqual(self.guard(FARO_SERVICES="web").returncode, 0)
+        for value in ["web, desktop", "Web", "web,", "-web", "a.b", "a|b", "a" * 65, "web\nx y"]:
+            with self.subTest(value=value):
+                self.assert_fails(self.guard(FARO_SERVICES=value), "FARO_SERVICES")
 
     def test_host_map_rules(self):
         self.assertEqual(self.guard(HOST_MAP="").returncode, 0)
