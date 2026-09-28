@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from support import ROOT, require_harness, run
@@ -82,7 +83,7 @@ class RobustnessTest(unittest.TestCase):
         self.wait_log(service)
 
     def test_3_massive_send_stays_in_the_memory_envelope(self):
-        """1 GiB of logs, more than the envelope: Loki throttles, the queue must go to disk.
+        """1 GiB of logs while Loki is down, more than the envelope: the queue must go to disk.
 
         The harness sets the GOMEMLIMIT that Alloy derives from mem_limit in its container; the
         memory_limiter itself, sized on the total memory of the machine here, only acts in Docker.
@@ -90,11 +91,18 @@ class RobustnessTest(unittest.TestCase):
         pid = pid_of("alloy")
         peak = [anon_rss_bytes(pid)]
         stop = threading.Event()
+        watch_errors = []
+        errors = []
+        statuses = Counter()
+        lock = threading.Lock()
 
         def watch():
-            while not stop.is_set():
-                peak[0] = max(peak[0], anon_rss_bytes(pid))
-                time.sleep(0.2)
+            try:
+                while not stop.is_set():
+                    peak[0] = max(peak[0], anon_rss_bytes(pid))
+                    time.sleep(0.2)
+            except Exception as exc:  # re-raised in the test thread
+                watch_errors.append(exc)
 
         def burst(worker):
             # 8 workers x 64 requests x 2048 records x 1 KiB = 1 GiB.
@@ -102,8 +110,18 @@ class RobustnessTest(unittest.TestCase):
             record = g.otlp_logs(resource, "x" * 1024)["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
             body = json.dumps({"resourceLogs": [{"resource": {"attributes": g.attrs(resource)}, "scopeLogs": [{"logRecords": [record] * 2048}]}]}).encode()
             for _ in range(64):
-                g.http("POST", "http://alloy:4318/v1/logs", body, timeout=60)
+                try:
+                    status = g.http("POST", "http://alloy:4318/v1/logs", body, timeout=60).status
+                except Exception as exc:  # reported by the assertion below
+                    with lock:
+                        errors.append(f"burst-{worker}: {exc!r}")
+                    return
+                with lock:
+                    statuses[status] += 1
 
+        # Loki stopped during the whole burst: the full 1 GiB backlog stays in alloy's queue,
+        # whatever the ingest speed of the host.
+        stack("stop", "loki")
         watcher = threading.Thread(target=watch)
         watcher.start()
         workers = [threading.Thread(target=burst, args=(i,)) for i in range(8)]
@@ -113,7 +131,16 @@ class RobustnessTest(unittest.TestCase):
             worker.join()
         stop.set()
         watcher.join()
+        stack("start", "loki")
+        print(f"alloy anonymous RSS peak: {peak[0] / 2**20:.0f} MiB (limit 768)", flush=True)
+        if watch_errors:
+            raise watch_errors[0]
+        self.assertEqual(errors, [])
+        self.assertEqual(sum(statuses.values()), 8 * 64, dict(statuses))
+        unexpected = {code: count for code, count in statuses.items() if not (200 <= code < 300 or code in (429, 503))}
+        self.assertEqual(unexpected, {}, dict(statuses))
         self.assertLess(peak[0], ALLOY_MEM_LIMIT, f"alloy anonymous RSS peaked at {peak[0] / 2**20:.0f} MiB")
+        self.wait_log("burst-0")
         status = stack("status").stdout
         for name in ("loki", "tempo", "prometheus", "alloy", "alloy-gateway", "node-exporter"):
             self.assertRegex(status, rf"{name}\s+pid=\d+\s+running ready")
