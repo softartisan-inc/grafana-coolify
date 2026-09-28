@@ -1,6 +1,6 @@
 # grafana-coolify — Spécification de conception
 
-- **Date :** 2026-09-27 · **Révision :** 5 (après trois relectures critiques et l'audit du plan A)
+- **Date :** 2026-09-27 · **Révision :** 6 (après l'exécution du plan A : décisions reportées en § 6, § 8.1, § 9.1, § 11)
 - **Historique :** r5 (2026-09-28), après lecture de `applicationParser()` de Coolify : fichiers
   `content:` adressés par leur contenu (§ 4.2), `FARO_API_KEY` obligatoire (§ 5.3, § 11), ordre des
   middlewares justifié (§ 5.4), rejets élargis et liste `PROJECTS` (§ 6.3), tenant client validé
@@ -362,7 +362,7 @@ Mécanismes :
     `otelcol_processor_filter_logs_filtered`, `otelcol_processor_filter_datapoints_filtered`
     (sans motif) ;
   - chemin Faro : `loki_process_dropped_lines_total{reason=…}` avec `missing_project`,
-    `invalid_project`, `unknown_project`, `missing_env`, `invalid_env`, `invalid_service`
+    `invalid_project`, `unknown_project`, `missing_env`, `invalid_env`, `invalid_service`, `unknown_service`
     (`stage.drop` avec `drop_counter_reason`).
 - Prometheus scrape ces métriques (§ 7.4).
 
@@ -487,7 +487,8 @@ rattrape ce qui a échappé :
 | Donnée | Motif | Remplacement |
 |---|---|---|
 | Email | adresse RFC 5322 simplifiée | `[email]` |
-| Secrets | `Bearer <jeton>` ; valeurs des clés `authorization`, `cookie`, `password`, `token`, `secret` | `[redacted]` |
+| Secrets (texte libre) | `Bearer <jeton>`, `Basic`/`Digest <jeton>`, `*_token=`, `*_secret=`, `"refresh_token":"…"` | `[redacted]` |
+| Secrets (attributs) | clés dont un mot vaut `authorization`, `cookie`, `password`, `token`, `secret`… (borné : `input_tokens`, `tokenizer` sont conservés) | **attribut supprimé** (une valeur en liste, comme un en-tête OTel, ne peut pas être réécrite) |
 | Numéro de carte | `\b(?:\d[ -]?){12,18}\d\b`, appliqué **seulement** au texte libre (`body`, `message`, `exception.*`), jamais aux clés `*_id`, `*timestamp*`, `*_ms` | `[card]` |
 | Adresse IP (v4 et v6) | adresse complète, dans toutes les valeurs (URL comprises) **sauf** les clés techniques où un nombre pointé est une version : chemin OTLP, clés contenant `version` ou `user_agent` ; logs Faro, `browser_*`, `sdk_*`, `app_version`, `*_id`, `*_ms`, `*timestamp*`, `*version*`, `user_agent*` | SHA-256 de la chaîne **`IP_HASH_SALT` suivi de l'IP**, en hexadécimal complet |
 
@@ -522,7 +523,7 @@ composants expérimentaux.
 
 | Composant | Rétention | Réglage |
 |---|---|---|
-| Loki | `env="prod"` 30 j ; **tout autre `env`** 7 j | `retention_period` = 7 j (défaut) + `retention_stream` `{env="prod"}` = 30 j ; `compactor.retention_enabled: true` ; `compactor.delete_request_store: filesystem` ; schéma **tsdb v13** avec `index.period: 24h` (requis pour les métadonnées structurées et la rétention) |
+| Loki | `env="prod"` 30 j ; **tout autre `env`** 7 j | `retention_period` = 7 j (défaut) + `retention_stream` `{env="prod"}` = 30 j ; `compactor.retention_enabled: true` ; `compactor.delete_request_store: filesystem` ; plafonds explicites `max_global_streams_per_user: 10000`, `ingestion_rate_mb: 16`, `ingestion_burst_size_mb: 32` (le point Faro public ne peut pas épuiser le budget des flux ; une file Alloy se vide plus vite) ; schéma **tsdb v13** avec `index.period: 24h` (requis pour les métadonnées structurées et la rétention) |
 | Tempo | 7 j | `compactor.compaction.block_retention` (clé de Tempo 2.x ; à revérifier avant un passage en 3.x) |
 | Prometheus | 90 j | `--storage.tsdb.retention.time` + `--storage.tsdb.retention.size` en garde-fou |
 
@@ -667,7 +668,8 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 | `PROM_ENABLE_FEATURES`, `ENABLE_EXEMPLARS` | non | vide / false | Exemplars (expérimental) |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | oui | — | Noms réels sur le réseau `coolify` (§ 3.3) |
 | `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | oui | — | Accès API pour `grafana-setup` |
-| `PROJECTS` | non | vide | Projets autorisés pour les logs Faro (vide : tout projet bien formé) et dossiers Grafana à créer |
+| `PROJECTS` | non | vide | Projets autorisés pour les logs **et les traces** Faro (vide : tout projet bien formé) et dossiers Grafana à créer |
+| `FARO_SERVICES` | non | vide | Services Faro autorisés en plus de ceux de `HOST_MAP` ; **fermé par défaut** : un `service_name` client absent des deux listes est rejeté (`unknown_service`) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_EMAILS` | plan B | — | Notifications |
 | `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT` | non | 0.05 / 1500 / 15 / 80 | Seuils d'alerte |
 | `CARDINALITY_ALERT_THRESHOLD` | non | 200000 | Seuil de séries |
