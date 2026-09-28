@@ -4,17 +4,17 @@
 
 **Goal:** Livrer le package Docker Compose `grafana-coolify` (Alloy, passerelle OTLP, Loki, Tempo, Prometheus, node-exporter, `config-guard`, sources de données et dossiers de `grafana-setup`) qui reçoit, masque, stocke et relie logs, traces et métriques, sécurisé et prouvé par des tests exécutés sur un banc natif sans Docker.
 
-**Architecture:** Les configurations lisibles vivent dans `config/` ; `scripts/render.py` les insère octet pour octet dans les blocs `content:` du `docker-compose.yaml` généré à partir de `compose.template.yaml`, et `config-guard` vérifie leurs empreintes au démarrage. `alloy` porte tout le traitement (OTLP interne et Faro public), `alloy-gateway` relaie l'OTLP public authentifié par Traefik, et les middlewares vivent dans la configuration dynamique Traefik hors du dépôt. Comme aucun conteneur ne peut tourner ici, `harness/` lance les binaires officiels avec les mêmes commandes, variables et fichiers que le compose, chacun sur sa propre adresse de boucle locale, et `scripts/smoke.py` et `scripts/security.py` vérifient le comportement de bout en bout.
+**Architecture:** Les configurations lisibles vivent dans `config/` ; `scripts/render.py` les insère octet pour octet dans les blocs `content:` du `docker-compose.yaml` généré à partir de `compose.template.yaml`, sous des chemins qui portent l'empreinte de leur contenu (Coolify indexe ces fichiers par chemin de montage et ne réécrit jamais un chemin connu), et `config-guard` vérifie leurs empreintes au démarrage. `alloy` porte tout le traitement (OTLP interne et Faro public), `alloy-gateway` relaie l'OTLP public authentifié par Traefik, et les middlewares vivent dans la configuration dynamique Traefik hors du dépôt. Comme aucun conteneur ne peut tourner ici, `harness/` lance les binaires officiels avec les mêmes commandes, variables et fichiers que le compose, chacun sur sa propre adresse de boucle locale, et `scripts/smoke.py` et `scripts/security.py` vérifient le comportement de bout en bout.
 
-**Tech Stack:** Grafana Alloy v1.20.0 (OTTL v0.161.0), Loki 3.7.8, Tempo 2.10.8, Prometheus 3.15.0, node-exporter 1.12.1, Traefik v3.7.13 et Grafana 13.2.2 (banc uniquement), Python 3.12 (bibliothèque standard ; PyYAML 6 seulement dans `tests/` et `harness/`), POSIX sh (busybox), `unittest`, ruff 0.16.9, ShellCheck v0.11.0, CLI Docker Compose (validation seulement).
+**Tech Stack:** Grafana Alloy v1.20.0 (OTTL v0.161.0), Loki 3.7.8, Tempo 2.10.8, Prometheus 3.15.0, node-exporter 1.12.1, Traefik v3.7.13 et Grafana 13.2.2 (banc uniquement), Python 3.12 (bibliothèque standard ; PyYAML 6 seulement dans `tests/` et `harness/`), POSIX sh (busybox), `unittest`, ruff 0.16.9, ShellCheck v0.11.0, BusyBox 1.35.0 (tests de `config-guard`), CLI Docker Compose (validation seulement).
 
-**Spec:** `docs/superpowers/specs/2026-09-27-grafana-coolify-design.md` (révision 4). Le plan A couvre les § 3 à § 9, `config-guard`, les § 10.1–10.2 et les tests § 12.1 à § 12.5. Le plan B (§ 10.3, § 10.4, § 12.6) est hors périmètre.
+**Spec:** `docs/superpowers/specs/2026-09-27-grafana-coolify-design.md` (révision 5). Le plan A couvre les § 3 à § 9, `config-guard`, les § 10.1–10.2 et les tests § 12.1 à § 12.5. Le plan B (§ 10.3, § 10.4, § 12.6) est hors périmètre.
 
 ## Global Constraints
 
-- Versions épinglées, source unique `tools/versions.env` : `ALLOY_VERSION=v1.20.0`, `LOKI_VERSION=3.7.8`, `TEMPO_VERSION=2.10.8` (rester en Tempo 2.x), `PROMETHEUS_VERSION=3.15.0`, `NODE_EXPORTER_VERSION=1.12.1`, `PYTHON_IMAGE=python:3.13-alpine`, `ALPINE_IMAGE=alpine:3.22`, `TRAEFIK_VERSION=v3.7.13` (banc), `GRAFANA_VERSION=13.2.2` (banc), `RUFF_VERSION=0.16.9`, `SHELLCHECK_VERSION=v0.11.0`.
+- Versions épinglées, source unique `tools/versions.env` : `ALLOY_VERSION=v1.20.0`, `LOKI_VERSION=3.7.8`, `TEMPO_VERSION=2.10.8` (rester en Tempo 2.x), `PROMETHEUS_VERSION=3.15.0`, `NODE_EXPORTER_VERSION=1.12.1`, `PYTHON_IMAGE=python:3.13-alpine`, `ALPINE_IMAGE=alpine:3.22`, `TRAEFIK_VERSION=v3.7.13` (banc), `GRAFANA_VERSION=13.2.2` (banc), `RUFF_VERSION=0.16.9`, `SHELLCHECK_VERSION=v0.11.0`, `BUSYBOX_VERSION=1.35.0` (tests).
 - Images : uniquement celles de l'éditeur ou officielles Docker, aux tags `grafana/alloy:v1.20.0`, `grafana/loki:3.7.8`, `grafana/tempo:2.10.8`, `prom/prometheus:v3.15.0`, `quay.io/prometheus/node-exporter:v1.12.1`, `python:3.13-alpine`, `alpine:3.22` ; aucune image maison, aucun registre privé, aucune CI de build.
-- Binaires du banc : téléchargés par `tools/fetch-binaries.sh` depuis les publications officielles et vérifiés contre leurs empreintes SHA-256 publiées (ShellCheck : empreinte épinglée, faute de fichier publié).
+- Binaires du banc : téléchargés par `tools/fetch-binaries.sh` depuis les publications officielles et vérifiés contre leurs empreintes SHA-256 publiées (ShellCheck et BusyBox : empreinte épinglée, faute de fichier publié).
 - Langue : prose du plan, README, `docs/` et `.env.example` en **français** ; code, identifiants, commentaires, noms de fichiers, noms de tests, messages de commit et branches en **anglais**.
 - Bibliothèque standard seulement dans `scripts/*.py` et `config/grafana-setup/setup.py` ; PyYAML autorisé seulement dans `tests/` et `harness/`.
 - Tests : `python3 -m unittest discover -s tests -v` (pas de pytest) ; un fichier seul : `python3 -m unittest discover -s tests -p <fichier> -v` ; les tests du banc demandent `GC_HARNESS=1`.
@@ -22,23 +22,25 @@
 - Aucun secret en dur dans `config/` (`check.py`, motifs `token|password|secret|salt|key`) ; aucun hash htpasswd ni regex d'origines dans un label : ils vivent dans la configuration dynamique Traefik, hors du dépôt.
 - `docker-compose.yaml` et `compose.dev.yaml` sont **générés** (`python3 scripts/render.py`) et versionnés ; ne jamais les modifier à la main. Toute modification de `config/` ou du gabarit se termine par `render.py` et par le commit des deux fichiers générés.
 - Budget : `docker-compose.yaml` encodé en base64 ≤ **120 Kio** (122880 octets), vérifié par `check.py`.
+- Chemins adressés par le contenu : dans le compose déployé, la source et la cible de chaque volume `content:` portent les 8 premiers caractères hexadécimaux du SHA-256 du fichier (`loki.<sha8>.yaml`), et chaque référence à la cible est réécrite ; deux volumes `content:` n'ont jamais la même cible (`check.py`, contrôle `targets`). Modifier une config = `render.py`, commit, `git push`, Redeploy.
 - Alloy tourne avec `--stability.level=public-preview`, jamais plus bas ; `alloy validate` doit accepter les deux configs à ce niveau.
 - Aucun `ports:` dans le compose déployé, seulement `expose:` (§ 3.2).
 - Enveloppe mémoire ≈ 6 Go : `mem_limit` loki 1536m, tempo 1536m, prometheus 1536m, alloy 768m, alloy-gateway 256m, node-exporter 64m, config-guard 32m, grafana-setup 128m (total ≈ 5,7 Gio).
-- `alloy` et `alloy-gateway` : `user: "473:473"`, `read_only: true`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, aucun montage de l'hôte hors de leur propre fichier de config en lecture seule.
+- `alloy` et `alloy-gateway` : `user: "473:473"`, `read_only: true`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, aucun montage de l'hôte hors de leur propre fichier de config. Coolify reconstruit les montages `bind` en `source:cible` et ne garde que le mode d'une syntaxe courte : les montages de l'hôte en lecture seule (`/guard`, ceux de `node-exporter`) s'écrivent `:ro` ; le `read_only: true` des montages `content:` (syntaxe longue obligatoire) ne sert que le banc Docker, et l'utilisateur non-root ne peut pas écrire ces fichiers.
+- `FARO_API_KEY` obligatoire (≥ 16 caractères) : `alloy` écoute toujours Faro ; point Faro fermé = aucun domaine pour `alloy` (pas de `SERVICE_FQDN_ALLOY_12347` renseigné).
 - Variables résolues par les outils eux-mêmes : Alloy `sys.env("VAR")`, Loki et Tempo `${VAR}` avec `-config.expand-env=true`, Prometheus par son `command:`, `grafana-setup` par son environnement ; chaque config écoute sur `BIND_ADDR` (compose : `0.0.0.0`).
 - Rétention par défaut : Loki 7 j (`168h`) et `env="prod"` 30 j (`720h`), Tempo 7 j, Prometheus 90 j / 100GB.
-- Git : branche `feat/plan-a-ingestion` ; auteur `Henoc Djabia <henoc35@gmail.com>` ; messages conventionnels en anglais ; **aucune** ligne `Co-Authored-By` ni mention d'outil dans les messages ; ne jamais ajouter ce plan aux commits des tâches.
-- Environnement d'exécution : le CLI Docker est présent mais aucun conteneur ne peut démarrer ; `python3` 3.12, `jq`, `curl`, `openssl`, `git`, `sudo` sans mot de passe et l'accès à GitHub et `dl.grafana.com` sont disponibles ; pytest, ruff, shellcheck, htpasswd et yq ne le sont pas (les deux linters viennent de `.bin/`).
+- Git : branche `feat/plan-a-ingestion`, créée depuis `docs/design-spec` où la spec et ce plan sont déjà committés (ne pas les modifier dans les commits des tâches) ; auteur `Henoc Djabia <henoc35@gmail.com>` ; messages conventionnels en anglais ; **aucune** ligne `Co-Authored-By` ni mention d'outil dans les messages (`.claude/settings.json` coupe l'attribution de Claude Code ; la tâche 18 le vérifie).
+- Environnement d'exécution : le CLI Docker est présent mais aucun conteneur ne peut démarrer ; `python3` 3.12, `jq`, `curl`, `openssl`, `git`, `sudo` sans mot de passe et l'accès à GitHub et `dl.grafana.com` sont disponibles ; pytest, ruff, shellcheck, busybox, htpasswd et yq ne le sont pas (linters et BusyBox viennent de `.bin/`) ; pas de cgroup utilisable (`/sys/fs/cgroup` en lecture seule).
 - Les spikes Coolify (§ 16) ne sont pas exécutables par un agent : la tâche 19 les écrit, l'opérateur les joue.
 
 ## Review Focus
 
 Les cinq classes d'entrées ou modes de défaillance que la spec implique sans les tester, les plus susceptibles de frapper un utilisateur, du plus probable au moins probable. Chacun a son test dans la tâche qui possède le code.
 
-1. **Faux positifs du hachage d'IP** : une heure `01:30:29`, un appel statique PHP `App\User::find` ou une version navigateur `128.0.0.0` ne doivent pas être remplacés par une empreinte. Attendu : texte intact. Test : section `masking` (tâche 10, heure et `::`) et restriction du hachage Faro au texte libre (tâche 11, section `ip-parity`).
-2. **`FARO_API_KEY` laissée vide** : le point public Faro ne doit jamais s'ouvrir. Attendu : 401 avec ou sans en-tête `x-api-key`. Test : `tests/test_faro_closed.py` (tâche 11).
-3. **Variable d'exécution mal formée** : un sel contenant `"` ou `$`, un `HOST_MAP` sans `:env`, une `TENANT_HOST_REGEX` sans groupe `sub` casseraient silencieusement les gabarits Alloy. Attendu : déploiement refusé avec un message clair. Test : `tests/test_config_guard.py` (tâche 3).
+1. **Faux positifs du hachage d'IP** : une heure `01:30:29`, un appel statique PHP `App\User::find` ou une version navigateur `128.0.0.0` ne doivent pas être remplacés par une empreinte. Attendu : texte intact ; la même valeur sous une clé ordinaire est hachée. Test : section `masking` (tâche 10 : heure, `::`, `128.0.0.0` intact dans `user_agent.original` et `browser.version`, haché dans `net.peer.name`) et section `ip-parity` (tâche 11 : `browser_version=128.0.0.0` intact, `context_ip`, `event_data_x` et `page_url` hachés).
+2. **`FARO_API_KEY` vide ou courte** : le point public Faro ne doit jamais tourner sans vraie clé (une clé vide désactive le contrôle de `faro.receiver`). Attendu : déploiement refusé, Compose pour une clé vide, `config-guard` pour moins de 16 caractères. Test : `test_faro_api_key_rules` (tâche 3) et `test_5_config_guard_failure_blocks_every_service` (tâche 14).
+3. **Variable d'exécution mal formée** : un sel contenant `"` ou `$`, un `HOST_MAP` sans `:env` ou d'env `staging`, des `PROJECTS` séparés par `, `, une `TENANT_HOST_REGEX` sans groupe `sub` casseraient silencieusement les gabarits Alloy. Attendu : déploiement refusé avec un message clair. Test : `tests/test_config_guard.py` (tâche 3), sous dash et sous BusyBox.
 4. **Grafana rend par défaut la première source créée** : un second passage de `grafana-setup` croirait à un changement. Attendu : second passage sans aucune écriture, `isDefault` conservé. Test : `test_second_run_changes_nothing` et `test_changed_url_is_updated_and_default_flag_kept` avec un faux Grafana qui reproduit ce comportement (tâche 16).
 5. **Port du banc déjà pris par un autre programme sur `0.0.0.0`** : les tests parleraient silencieusement au mauvais serveur (constaté avec un serveur de développement sur 3000). Attendu : `up` refuse en nommant l'adresse. Test : `test_busy_address_is_reported` (tâche 8).
 
@@ -51,6 +53,7 @@ Les cinq classes d'entrées ou modes de défaillance que la spec implique sans l
 | `LICENSE` | Licence MIT, « Copyright (c) 2026 SoftArtisan ». |
 | `.gitignore` | Exclut `.bin/`, `.harness/`, `.env`, caches Python. |
 | `ruff.toml` | Configuration ruff du projet (résultats indépendants de la machine). |
+| `.claude/settings.json` | Coupe l'attribution de Claude Code dans les commits et les PR. |
 | `tools/versions.env` | Source unique des versions et de l'empreinte ShellCheck. |
 | `tools/fetch-binaries.sh` | Télécharge et vérifie les binaires officiels dans `.bin/`. |
 | `compose.template.yaml` | Gabarit : services, labels, limites, jetons `@@…@@`. |
@@ -65,13 +68,13 @@ Les cinq classes d'entrées ou modes de défaillance que la spec implique sans l
 | `config/alloy-gateway/config.alloy` | Relais OTLP/HTTP sans traitement ni file. |
 | `config/grafana-setup/setup.py` | Sources de données, corrélations, dossiers (idempotent). |
 | `traefik/grafana-coolify.yaml.example` | Modèle des middlewares `@file`, sans secret. |
-| `scripts/render.py` | Gabarit → composes générés, contenu octet pour octet. |
+| `scripts/render.py` | Gabarit → composes générés, contenu octet pour octet, chemins à empreinte. |
 | `scripts/check.py` | Contrôles statiques du § 12.1. |
 | `scripts/gclib.py` | Aide partagée : HTTP, charges OTLP/Faro JSON, requêtes des stockages. |
 | `scripts/smoke.py` | Bout en bout du § 12.3, par sections. |
 | `scripts/security.py` | Sécurité du § 12.4 (banc ou déploiement). |
 | `harness/harness.env` | Valeurs de test des variables. |
-| `harness/stack.py` | Banc natif : services du compose en processus. |
+| `harness/stack.py` | Banc natif : services du compose en processus, fichiers `content:` écrits comme par Coolify. |
 | `harness/edge.py` | Bordure du banc : Traefik (routes Coolify simulées) et Grafana de test. |
 | `tests/support.py` | Aide des tests : chemins, binaires, commandes, environnement des validateurs. |
 | `tests/test_*.py` | Un fichier par unité testée (voir chaque tâche). |
@@ -88,16 +91,21 @@ Ordre des tâches, du plus simple au plus exigeant : outillage (1–3), configur
 
 Pose la licence, les exclusions Git, la configuration `ruff` du projet, la source unique des
 versions (`tools/versions.env`) et le script qui télécharge et vérifie tous les binaires
-officiels utilisés par `check.py` et par le banc natif. Le test prouve que chaque binaire tourne
-à la version épinglée. `ruff.toml` est indispensable : sans lui, `ruff` applique la configuration
+officiels utilisés par `check.py` et par le banc natif, dont BusyBox pour tester `config-guard`
+avec le `sh` et les applets de l'image `alpine`. Le test prouve que chaque binaire tourne à la
+version épinglée. `ruff.toml` est indispensable : sans lui, `ruff` applique la configuration
 personnelle de la machine (constaté : règles `FURB`, `PLW`, `RUF` actives), et les résultats ne
-sont pas reproductibles.
+sont pas reproductibles. `.claude/settings.json` coupe l'attribution que Claude Code ajoute aux
+commits et aux PR (clé `attribution`, vérifiée dans la référence des réglages de Claude Code :
+`includeCoAuthoredBy` est dépréciée depuis la v2.0.62) ; la garde `grep` de la tâche 18 reste la
+preuve.
 
 **Files:**
 
 - Create: `LICENSE`
 - Create: `.gitignore`
 - Create: `ruff.toml`
+- Create: `.claude/settings.json`
 - Create: `tools/versions.env`
 - Create: `tools/fetch-binaries.sh`
 - Create: `tests/support.py`
@@ -106,15 +114,16 @@ sont pas reproductibles.
 **Interfaces:**
 
 - Consumes : rien.
-- Produces : `tools/versions.env` : `ALLOY_VERSION=v1.20.0`, `LOKI_VERSION=3.7.8`, `TEMPO_VERSION=2.10.8`, `PROMETHEUS_VERSION=3.15.0`, `NODE_EXPORTER_VERSION=1.12.1`, `PYTHON_IMAGE=python:3.13-alpine`, `ALPINE_IMAGE=alpine:3.22`, `TRAEFIK_VERSION=v3.7.13`, `GRAFANA_VERSION=13.2.2`, `RUFF_VERSION=0.16.9`, `SHELLCHECK_VERSION=v0.11.0`, `SHELLCHECK_SHA256`.
-- Produces : `tools/fetch-binaries.sh` (bash, idempotent, `GC_BIN_DIR` pour changer la cible) installe dans `.bin/` : `alloy`, `loki`, `tempo`, `prometheus`, `promtool`, `node_exporter`, `traefik`, `ruff`, `shellcheck`, `grafana/` (arborescence Grafana OSS, binaire `grafana/bin/grafana`).
+- Produces : `tools/versions.env` : `ALLOY_VERSION=v1.20.0`, `LOKI_VERSION=3.7.8`, `TEMPO_VERSION=2.10.8`, `PROMETHEUS_VERSION=3.15.0`, `NODE_EXPORTER_VERSION=1.12.1`, `PYTHON_IMAGE=python:3.13-alpine`, `ALPINE_IMAGE=alpine:3.22`, `TRAEFIK_VERSION=v3.7.13`, `GRAFANA_VERSION=13.2.2`, `RUFF_VERSION=0.16.9`, `SHELLCHECK_VERSION=v0.11.0`, `SHELLCHECK_SHA256`, `BUSYBOX_VERSION=1.35.0`, `BUSYBOX_SHA256`.
+- Produces : `tools/fetch-binaries.sh` (bash, idempotent, `GC_BIN_DIR` pour changer la cible) installe dans `.bin/` : `alloy`, `loki`, `tempo`, `prometheus`, `promtool`, `node_exporter`, `traefik`, `ruff`, `shellcheck`, `busybox` et `busybox-applets/` (un lien relatif par applet), `grafana/` (arborescence Grafana OSS, binaire `grafana/bin/grafana`).
+- Produces : `.claude/settings.json` : `attribution.commit` et `attribution.pr` vides, `attribution.sessionUrl` à `false`.
 - Produces : `tests/support.py` : `ROOT`, `BIN`, `load_env_file(path) -> dict`, `versions() -> dict`, `binary(name) -> Path` (AssertionError explicite si absent), `run(cmd, env=None, cwd=None, timeout=120) -> CompletedProcess` (stdout+stderr fusionnés, texte), `require_harness(test_case)` (SkipTest sauf si `GC_HARNESS=1`).
 
 - [ ] **Étape 1 : créer la branche et fixer l'auteur des commits**
 
 Run : `git switch -c feat/plan-a-ingestion && git config user.name "Henoc Djabia" && git config user.email "henoc35@gmail.com"`
 
-Attendu : `Switched to a new branch 'feat/plan-a-ingestion'`. Le plan (`docs/superpowers/plans/…`) reste non suivi : ne jamais l'ajouter aux commits des tâches.
+Attendu : `Switched to a new branch 'feat/plan-a-ingestion'`. La branche part de `docs/design-spec`, où la spec et ce plan sont déjà committés : ne jamais les modifier ni les ajouter aux commits des tâches.
 
 - [ ] **Étape 2 : écrire le test qui échoue**
 
@@ -219,6 +228,10 @@ class FetchBinariesTest(unittest.TestCase):
     def test_ruff(self):
         self.assert_version([binary("ruff"), "--version"], "ruff " + versions()["RUFF_VERSION"])
 
+    def test_busybox(self):
+        self.assert_version([binary("busybox"), "--help"], "BusyBox v" + versions()["BUSYBOX_VERSION"])
+        self.assert_version([binary("busybox-applets") / "sha256sum", "--help"], "BusyBox v" + versions()["BUSYBOX_VERSION"])
+
     def test_shellcheck(self):
         self.assert_version([binary("shellcheck"), "--version"], "version: " + versions()["SHELLCHECK_VERSION"].lstrip("v"))
 
@@ -231,7 +244,7 @@ if __name__ == "__main__":
 
 Run : `python3 -m unittest discover -s tests -p test_fetch_binaries.py -v`
 
-Attendu : FAIL, 9 échecs « .bin/alloy missing: run tools/fetch-binaries.sh first » (et de même pour chaque binaire).
+Attendu : FAIL, 10 échecs « .bin/alloy missing: run tools/fetch-binaries.sh first » (et de même pour chaque binaire).
 
 - [ ] **Étape 4 : implémentation minimale**
 
@@ -288,6 +301,20 @@ select = ["E", "F", "W", "I", "B", "UP"]
 known-first-party = ["support", "render", "check", "gclib", "setup", "stack", "edge"]
 ```
 
+Fichier complet `.claude/settings.json` :
+
+```json
+{
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  }
+}
+```
+
+Chaînes vides et `sessionUrl: false` plutôt que `"attribution": false` : cette dernière forme demande Claude Code v2.1.281 ou plus, et une version plus ancienne ignorerait tout le fichier.
+
 Fichier complet `tools/versions.env` :
 
 ```dotenv
@@ -309,9 +336,13 @@ RUFF_VERSION=0.16.9
 SHELLCHECK_VERSION=v0.11.0
 # ShellCheck publishes no checksum file: hash of shellcheck-v0.11.0.linux.x86_64.tar.gz
 SHELLCHECK_SHA256=b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+# BusyBox (config-guard runs under the busybox sh of alpine): static build of busybox.net,
+# no checksum file upstream either: hash of busybox-1.35.0-x86_64-linux-musl/busybox
+BUSYBOX_VERSION=1.35.0
+BUSYBOX_SHA256=6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348
 ```
 
-ShellCheck ne publie pas de fichier d'empreintes : son SHA-256 est épinglé dans `versions.env` (valeur relevée sur l'archive officielle). Ne jamais commencer un commentaire par `# shellcheck` dans un fichier lu par shellcheck : il le prend pour une directive (erreur SC1073).
+ShellCheck et BusyBox ne publient pas de fichier d'empreintes : leur SHA-256 est épinglé dans `versions.env` (valeur relevée sur le fichier officiel). BusyBox vient de busybox.net (binaire statique 1.35.0, stable) plutôt que du paquet `busybox-static` d'Alpine, dont chaque révision disparaît du miroir à la suivante. Ne jamais commencer un commentaire par `# shellcheck` dans un fichier lu par shellcheck : il le prend pour une directive (erreur SC1073).
 
 Fichier complet `tools/fetch-binaries.sh` :
 
@@ -440,6 +471,19 @@ if ! is_installed shellcheck "$SHELLCHECK_VERSION"; then
   mark_installed shellcheck "$SHELLCHECK_VERSION"
 fi
 
+# BusyBox, to test config-guard under busybox semantics (no checksum file upstream: pinned hash).
+# Every applet gets a relative symlink in busybox-applets/, used as the only PATH entry.
+if ! is_installed busybox "$BUSYBOX_VERSION"; then
+  download "https://busybox.net/downloads/binaries/$BUSYBOX_VERSION-x86_64-linux-musl/busybox" "$WORK/busybox"
+  verify_sha "$WORK/busybox" "$BUSYBOX_SHA256"
+  install -m 0755 "$WORK/busybox" "$BIN/busybox"
+  rm -rf "${BIN:?}/busybox-applets" && mkdir -p "$BIN/busybox-applets"
+  for applet in $("$BIN/busybox" --list); do
+    ln -s ../busybox "$BIN/busybox-applets/$applet"
+  done
+  mark_installed busybox "$BUSYBOX_VERSION"
+fi
+
 # Grafana OSS (harness only; the .sha256 file holds the bare hash)
 if ! is_installed grafana "$GRAFANA_VERSION"; then
   asset="grafana-$GRAFANA_VERSION.linux-amd64.tar.gz"
@@ -465,7 +509,7 @@ Attendu : « fetch-binaries: all binaries installed in …/.bin » (≈ 1,3 Go, 
 
 Run : `python3 -m unittest discover -s tests -p test_fetch_binaries.py -v`
 
-Attendu : `Ran 9 tests` … `OK`.
+Attendu : `Ran 10 tests` … `OK`.
 
 Run : `.bin/shellcheck -x tools/fetch-binaries.sh && .bin/ruff check .`
 
@@ -474,7 +518,7 @@ Attendu : aucune sortie de shellcheck, puis « All checks passed! ».
 - [ ] **Étape 6 : commit**
 
 ```bash
-git add LICENSE .gitignore ruff.toml tools/versions.env tools/fetch-binaries.sh tests/support.py tests/test_fetch_binaries.py
+git add LICENSE .gitignore ruff.toml .claude/settings.json tools/versions.env tools/fetch-binaries.sh tests/support.py tests/test_fetch_binaries.py
 git commit -m "chore: scaffold repository and pinned binary fetcher"
 ```
 
@@ -487,8 +531,19 @@ transformation** (spec § 4.2) : scalaire littéral YAML avec indicateur d'inden
 un seul, `|2+` pour plusieurs). Il refuse ce que YAML ne peut pas restituer à l'identique
 (fichier vide, `\r`, BOM, caractères de contrôle, UTF-8 invalide). Piège vérifié : ne jamais
 appliquer `rstrip("\n")` au bloc généré, cela supprime les lignes vides que `|+` doit garder.
-Les tests travaillent sur un gabarit de test dans un dossier temporaire ; le vrai gabarit arrive
-à la tâche 7.
+Chemins adressés par le contenu (lecture de `applicationParser()` dans `parsers.php` de Coolify) :
+Coolify enregistre chaque fichier `content:` comme un stockage de l'application **indexé par son
+chemin de montage** (`LocalFileVolume::updateOrCreate(['mount_path' => $target, …])`), puis,
+tant que ce stockage existe, **réutilise son contenu et ignore celui du compose**. Deux services
+qui montent le même chemin (`alloy` et `alloy-gateway` sur `/etc/alloy/config.alloy`)
+s'écraseraient donc, et une config modifiée par `git push` n'atteindrait jamais l'hôte (puis
+`config-guard` bloquerait tout redéploiement). `render.py` insère donc les 8 premiers caractères
+hexadécimaux du SHA-256 du fichier dans la source **et** la cible de chaque volume `content:`
+(`./config/loki/loki.<sha8>.yaml` → `/etc/loki/loki.<sha8>.yaml`), puis réécrit chaque référence
+à la cible dans le même service (`command:`, `environment:`), chemin entier seulement.
+`compose.dev.yaml`, qui monte `config/` directement, garde les noms du dépôt. Les tests
+travaillent sur un gabarit de test dans un dossier temporaire ; le vrai gabarit arrive à la
+tâche 7.
 
 **Files:**
 
@@ -498,8 +553,8 @@ Les tests travaillent sur un gabarit de test dans un dossier temporaire ; le vra
 **Interfaces:**
 
 - Consumes : `tests/support.py` (tâche 1) : `ROOT`.
-- Produces : `scripts/render.py` (stdlib) : `RenderError`, `BUDGET_BYTES = 122880`, `HEADER` (commence par `# GENERATED — DO NOT EDIT`), `load_versions(path) -> dict`, `read_config(root, source) -> str`, `literal_block(text, key_col, name) -> str`, `scan_template(text)` → itère `(service, indent, source, target, line_index)` pour chaque `content: "@@CONTENT@@"`, `computed_values(root, text) -> {'CONFIG_GUARD_EXPECTED', 'GUARD_SHA256'}`, `render_text(template_text, root, versions, strip_content=False) -> str`, `render_dev(template_text, root, versions) -> str`, `base64_size(text) -> int`, `outputs(root) -> {Path: str}` (`docker-compose.yaml` et `compose.dev.yaml`), CLI `python3 scripts/render.py [--check] [--stub PATH] [--root DIR]`.
-- Produces : Contrat du gabarit : chaque volume `content:` s'écrit `- type: bind` / `source: ./config/...` / `target: ...` / `content: "@@CONTENT@@"` ; les autres jetons `@@NOM@@` viennent de `tools/versions.env` ; `CONFIG_GUARD_EXPECTED` = `/guard/<chemin sous config/>=<sha256>` joints par `;`, triés, pour chaque fichier `content:` des services autres que `config-guard` ; `GUARD_SHA256` = SHA-256 de `config/config-guard/guard.sh`.
+- Produces : `scripts/render.py` (stdlib) : `RenderError`, `BUDGET_BYTES = 122880`, `HEADER` (commence par `# GENERATED — DO NOT EDIT`), `load_versions(path) -> dict`, `read_config(root, source) -> str`, `literal_block(text, key_col, name) -> str`, `HASH_LEN = 8`, `ContentVolume` (`service, indent, source, target, index, source_index, target_index`), `ContentItem` (les mêmes champs, plus `text, sha256, hashed_source, hashed_target`), `scan_template(text)` → itère un `ContentVolume` pour chaque `content: "@@CONTENT@@"`, `hashed_path(path, digest) -> str`, `content_items(root, text) -> [ContentItem]`, `rewrite_path(line, old, new) -> str`, `computed_values(root, text, hashed=True) -> {'CONFIG_GUARD_EXPECTED', 'GUARD_SHA256'}`, `render_text(template_text, root, versions, strip_content=False, hashed=True) -> str`, `render_dev(template_text, root, versions) -> str`, `base64_size(text) -> int`, `outputs(root) -> {Path: str}` (`docker-compose.yaml` et `compose.dev.yaml`), CLI `python3 scripts/render.py [--check] [--stub PATH] [--root DIR]`.
+- Produces : Contrat du gabarit : chaque volume `content:` s'écrit `- type: bind` / `source: ./config/...` / `target: ...` / `content: "@@CONTENT@@"` ; les autres jetons `@@NOM@@` viennent de `tools/versions.env` ; dans le compose déployé, source et cible portent `.<sha8>` avant l'extension ; `CONFIG_GUARD_EXPECTED` = `/guard/<chemin à empreinte sous config/>=<sha256>` joints par `;`, triés, pour chaque fichier `content:` des services autres que `config-guard` ; `GUARD_SHA256` = SHA-256 de `config/config-guard/guard.sh`.
 
 - [ ] **Étape 1 : écrire le test qui échoue**
 
@@ -527,6 +582,7 @@ TEMPLATE = """# test template
 services:
   config-guard:
     image: @@ALPINE_IMAGE@@
+    command: ["sh", "/opt/config-guard/guard.sh"]
     environment:
       CONFIG_GUARD_EXPECTED: "@@CONFIG_GUARD_EXPECTED@@"
       GUARD: "@@GUARD_SHA256@@"
@@ -541,6 +597,9 @@ services:
         read_only: true
   app:
     image: example/app:@@APP_VERSION@@
+    command:
+      - --config=/etc/app/tricky.txt
+      - --other=/etc/app/tricky.txt.bak
     volumes:
       - type: bind
         source: ./config/app/tricky.txt
@@ -568,6 +627,9 @@ class RenderTest(unittest.TestCase):
     def render(self, template=TEMPLATE, **kwargs):
         return render.render_text(template, self.root, self.versions, **kwargs)
 
+    def short(self, data):
+        return hashlib.sha256(data).hexdigest()[:8]
+
     def test_content_blocks_are_byte_exact(self):
         doc = yaml.safe_load(self.render())
         app_volume = doc["services"]["app"]["volumes"][0]
@@ -588,8 +650,47 @@ class RenderTest(unittest.TestCase):
         doc = yaml.safe_load(self.render())
         self.assertEqual(doc["services"]["app"]["image"], "example/app:1.2.3")
         self.assertEqual(doc["services"]["app"]["volumes"][1], "app-data:/data")
-        self.assertEqual(doc["services"]["app"]["volumes"][0]["target"], "/etc/app/tricky.txt")
         self.assertIn("app-data", doc["volumes"])
+
+    def test_paths_are_content_addressed(self):
+        short = self.short(TRICKY.encode("utf-8"))
+        app = yaml.safe_load(self.render())["services"]["app"]
+        self.assertEqual(app["volumes"][0]["source"], f"./config/app/tricky.{short}.txt")
+        self.assertEqual(app["volumes"][0]["target"], f"/etc/app/tricky.{short}.txt")
+        # References to the target are rewritten in the same service, whole paths only.
+        self.assertEqual(app["command"], [f"--config=/etc/app/tricky.{short}.txt", "--other=/etc/app/tricky.txt.bak"])
+        guard = yaml.safe_load(self.render())["services"]["config-guard"]
+        guard_short = self.short(b"#!/bin/sh\necho guard\n")
+        self.assertEqual(guard["command"], ["sh", f"/opt/config-guard/guard.{guard_short}.sh"])
+
+    def test_a_new_content_gets_a_new_name(self):
+        before = yaml.safe_load(self.render())["services"]["app"]["volumes"][0]["target"]
+        (self.root / "config" / "app" / "tricky.txt").write_text("changed\n", encoding="utf-8")
+        after = yaml.safe_load(self.render())["services"]["app"]["volumes"][0]["target"]
+        self.assertNotEqual(before, after)
+        self.assertEqual(after, "/etc/app/tricky." + self.short(b"changed\n") + ".txt")
+
+    def test_same_target_in_two_services_gets_two_names(self):
+        (self.root / "config" / "twin").mkdir()
+        (self.root / "config" / "twin" / "tricky.txt").write_text("twin\n", encoding="utf-8")
+        twin = TEMPLATE.replace("volumes:\n  app-data:", "").rstrip("\n") + "\n"
+        twin = twin.replace("      - app-data:/data\n", "") + (
+            "  twin:\n    image: example/app:@@APP_VERSION@@\n    command: [\"--config=/etc/app/tricky.txt\"]\n    volumes:\n"
+            "      - type: bind\n        source: ./config/twin/tricky.txt\n        target: /etc/app/tricky.txt\n"
+            '        content: "@@CONTENT@@"\n'
+        )
+        services = yaml.safe_load(self.render(twin))["services"]
+        app_target = services["app"]["volumes"][0]["target"]
+        twin_target = services["twin"]["volumes"][0]["target"]
+        self.assertNotEqual(app_target, twin_target)
+        self.assertEqual(services["twin"]["command"], [f"--config={twin_target}"])
+        self.assertEqual(services["app"]["command"][0], f"--config={app_target}")
+
+    def test_hashed_path(self):
+        digest = "0123456789abcdef" * 4
+        self.assertEqual(render.hashed_path("./config/loki/loki.yaml", digest), "./config/loki/loki.01234567.yaml")
+        self.assertEqual(render.hashed_path("/etc/alloy/config.alloy", digest), "/etc/alloy/config.01234567.alloy")
+        self.assertEqual(render.hashed_path("/opt/tool/run", digest), "/opt/tool/run.01234567")
 
     def test_output_is_deterministic(self):
         self.assertEqual(self.render(), self.render())
@@ -597,7 +698,7 @@ class RenderTest(unittest.TestCase):
     def test_guard_expectations_cover_the_other_services_files(self):
         env = yaml.safe_load(self.render())["services"]["config-guard"]["environment"]
         tricky_sha = hashlib.sha256(TRICKY.encode("utf-8")).hexdigest()
-        self.assertEqual(env["CONFIG_GUARD_EXPECTED"], f"/guard/app/tricky.txt={tricky_sha}")
+        self.assertEqual(env["CONFIG_GUARD_EXPECTED"], f"/guard/app/tricky.{tricky_sha[:8]}.txt={tricky_sha}")
         guard_sha = hashlib.sha256(b"#!/bin/sh\necho guard\n").hexdigest()
         self.assertEqual(env["GUARD"], guard_sha)
 
@@ -605,7 +706,8 @@ class RenderTest(unittest.TestCase):
         text = self.render(strip_content=True)
         self.assertNotIn("content:", text)
         doc = yaml.safe_load(text)
-        self.assertEqual(doc["services"]["app"]["volumes"][0]["source"], "./config/app/tricky.txt")
+        short = self.short(TRICKY.encode("utf-8"))
+        self.assertEqual(doc["services"]["app"]["volumes"][0]["source"], f"./config/app/tricky.{short}.txt")
 
     def test_unknown_placeholder_is_an_error(self):
         with self.assertRaisesRegex(render.RenderError, "@@NOPE@@"):
@@ -632,7 +734,9 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("content:", dev)
         doc = yaml.safe_load(dev)
         self.assertEqual(doc["services"]["grafana"]["image"], "grafana/grafana:13.2.2")
-        self.assertIn("app", doc["services"])
+        # config/ is mounted directly: the repository names, not the content-addressed ones.
+        self.assertEqual(doc["services"]["app"]["volumes"][0]["source"], "./config/app/tricky.txt")
+        self.assertEqual(doc["services"]["app"]["command"][0], "--config=/etc/app/tricky.txt")
 
 
 if __name__ == "__main__":
@@ -656,9 +760,17 @@ Fichier complet `scripts/render.py` :
 Standard library only. Rules (spec 4.1-4.4):
 - every `content: "@@CONTENT@@"` line becomes a YAML literal block holding the bytes of the
   `source:` file of the same volume item, copied without any transformation;
+- content-addressed paths: the first 8 hex digits of the file's SHA-256 are inserted in the
+  `source:` and the `target:` of the volume (loki.yaml -> loki.<sha8>.yaml), and every reference
+  to the target in the same service (command, environment) is rewritten. Coolify keys a file
+  storage by its mount path per application and, once it exists, reuses the stored content and
+  ignores the compose `content:`: a new name per content is the only way a changed config
+  reaches the host, and two services can never share a mount path;
 - `@@NAME@@` placeholders come from tools/versions.env, plus two computed values:
-  CONFIG_GUARD_EXPECTED ("/guard/<path under config/>=sha256;..." for every content file of the
-  other services: config-guard mounts ./config at /guard) and GUARD_SHA256 (hash of guard.sh);
+  CONFIG_GUARD_EXPECTED ("/guard/<hashed path under config/>=sha256;..." for every content file
+  of the other services: config-guard mounts ./config at /guard) and GUARD_SHA256 (hash of
+  guard.sh);
+- compose.dev.yaml mounts config/ directly: it keeps the repository names (no hash);
 - the output is deterministic.
 """
 
@@ -668,6 +780,7 @@ import difflib
 import hashlib
 import re
 import sys
+from collections import namedtuple
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -682,6 +795,7 @@ DEV_HEADER = (
 )
 GUARD_SCRIPT = "config/config-guard/guard.sh"
 GUARD_PREFIX = "/guard/"
+HASH_LEN = 8
 CONTENT_RE = re.compile(r'^(?P<indent> *)content: "@@CONTENT@@"$')
 ITEM_KEY_RE = re.compile(r"^(?P<indent> *)(?:- )?(?P<key>source|target): (?P<value>\S+)$")
 SERVICE_RE = re.compile(r"^  (?P<name>[a-z0-9][a-z0-9-]*):$")
@@ -696,6 +810,12 @@ DEV_GRAFANA = """  grafana:
     ports:
       - "127.0.0.1:3000:3000"
 """
+
+
+# One `content: "@@CONTENT@@"` volume of the template; *_index are 0-based line numbers.
+ContentVolume = namedtuple("ContentVolume", "service indent source target index source_index target_index")
+# The same volume with its file: text, SHA-256 and content-addressed source and target.
+ContentItem = namedtuple("ContentItem", ContentVolume._fields + ("text", "sha256", "hashed_source", "hashed_target"))
 
 
 class RenderError(Exception):
@@ -766,7 +886,7 @@ def sha256_text(text):
 
 
 def scan_template(template_text):
-    """Yield (service, indent, source, target, line_index) for every content placeholder."""
+    """Yield a ContentVolume for every content placeholder of the template."""
     service = None
     item = {}
     for index, line in enumerate(template_text.split("\n")):
@@ -779,7 +899,7 @@ def scan_template(template_text):
             item = {}
         match = ITEM_KEY_RE.match(line)
         if match:
-            item[match.group("key")] = (len(match.group("indent")), match.group("value"))
+            item[match.group("key")] = (len(match.group("indent")), match.group("value"), index)
             continue
         match = CONTENT_RE.match(line)
         if match:
@@ -789,16 +909,40 @@ def scan_template(template_text):
             for key in ("source", "target"):
                 if item[key][0] not in (indent, indent - 2):
                     raise RenderError(f"line {index + 1}: {key} is not part of the same volume item")
-            yield service, indent, item["source"][1], item["target"][1], index
+            yield ContentVolume(service, indent, item["source"][1], item["target"][1], index, item["source"][2], item["target"][2])
             item = {}
 
 
-def computed_values(root, template_text):
+def hashed_path(path, digest):
+    """Insert the first HASH_LEN hex digits of `digest` before the extension: loki.yaml -> loki.<h>.yaml."""
+    head, slash, name = path.rpartition("/")
+    stem, dot, extension = name.rpartition(".")
+    short = digest[:HASH_LEN]
+    hashed = f"{stem}.{short}.{extension}" if dot and stem else f"{name}.{short}"
+    return head + slash + hashed
+
+
+def content_items(root, template_text):
+    """[ContentItem] of the template, in template order."""
+    items = []
+    for volume in scan_template(template_text):
+        text = read_config(root, volume.source)
+        digest = sha256_text(text)
+        items.append(ContentItem(*volume, text, digest, hashed_path(volume.source, digest), hashed_path(volume.target, digest)))
+    return items
+
+
+def rewrite_path(line, old, new):
+    """Replace the container path `old` by `new` where it appears as a whole path."""
+    return re.sub(r"(?<![\w./-])" + re.escape(old) + r"(?![\w./-])", lambda _m: new, line)
+
+
+def computed_values(root, template_text, hashed=True):
     expected = set()
-    for service, _indent, source, _target, _index in scan_template(template_text):
-        if service != "config-guard":
-            path = GUARD_PREFIX + source[len("./config/"):]
-            expected.add(f"{path}={sha256_text(read_config(root, source))}")
+    for item in content_items(root, template_text):
+        if item.service != "config-guard":
+            source = item.hashed_source if hashed else item.source
+            expected.add(f"{GUARD_PREFIX}{source[len('./config/'):]}={item.sha256}")
     return {
         "CONFIG_GUARD_EXPECTED": ";".join(sorted(expected)),
         "GUARD_SHA256": sha256_text(read_config(root, "./" + GUARD_SCRIPT)),
@@ -817,32 +961,48 @@ def substitute(text, values):
     return PLACEHOLDER_RE.sub(replace, text)
 
 
-def render_text(template_text, root, versions, strip_content=False):
-    """Render the template. strip_content=True drops the content lines (compose.dev / validation)."""
+def render_text(template_text, root, versions, strip_content=False, hashed=True):
+    """Render the template.
+
+    strip_content=True drops the content lines (compose.dev / validation); hashed=False keeps the
+    repository file names (compose.dev.yaml mounts config/ directly).
+    """
     values = dict(versions)
-    values.update(computed_values(root, template_text))
+    values.update(computed_values(root, template_text, hashed))
     lines = template_text.split("\n")
     contents = {}
-    for _service, indent, source, _target, index in scan_template(template_text):
+    sources = {}
+    renames = {}
+    for item in content_items(root, template_text):
         if strip_content:
-            contents[index] = None
+            contents[item.index] = None
         else:
-            text = read_config(root, source)
             # Drop only the final newline: "\n".join() below adds it back. Blank lines kept by
             # the "+" chomping indicator must stay in the output.
-            contents[index] = " " * indent + "content: " + literal_block(text, indent, source)[:-1]
+            contents[item.index] = " " * item.indent + "content: " + literal_block(item.text, item.indent, item.source)[:-1]
+        if hashed:
+            sources[item.source_index] = (item.source, item.hashed_source)
+            renames.setdefault(item.service, []).append((item.target, item.hashed_target))
     out = []
+    service = None
     for index, line in enumerate(lines):
+        match = SERVICE_RE.match(line)
+        if match:
+            service = match.group("name")
         if index in contents:
             if contents[index] is not None:
                 out.append(contents[index])
             continue
+        if index in sources:
+            line = line.replace(*sources[index], 1)
+        for old, new in renames.get(service, []):
+            line = rewrite_path(line, old, new)
         out.append(substitute(line, values))
     return "\n".join(out)
 
 
 def render_dev(template_text, root, versions):
-    stub = render_text(template_text, root, versions, strip_content=True)
+    stub = render_text(template_text, root, versions, strip_content=True, hashed=False)
     grafana = substitute(DEV_GRAFANA, versions)
     rendered, count = TOP_SERVICES_RE.subn(lambda _m: "services:\n" + grafana, stub, count=1)
     if count != 1:
@@ -912,7 +1072,7 @@ Attendu : aucune sortie.
 
 Run : `python3 -m unittest discover -s tests -p test_render.py -v`
 
-Attendu : `Ran 11 tests` … `OK`.
+Attendu : `Ran 15 tests` … `OK`.
 
 Run : `.bin/ruff check .`
 
@@ -932,9 +1092,13 @@ Script POSIX pour `alpine` (busybox) : il échoue si un fichier attendu est abse
 dossier ou d'empreinte différente, et, décision du plan (hors spec), si une variable injectée
 dans une config la casserait : `IP_HASH_SALT` est inséré dans une instruction OTTL et dans un
 gabarit Go, `HOST_MAP` et `RESERVED_SUBDOMAINS` sont découpés par des gabarits, et
-`TENANT_HOST_REGEX` doit définir le groupe `sub`. Mieux vaut un échec clair au déploiement qu'un
-masquage silencieusement faux. Les tests lancent le script avec le `sh` de la machine (dash,
-POSIX).
+`TENANT_HOST_REGEX` doit définir le groupe `sub`, `PROJECTS` est découpé par un gabarit (liste
+d'autorisation Faro), les `env` de `HOST_MAP` doivent être `prod` ou `preprod`. Il exige aussi
+`FARO_API_KEY` (au moins 16 caractères) : `alloy` lance toujours `faro.receiver`, et une clé vide
+y désactive tout contrôle. Mieux vaut un échec clair au déploiement qu'un masquage silencieusement
+faux ou un point public ouvert. Les mêmes tests tournent deux fois : avec le `sh` de la machine
+(dash, outils GNU) et avec `busybox sh`, seules les applets BusyBox sur le `PATH`, comme dans
+l'image `alpine` ; le script n'utilise que `grep -E`, `sha256sum`, `cut` et `printf`.
 
 **Files:**
 
@@ -943,8 +1107,8 @@ POSIX).
 
 **Interfaces:**
 
-- Consumes : `tests/support.py` : `ROOT`, `run`.
-- Produces : `config/config-guard/guard.sh` : lit `CONFIG_GUARD_EXPECTED` (`chemin=sha256;…`), `IP_HASH_SALT` (≥ 16 `[A-Za-z0-9]`), `HOST_MAP` (vide ou `hote=service:env[,…]`), `RESERVED_SUBDOMAINS` (vide ou `a,b`), `TENANT_HOST_REGEX` (vide ou contient `(?P<sub>`). Code de sortie 0 et « config-guard: all checks passed », sinon 1 et « config-guard: FAILED - no service will start ».
+- Consumes : `tests/support.py` : `ROOT`, `run`, `binary` ; `.bin/busybox`, `.bin/busybox-applets/` (tâche 1).
+- Produces : `config/config-guard/guard.sh` : lit `CONFIG_GUARD_EXPECTED` (`chemin=sha256;…`), `IP_HASH_SALT` (≥ 16 `[A-Za-z0-9]`), `FARO_API_KEY` (≥ 16 `[A-Za-z0-9._~+/=-]`), `PROJECTS` (vide ou `a,b`, `[a-z0-9-]{1,64}`), `HOST_MAP` (vide ou `hote=service:env[,…]`, env `prod` ou `preprod`), `RESERVED_SUBDOMAINS` (vide ou `a,b`), `TENANT_HOST_REGEX` (vide ou contient `(?P<sub>`). Code de sortie 0 et « config-guard: all checks passed », sinon 1 et « config-guard: FAILED - no service will start ».
 
 - [ ] **Étape 1 : écrire le test qui échoue**
 
@@ -957,22 +1121,30 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import ROOT, run
+from support import ROOT, binary, run
 
 GUARD = ROOT / "config" / "config-guard" / "guard.sh"
 VALID_ENV = {
     "IP_HASH_SALT": "harnessSalt0123456789",
+    "FARO_API_KEY": "harness-faro-key-0123456789",
     "HOST_MAP": "example.me=guest-front:prod",
     "RESERVED_SUBDOMAINS": "www,api",
     "TENANT_HOST_REGEX": r"^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me|app)$",
+    "PROJECTS": "demo,other-project",
 }
 
 
-class ConfigGuardTest(unittest.TestCase):
+class GuardCases:
+    """The config-guard rules. Each subclass runs them under one shell."""
+
+    def shell(self):
+        """(argv prefix, PATH) of the shell under test."""
+        raise NotImplementedError
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
-        self.file = self.dir / "loki.yaml"
+        self.file = self.dir / "loki.0123abcd.yaml"
         self.file.write_text("auth_enabled: false\n", encoding="utf-8")
         self.sha = hashlib.sha256(self.file.read_bytes()).hexdigest()
 
@@ -980,10 +1152,11 @@ class ConfigGuardTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def guard(self, expected=None, **overrides):
-        env = {"PATH": os.environ["PATH"], **VALID_ENV}
+        prefix, path = self.shell()
+        env = {"PATH": path, **VALID_ENV}
         env["CONFIG_GUARD_EXPECTED"] = f"{self.file}={self.sha}" if expected is None else expected
         env.update(overrides)
-        return run(["sh", GUARD], env=env)
+        return run([*prefix, GUARD], env=env)
 
     def assert_fails(self, result, message):
         self.assertEqual(result.returncode, 1, result.stdout)
@@ -996,7 +1169,7 @@ class ConfigGuardTest(unittest.TestCase):
         self.assertIn(f"ok {self.file}", result.stdout)
 
     def test_several_entries(self):
-        other = self.dir / "tempo.yaml"
+        other = self.dir / "tempo.4567cdef.yaml"
         other.write_text("server: {}\n", encoding="utf-8")
         sha = hashlib.sha256(other.read_bytes()).hexdigest()
         result = self.guard(expected=f"{self.file}={self.sha};{other}={sha}")
@@ -1031,10 +1204,24 @@ class ConfigGuardTest(unittest.TestCase):
             with self.subTest(salt=salt):
                 self.assert_fails(self.guard(IP_HASH_SALT=salt), "IP_HASH_SALT")
 
+    def test_faro_api_key_rules(self):
+        """alloy always runs faro.receiver: an empty or short key must stop the deployment."""
+        self.assertEqual(self.guard(FARO_API_KEY="0123456789abcdef0123456789abcdef0123456789abcdef").returncode, 0)
+        for key in ["", "short-key-01234", "with space 0123456789", 'with"quote0123456789']:
+            with self.subTest(key=key):
+                self.assert_fails(self.guard(FARO_API_KEY=key), "FARO_API_KEY")
+
+    def test_projects_rules(self):
+        self.assertEqual(self.guard(PROJECTS="").returncode, 0)
+        self.assertEqual(self.guard(PROJECTS="in-immo").returncode, 0)
+        for value in ["demo, other", "Demo", "demo,", "a_b"]:
+            with self.subTest(value=value):
+                self.assert_fails(self.guard(PROJECTS=value), "PROJECTS")
+
     def test_host_map_rules(self):
         self.assertEqual(self.guard(HOST_MAP="").returncode, 0)
         self.assertEqual(self.guard(HOST_MAP="a.me=web:prod,b.me=api:preprod").returncode, 0)
-        for value in ["example.me", "Example.me=web:prod", "a.me=web", "a.me=web:prod,"]:
+        for value in ["example.me", "Example.me=web:prod", "a.me=web", "a.me=web:prod,", "a.me=web:staging"]:
             with self.subTest(value=value):
                 self.assert_fails(self.guard(HOST_MAP=value), "HOST_MAP")
 
@@ -1049,6 +1236,20 @@ class ConfigGuardTest(unittest.TestCase):
         self.assert_fails(self.guard(TENANT_HOST_REGEX=r"^([a-z]+)\.example\.me$"), "TENANT_HOST_REGEX")
 
 
+class DashGuardTest(GuardCases, unittest.TestCase):
+    """The POSIX sh of the machine (dash) with its GNU tools."""
+
+    def shell(self):
+        return ["sh"], os.environ["PATH"]
+
+
+class BusyboxGuardTest(GuardCases, unittest.TestCase):
+    """busybox sh with busybox applets only on PATH, as in the alpine image of config-guard."""
+
+    def shell(self):
+        return [binary("busybox"), "sh"], str(binary("busybox-applets"))
+
+
 if __name__ == "__main__":
     unittest.main()
 ```
@@ -1057,7 +1258,7 @@ if __name__ == "__main__":
 
 Run : `python3 -m unittest discover -s tests -p test_config_guard.py -v`
 
-Attendu : FAIL sur les 12 tests (le script n'existe pas : « sh: 0: cannot open …/guard.sh »).
+Attendu : FAIL sur les 28 tests (le script n'existe pas : « sh: 0: cannot open …/guard.sh » sous dash, « sh: can't open … » sous BusyBox).
 
 - [ ] **Étape 3 : implémentation minimale**
 
@@ -1124,9 +1325,18 @@ unset IFS
 if ! matches "${IP_HASH_SALT:-}" '^[A-Za-z0-9]{16,}$'; then
   error "IP_HASH_SALT must be at least 16 characters from [A-Za-z0-9]"
 fi
+# alloy always runs faro.receiver, and an empty api_key disables its check: the key is mandatory.
+if ! matches "${FARO_API_KEY:-}" '^[A-Za-z0-9._~+/=-]{16,}$'; then
+  error "FARO_API_KEY must be at least 16 characters from [A-Za-z0-9._~+/=-] (openssl rand -hex 24)"
+fi
+# PROJECTS is split on commas by a Go template (Faro allow-list): no spaces, no empty item.
+projects=${PROJECTS:-}
+if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9-]{1,64}(,[a-z0-9-]{1,64})*$'; then
+  error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
+fi
 host_map=${HOST_MAP:-}
-if [ -n "$host_map" ] && ! matches "$host_map" '^[a-z0-9.-]+=[a-z0-9-]+:[a-z0-9-]+(,[a-z0-9.-]+=[a-z0-9-]+:[a-z0-9-]+)*$'; then
-  error "HOST_MAP must look like host=service:env[,host=service:env...] (lowercase)"
+if [ -n "$host_map" ] && ! matches "$host_map" '^[a-z0-9.-]+=[a-z0-9-]+:(prod|preprod)(,[a-z0-9.-]+=[a-z0-9-]+:(prod|preprod))*$'; then
+  error "HOST_MAP must look like host=service:env[,host=service:env...] (lowercase, env prod or preprod)"
 fi
 reserved=${RESERVED_SUBDOMAINS:-}
 if [ -n "$reserved" ] && ! matches "$reserved" '^[a-z0-9-]+(,[a-z0-9-]+)*$'; then
@@ -1151,7 +1361,7 @@ echo "config-guard: all checks passed"
 
 Run : `python3 -m unittest discover -s tests -p test_config_guard.py -v`
 
-Attendu : `Ran 12 tests` … `OK`.
+Attendu : `Ran 28 tests` … `OK` (`DashGuardTest` et `BusyboxGuardTest`, 14 chacun).
 
 Run : `.bin/shellcheck -s sh config/config-guard/guard.sh`
 
@@ -1757,17 +1967,28 @@ git commit -m "feat(prometheus): add prometheus config with otlp promotion and s
 ### Task 7: Gabarit compose (stockage) et contrôles statiques `check.py`
 
 Premier gabarit : `config-guard`, `loki`, `tempo`, `prometheus`, `node-exporter`. Les services
-Alloy et `grafana-setup` sont ajoutés par les tâches 9 et 16, avec leurs variables. Décision du
-plan, vérifiée sur le budget : `config-guard` monte en lecture seule le **dossier `./config`**
+Alloy et `grafana-setup` sont ajoutés par les tâches 9 et 16, avec leurs variables ; `config-guard`
+reçoit dès maintenant toutes celles qu'il valide (`FARO_API_KEY`, `PROJECTS` compris). Décision
+du plan, vérifiée sur le budget : `config-guard` monte en lecture seule le **dossier `./config`**
 où Coolify écrit les fichiers `content:` des autres services, au lieu de porter une seconde copie
 de chaque contenu. Il vérifie ainsi les fichiers réellement montés par les services, et le
-compose final pèse 77,6 Ko en base64 au lieu de 139,9 Ko (au-delà du budget de 120 Kio). Son
-propre script est vérifié par l'empreinte inscrite dans sa commande. Tous les montages `content:`
-sont `read_only: true`. `check.py` réalise les huit contrôles du § 12.1 : `docker compose
-config` tourne sur la variante sans `content:` (le CLI Docker valide sans démon), sur
-`compose.dev.yaml` aussi ; les variables `${VAR}` sont lues hors commentaires ; le mot `key`
-seul n'est pas un motif de secret (`{"key": "service.name"}` est un champ de données), seulement
-en suffixe (`api_key`, `FARO_API_KEY`).
+compose final pèse environ 87 Ko en base64 au lieu d'environ 156 Ko (au-delà du budget de
+120 Kio). Son propre script est vérifié par l'empreinte inscrite dans sa commande. Lecture du
+parseur de Coolify : il reconstruit chaque montage `bind` en `"source:cible"` et n'y remet que le
+mode d'une syntaxe **courte** ; le `read_only: true` d'une syntaxe longue disparaît. Les montages
+de l'hôte qui doivent rester en lecture seule (`/guard` de `config-guard`, `/proc`, `/sys` et `/`
+de `node-exporter`) sont donc écrits en syntaxe courte `:ro` (un seul mode : Coolify ne reconnaît
+pas `ro,rslave`). Les montages `content:` exigent la syntaxe longue : leur `read_only: true` ne
+sert que le banc Docker, et c'est l'utilisateur non-root des services qui ne peut pas écrire ces
+fichiers (spike S5). `check.py` réalise les huit contrôles du § 12.1 et deux contrôles du plan :
+`docker compose config` tourne sur la variante sans `content:` (le CLI Docker valide sans
+démon), sur `compose.dev.yaml` aussi ; les variables `${VAR}` sont lues hors commentaires ; le
+mot `key` seul n'est pas un motif de secret (`{"key": "service.name"}` est un champ de données),
+seulement en suffixe (`api_key`, `FARO_API_KEY`) ; une valeur nue purement alphabétique est un
+secret en YAML ou en dotenv (`password: hunter`), pas après un `=` espacé de code
+(`self.token = token`) ; `targets` refuse deux volumes `content:` de même cible dans tout le
+compose (Coolify n'en garderait qu'un) ; `limits` exige `mem_limit` et `cpus` sur chaque service
+(§ 9.4).
 
 **Files:**
 
@@ -1781,10 +2002,10 @@ en suffixe (`api_key`, `FARO_API_KEY`).
 
 **Interfaces:**
 
-- Consumes : `scripts/render.py` (tâche 2) : `render_text`, `outputs`, `scan_template`, `load_versions`, `HEADER`, `BUDGET_BYTES`, `base64_size`, `RenderError`.
+- Consumes : `scripts/render.py` (tâche 2) : `render_text`, `outputs`, `scan_template`, `content_items`, `load_versions`, `HEADER`, `BUDGET_BYTES`, `base64_size`, `RenderError`.
 - Consumes : `config/*` (tâches 3 à 6), `harness/harness.env` (tâche 4), `.bin/` (tâche 1).
-- Produces : `compose.template.yaml` : services `config-guard` (`alpine`, `restart: "no"`, `./config` monté sur `/guard` en lecture seule), `loki` (`expose` 3100), `tempo` (3200, 4317), `prometheus` (9090), `node-exporter` (9100, `/proc`, `/sys`, `/` en lecture seule) ; tous dépendent de `config-guard` (`service_completed_successfully`) ; `BIND_ADDR: 0.0.0.0` ; aucun `ports:` ; volumes `loki-data`, `tempo-data`, `prometheus-data`.
-- Produces : `scripts/check.py` (stdlib) : `DOC_ONLY_VARS = {'ALLOY_INTERNAL_URL'}`, `env_example_keys(text)`, `template_variables(text)`, `env_var_mismatches(template_text, env_example_text) -> [str]`, `is_literal_secret(value)`, `find_hardcoded_secrets(text, name) -> [str]`, `port_violations(compose_json) -> [str]`, `compose_json()` (mis en cache), CLI `python3 scripts/check.py [--only render,size,compose,ports,env,secrets,validators,lint]`.
+- Produces : `compose.template.yaml` : services `config-guard` (`alpine`, `restart: "no"`, `./config:/guard:ro`, variables `IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`, `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX`), `loki` (`expose` 3100), `tempo` (3200, 4317), `prometheus` (9090), `node-exporter` (9100, `/proc:/host/proc:ro`, `/sys:/host/sys:ro`, `/:/host/root:ro`) ; tous dépendent de `config-guard` (`service_completed_successfully`) ; `BIND_ADDR: 0.0.0.0` ; aucun `ports:` ; volumes `loki-data`, `tempo-data`, `prometheus-data`.
+- Produces : `scripts/check.py` (stdlib) : `DOC_ONLY_VARS = {'ALLOY_INTERNAL_URL'}`, `env_example_keys(text)`, `template_variables(text)`, `env_var_mismatches(template_text, env_example_text) -> [str]`, `is_literal_secret(value, code_assignment=False)`, `find_hardcoded_secrets(text, name) -> [str]`, `port_violations(compose_json) -> [str]`, `limit_violations(compose_json) -> [str]`, `target_collisions([(service, target)]) -> [str]`, `compose_json()` (mis en cache), CLI `python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint]`.
 
 - [ ] **Étape 1 : écrire les tests qui échouent**
 
@@ -1812,13 +2033,16 @@ class SecretScanTest(unittest.TestCase):
             "FARO_API_KEY=k3yValue123",
             "ip_hash_salt: s4ltValue99",
             '"secret": "x"',
+            "password: hunter",
+            "FARO_API_KEY=abcdefghijklmnop",
+            "  client_secret: supersecret",
         ]:
             with self.subTest(line=line):
                 self.assertEqual(len(self.findings(line)), 1)
 
     def test_references_and_code_are_not_flagged(self):
         for line in [
-            'api_key = coalesce(sys.env("FARO_API_KEY"), sys.env("IP_HASH_SALT") + "-faro-disabled")',
+            'api_key = sys.env("FARO_API_KEY")',
             "password: ${GRAFANA_PASSWORD}",
             'token = os.environ.get("GRAFANA_SA_TOKEN", "")',
             "self.token = token",
@@ -1827,6 +2051,8 @@ class SecretScanTest(unittest.TestCase):
             "# password: hunter2 (comment)",
             "// api_key = \"abc\" (comment)",
             "token:",
+            "skip_token_check: false",
+            "api_key = faro_key",
             'if ! matches "${IP_HASH_SALT:-}" \'^[A-Za-z0-9]{16,}$\'; then',
         ]:
             with self.subTest(line=line):
@@ -1866,6 +2092,19 @@ class PortsTest(unittest.TestCase):
         self.assertEqual(check.port_violations({"services": {"loki": {"expose": ["3100"]}}}), [])
 
 
+class LimitsTest(unittest.TestCase):
+    def test_every_service_needs_mem_limit_and_cpus(self):
+        compose = {"services": {"ok": {"mem_limit": "67108864", "cpus": 0.2}, "no-cpus": {"mem_limit": "1"}, "none": {}}}
+        self.assertEqual(check.limit_violations(compose), ["no-cpus: cpus missing", "none: mem_limit missing", "none: cpus missing"])
+
+
+class TargetsTest(unittest.TestCase):
+    def test_a_content_target_is_used_once(self):
+        mounts = [("alloy", "/etc/alloy/config.1.alloy"), ("alloy-gateway", "/etc/alloy/config.1.alloy"), ("loki", "/etc/loki/loki.2.yaml")]
+        self.assertEqual(check.target_collisions(mounts), ["/etc/alloy/config.1.alloy: content target of alloy, alloy-gateway"])
+        self.assertEqual(check.target_collisions(mounts[1:]), [])
+
+
 class RepositoryCheckTest(unittest.TestCase):
     def test_check_py_passes_on_the_repository(self):
         result = run([sys.executable, ROOT / "scripts" / "check.py"], timeout=600)
@@ -1893,13 +2132,18 @@ class RepositoryRenderTest(unittest.TestCase):
 
     def test_every_content_block_matches_its_source(self):
         doc = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+        template = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
+        repository = {item.hashed_source: item.source for item in render.content_items(ROOT, template)}
         seen = 0
         for name, service in doc["services"].items():
             for volume in service.get("volumes", []):
                 if isinstance(volume, dict) and "content" in volume:
-                    source = ROOT / volume["source"]
+                    data = (ROOT / repository[volume["source"]]).read_bytes()
+                    short = hashlib.sha256(data).hexdigest()[:8]
                     with self.subTest(service=name, source=volume["source"]):
-                        self.assertEqual(volume["content"].encode("utf-8"), source.read_bytes())
+                        self.assertEqual(volume["content"].encode("utf-8"), data)
+                        self.assertIn(f".{short}.", volume["source"])
+                        self.assertIn(f".{short}.", volume["target"])
                     seen += 1
         self.assertGreaterEqual(seen, 1)
 
@@ -1919,9 +2163,12 @@ Fichier complet `compose.template.yaml` :
 
 ```yaml
 # grafana-coolify — compose template (source of docker-compose.yaml; run python3 scripts/render.py).
-# - Each content placeholder is replaced by the bytes of the volume's `source:` file (spec 4.1).
+# - Each content placeholder is replaced by the bytes of the volume's `source:` file (spec 4.1);
+#   render.py adds the content hash to its source and target paths and to the references to them.
 # - Image tags come from tools/versions.env; config-guard gets the SHA-256 of every config file.
 # - `${VAR}` references are interpolated by Compose/Coolify and must all be in .env.example.
+# - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
+#   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
 # - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
 services:
@@ -1935,6 +2182,8 @@ services:
     environment:
       CONFIG_GUARD_EXPECTED: "@@CONFIG_GUARD_EXPECTED@@"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
+      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      PROJECTS: ${PROJECTS:-}
       HOST_MAP: ${HOST_MAP:-}
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
@@ -1945,11 +2194,9 @@ services:
         content: "@@CONTENT@@"
         read_only: true
       # The host directory where Coolify writes the content of every service below:
-      # config-guard checks the very files the services mount (spec 4.4).
-      - type: bind
-        source: ./config
-        target: /guard
-        read_only: true
+      # config-guard checks the very files the services mount (spec 4.4). Short syntax: Coolify
+      # rebuilds bind mounts as "source:target[:mode]" and keeps only a short-syntax mode.
+      - ./config:/guard:ro
     mem_limit: 32m
     cpus: 0.1
 
@@ -2045,19 +2292,11 @@ services:
       - --path.sysfs=/host/sys
       - --path.rootfs=/host/root
       - --web.listen-address=0.0.0.0:9100
+    # Short syntax on purpose: Coolify drops `read_only: true` of a long-syntax bind mount.
     volumes:
-      - type: bind
-        source: /proc
-        target: /host/proc
-        read_only: true
-      - type: bind
-        source: /sys
-        target: /host/sys
-        read_only: true
-      - type: bind
-        source: /
-        target: /host/root
-        read_only: true
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
     expose:
       - "9100"
     mem_limit: 64m
@@ -2080,8 +2319,20 @@ Fichier complet `.env.example` :
 # Sel de l'empreinte SHA-256 des IP : au moins 16 caractères [A-Za-z0-9].
 IP_HASH_SALT=
 
+# --- Clé Faro (obligatoire) ---
+# Clé d'application des SDK Faro (navigateur, desktop, mobile) : au moins 16 caractères
+# [A-Za-z0-9._~+/=-], générée par `openssl rand -hex 24`. alloy écoute toujours Faro : sans clé
+# valide, config-guard refuse le déploiement. Point Faro fermé : ne donner aucun domaine à alloy.
+FARO_API_KEY=
+
+# --- Projets ---
+# Projets autorisés, en minuscules, séparés par des virgules sans espace (ex. in-immo,autre-projet).
+# Logs Faro d'un projet absent de la liste : rejetés (liste vide : tout projet au bon format).
+# grafana-setup crée un dossier Grafana gc-<projet> pour chacun.
+PROJECTS=
+
 # --- Déduction depuis l'hôte (logs Faro, spec § 6.4) ---
-# HOST_MAP : hote=service:env séparés par des virgules, en minuscules.
+# HOST_MAP : hote=service:env séparés par des virgules, en minuscules, env = prod ou preprod.
 HOST_MAP=
 # RESERVED_SUBDOMAINS : sous-domaines qui ne sont jamais des tenants (ex. www,api).
 RESERVED_SUBDOMAINS=
@@ -2114,7 +2365,7 @@ Fichier complet `scripts/check.py` :
 #!/usr/bin/env python3
 """Static checks of spec 12.1. Standard library only; external tools: docker compose and .bin/.
 
-Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,validators,lint]
+Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint]
 """
 
 import argparse
@@ -2140,9 +2391,11 @@ NULL_ENV_KEY_RE = re.compile(r"^\s+([A-Z][A-Z0-9_]*):\s*$")
 # Spec 12.1.6: token|password|secret|salt|key. "key" alone is a common data field name
 # ({"key": "service.name"}), so it only counts as a suffix: api_key, FARO_API_KEY, private-key.
 SECRET_RE = re.compile(
-    r"(?i)(?P<key>[a-z0-9_.-]*(?:token|password|secret|salt|[_.-]key|apikey)[a-z0-9_.-]*)[\"']?\s*[:=]\s*(?P<value>\S.*)$"
+    r"(?i)(?P<key>[a-z0-9_.-]*(?:token|password|secret|salt|[_.-]key|apikey)[a-z0-9_.-]*)[\"']?(?P<sep>\s*[:=]\s*)(?P<value>\S.*)$"
 )
-BARE_SECRET_RE = re.compile(r"[A-Za-z0-9+/_=.-]{6,}")
+BARE_SECRET_RE = re.compile(r"[A-Za-z0-9+/_=.-]+")
+# Bare YAML/dotenv values that are not secrets.
+NOT_SECRETS = {"true", "false", "null", "none", "yes", "no", "~"}
 
 
 def env_example_keys(text):
@@ -2176,7 +2429,11 @@ def env_var_mismatches(template_text, env_example_text, doc_only=frozenset(DOC_O
     return errors
 
 
-def is_literal_secret(value):
+def is_literal_secret(value, code_assignment=False):
+    """True when `value` is written in clear: a quoted string, or a bare YAML/dotenv value.
+
+    A bare word after a spaced `=` (`self.token = token`) is a code reference, not a literal.
+    """
     value = value.strip().rstrip(",;")
     if not value:
         return False
@@ -2186,9 +2443,11 @@ def is_literal_secret(value):
         content = value[1:end] if end > 0 else value[1:]
         return bool(content) and "$" not in content and "{{" not in content
     token = value.split()[0].rstrip(",;")
-    if token.startswith("$") or not BARE_SECRET_RE.fullmatch(token):
+    if token.startswith("$") or not BARE_SECRET_RE.fullmatch(token) or token.lower() in NOT_SECRETS:
         return False
-    return any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
+    if code_assignment and token.replace("_", "").replace(".", "").isalpha():
+        return False
+    return True
 
 
 def find_hardcoded_secrets(text, name):
@@ -2198,13 +2457,39 @@ def find_hardcoded_secrets(text, name):
         if stripped.startswith(("#", "//")):
             continue
         match = SECRET_RE.search(line)
-        if match and is_literal_secret(match.group("value")):
+        if not match:
+            continue
+        separator = match.group("sep")
+        code_assignment = "=" in separator and separator != "="
+        if is_literal_secret(match.group("value"), code_assignment):
             findings.append(f"{name}:{number}: literal value for '{match.group('key')}'")
     return findings
 
 
 def port_violations(compose_json):
     return [f"{name}: declares ports: {service['ports']}" for name, service in sorted(compose_json["services"].items()) if service.get("ports")]
+
+
+def limit_violations(compose_json):
+    """Every service has mem_limit and cpus (spec 9.4)."""
+    errors = []
+    for name, service in sorted(compose_json["services"].items()):
+        for key in ("mem_limit", "cpus"):
+            if not service.get(key):
+                errors.append(f"{name}: {key} missing")
+    return errors
+
+
+def target_collisions(mounts):
+    """[(service, target)] of the content volumes -> errors for a target used twice.
+
+    Coolify keeps one file storage per container path of an application: two content volumes
+    with the same target would overwrite each other (spec 4.2).
+    """
+    services = {}
+    for service, target in mounts:
+        services.setdefault(target, []).append(service)
+    return [f"{target}: content target of {', '.join(names)}" for target, names in sorted(services.items()) if len(names) > 1]
 
 
 def tool(name):
@@ -2311,9 +2596,18 @@ def validator_commands(sources):
     return commands
 
 
+def check_targets():
+    template = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
+    return target_collisions((item.service, item.hashed_target) for item in render.content_items(ROOT, template))
+
+
+def check_limits():
+    return limit_violations(compose_json())
+
+
 def check_validators():
     template = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
-    sources = [source for _svc, _indent, source, _target, _index in render.scan_template(template)]
+    sources = [volume.source for volume in render.scan_template(template)]
     errors = []
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ)
@@ -2348,6 +2642,8 @@ CHECKS = {
     "ports": check_ports,
     "env": check_env,
     "secrets": check_secrets,
+    "targets": check_targets,
+    "limits": check_limits,
     "validators": check_validators,
     "lint": check_lint,
 }
@@ -2384,7 +2680,7 @@ Attendu : « render: wrote docker-compose.yaml », « render: wrote compose.dev.
 
 Run : `python3 scripts/check.py`
 
-Attendu : huit lignes `check: [PASS] …` (render, size, compose, ports, env, secrets, validators, lint), code 0.
+Attendu : dix lignes `check: [PASS] …` (render, size, compose, ports, env, secrets, targets, limits, validators, lint), code 0.
 
 Run : `python3 -m unittest discover -s tests -v`
 
@@ -2430,9 +2726,17 @@ git commit -m "feat(compose): add compose template for storage services and stat
 
 Le banc lit le gabarit (via `render.render_text(..., strip_content=True)`) et lance chaque service
 avec le binaire officiel, les **mêmes** arguments et variables, sur sa propre adresse
-`127.0.10.N`. Règles de traduction : cible de volume → chemin local (fichiers de `./config`,
-`.harness/data/<volume>`, `.harness/tmpfs/<service>`), remplacement limité à des segments de
-chemin entiers (`http://loki:3100` n'est jamais réécrit), puis `0.0.0.0` → adresse du service.
+`127.0.10.N`. Règles de traduction : cible de volume → chemin local (`.harness/data/<volume>`,
+`.harness/tmpfs/<service>`, et `.harness/coolify/` pour `./config`), remplacement limité à des
+segments de chemin entiers (`http://loki:3100` n'est jamais réécrit), puis `0.0.0.0` → adresse
+du service. `.harness/coolify/` joue le dossier où Coolify écrit les fichiers `content:` : chaque
+fichier de `./config` (ou de `--config-dir`) y est copié sous son nom à empreinte, celui que monte
+le compose déployé ; un dossier ou un fichier absent y est reproduit tel quel, pour que
+`config-guard` voie ce qu'il verrait après une régression de Coolify. Les ports gRPC internes
+vérifiés au démarrage (9095, 9096) sont lus dans les configs (`server.grpc_listen_*`), pas
+recopiés. Faute de cgroup, le banc donne à `alloy` et `prometheus` le `GOMEMLIMIT` que ces
+binaires tirent en conteneur de leur `mem_limit` (90 %, automemlimit d'Alloy et
+`--auto-gomemlimit` de Prometheus 3) ; `--set GOMEMLIMIT=…` le remplace.
 Trois pièges constatés pendant la préparation du plan, et traités ici : (1) un processus lancé
 en arrière-plan meurt avec le shell appelant, d'où `start_new_session=True` ; (2) `pkill -f` tue
 le shell qui l'appelle, d'où un suivi strict par PID dans le fichier d'état de `.harness/` ;
@@ -2449,9 +2753,9 @@ jusqu'à ~20 s à être prêts (délai de 15 s de l'ingester).
 
 **Interfaces:**
 
-- Consumes : `scripts/render.py` : `render_text`, `load_versions`, `RenderError`.
+- Consumes : `scripts/render.py` : `render_text`, `content_items`, `load_versions`, `RenderError`.
 - Consumes : `compose.template.yaml` (tâche 7), `harness/harness.env` (tâche 4), `.bin/` (tâche 1), `sudo` sans mot de passe.
-- Produces : `harness/stack.py` : `SERVICE_IPS` (`loki` 127.0.10.2, `tempo` .3, `prometheus` .4, `alloy` .5, `alloy-gateway` .6, `node-exporter` .7, `config-guard` .8, `grafana-setup` .9), `ROOT`, `BIN`, `HARNESS` (= `.harness`), `STATE`, `HOSTS`, `HOSTS_BEGIN`, `HarnessError`, `load_compose()`, `load_env_values(sets)` (`harness.env`, puis `.harness/runtime.env` écrit par la tâche 15, puis `--set`), `interpolate(value, env)`, `image_repository(image)`, `mounts(name, service, config_dir)`, `rewriter(mapping, ip)`, `build(name, service, env_values, config_dir) -> {'args','env','ip'}`, `hosts_block()`, `without_block(text)`, `preflight(pairs)`, `http_ok(url)`, `load_state()`, `save_state(state)`, `alive(pid)`, `spawn(name, spec) -> pid`, `run_oneshot(name, spec) -> code`, `terminate(pid)`, `tail(name, lines)`.
+- Produces : `harness/stack.py` : `SERVICE_IPS` (`loki` 127.0.10.2, `tempo` .3, `prometheus` .4, `alloy` .5, `alloy-gateway` .6, `node-exporter` .7, `config-guard` .8, `grafana-setup` .9), `ROOT`, `BIN`, `HARNESS` (= `.harness`), `STATE`, `COOLIFY` (= `.harness/coolify`), `HOSTS`, `HOSTS_BEGIN`, `AUTO_GOMEMLIMIT`, `HarnessError`, `template_text()`, `load_compose()`, `content_sources() -> {source à empreinte: source du dépôt}`, `materialize(source, config_dir) -> Path`, `extra_ports(name) -> [(ip, port)]`, `memory_bytes(value)`, `load_env_values(sets)` (`harness.env`, puis `.harness/runtime.env` écrit par la tâche 15, puis `--set`), `interpolate(value, env)`, `image_repository(image)`, `mounts(name, service, config_dir)`, `rewriter(mapping, ip)`, `build(name, service, env_values, config_dir) -> {'args','env','ip'}`, `hosts_block()`, `without_block(text)`, `preflight(pairs)`, `http_ok(url)`, `load_state()`, `save_state(state)`, `alive(pid)`, `spawn(name, spec) -> pid`, `run_oneshot(name, spec) -> code`, `terminate(pid)`, `tail(name, lines)`.
 - Produces : CLI : `python3 harness/stack.py up [--set K=V]… [--config-dir DIR] [--only a,b]` | `down [--purge]` | `status` | `stop S` | `start S [--set K=V]` | `oneshot config-guard|grafana-setup [--set K=V]` | `logs S [-n N]`. Journaux : `.harness/logs/<service>.log`. `down` supprime aussi `.harness/edge.json` et `.harness/runtime.env`.
 
 - [ ] **Étape 1 : écrire le test qui échoue**
@@ -2459,10 +2763,13 @@ jusqu'à ~20 s à être prêts (délai de 15 s de l'ingester).
 Fichier complet `tests/test_harness.py` :
 
 ```python
+import shutil
 import socket
 import sys
+import tempfile
 import unittest
 import urllib.request
+from pathlib import Path
 
 from support import ROOT, require_harness, run
 
@@ -2513,6 +2820,33 @@ class RewriteTest(unittest.TestCase):
         with_block = original + stack.hosts_block()
         self.assertIn("127.0.10.2 loki", with_block)
         self.assertEqual(stack.without_block(with_block), original)
+
+
+class ContentFilesTest(unittest.TestCase):
+    """.harness/coolify/ holds what Coolify writes: each content file under its hashed name."""
+
+    def hashed_loki(self):
+        return next(hashed for hashed, source in stack.content_sources().items() if source == "./config/loki/loki.yaml")
+
+    def test_grpc_ports_come_from_the_configs(self):
+        self.assertEqual(stack.extra_ports("loki"), [("127.0.0.1", 9095)])
+        self.assertEqual(stack.extra_ports("tempo"), [("127.0.0.1", 9096)])
+        self.assertEqual(stack.extra_ports("prometheus"), [])
+
+    def test_content_file_gets_its_hashed_name(self):
+        written = stack.materialize(self.hashed_loki(), ROOT / "config")
+        self.assertRegex(written.name, r"^loki\.[0-9a-f]{8}\.yaml$")
+        self.assertEqual(written.read_bytes(), (ROOT / "config" / "loki" / "loki.yaml").read_bytes())
+
+    def test_directory_and_missing_file_are_reproduced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config"
+            shutil.copytree(ROOT / "config", config, ignore=shutil.ignore_patterns("__pycache__"))
+            (config / "loki" / "loki.yaml").unlink()
+            self.assertFalse(stack.materialize(self.hashed_loki(), config).exists())
+            (config / "loki" / "loki.yaml").mkdir()
+            self.assertTrue(stack.materialize(self.hashed_loki(), config).is_dir())
+        self.assertTrue(stack.materialize(self.hashed_loki(), ROOT / "config").is_file())
 
 
 class StorageTrioTest(unittest.TestCase):
@@ -2567,9 +2901,14 @@ Fichier complet `harness/stack.py` :
 
 Every service runs the official binary (installed by tools/fetch-binaries.sh) with the SAME
 command arguments and environment as in the compose, on its own loopback IP. Volume targets are
-mapped to local paths (./config files, .harness/data/<volume>, .harness/tmpfs/<service>), and
-"0.0.0.0" is replaced by the service IP. /etc/hosts maps the service names to those IPs (sudo),
-so the configs keep their in-stack names (loki:3100, tempo:4317...).
+mapped to local paths (.harness/data/<volume>, .harness/tmpfs/<service>, and .harness/coolify/
+for ./config), and "0.0.0.0" is replaced by the service IP. /etc/hosts maps the service names to
+those IPs (sudo), so the configs keep their in-stack names (loki:3100, tempo:4317...).
+
+.harness/coolify/ plays the directory where Coolify writes the content: files. Each one is copied
+from ./config (or --config-dir) to its content-addressed name (config/loki/loki.<sha8>.yaml), the
+name the deployed compose mounts; a directory or a missing file is reproduced as such, so
+config-guard sees what it would see after a Coolify regression.
 
 Usage:
   python3 harness/stack.py up [--set KEY=VALUE]... [--config-dir DIR] [--only a,b]
@@ -2602,6 +2941,7 @@ import render  # noqa: E402
 
 HARNESS = ROOT / ".harness"
 STATE = HARNESS / "state.json"
+COOLIFY = HARNESS / "coolify"
 BIN = Path(os.environ.get("GC_BIN_DIR", str(ROOT / ".bin")))
 HOSTS = Path("/etc/hosts")
 HOSTS_BEGIN = "# BEGIN grafana-coolify harness"
@@ -2624,6 +2964,12 @@ BINARIES = {
     "prom/prometheus": "prometheus",
     "quay.io/prometheus/node-exporter": "node_exporter",
 }
+# Images whose binary sizes its Go heap from the memory limit of its container (cgroup): Alloy
+# (automemlimit) and Prometheus 3 (--auto-gomemlimit) set GOMEMLIMIT to 90% of mem_limit. The
+# bench has no cgroup: it sets that GOMEMLIMIT itself, unless `--set GOMEMLIMIT=...` overrides it
+# (`off` disables it).
+AUTO_GOMEMLIMIT = {"grafana/alloy", "prom/prometheus"}
+MEMORY_UNITS = {"b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 READY = {
     "loki": "http://{ip}:3100/ready",
     "tempo": "http://{ip}:3200/ready",
@@ -2632,8 +2978,6 @@ READY = {
     "alloy-gateway": "http://{ip}:12345/-/ready",
     "node-exporter": "http://{ip}:9100/metrics",
 }
-# Internal gRPC ports pinned to 127.0.0.1 in the Loki and Tempo configs.
-EXTRA_PORTS = {"loki": [("127.0.0.1", 9095)], "tempo": [("127.0.0.1", 9096)]}
 ONESHOTS = ("config-guard", "grafana-setup")
 START_ORDER = ("loki", "tempo", "prometheus", "node-exporter", "alloy", "alloy-gateway")
 VAR_RE = re.compile(r"\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)")
@@ -2644,10 +2988,46 @@ class HarnessError(Exception):
 
 
 # ------------------------------------------------------------------ compose model
+def template_text():
+    return (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
+
+
 def load_compose():
-    template = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
     versions = render.load_versions(ROOT / "tools" / "versions.env")
-    return yaml.safe_load(render.render_text(template, ROOT, versions, strip_content=True))
+    return yaml.safe_load(render.render_text(template_text(), ROOT, versions, strip_content=True))
+
+
+def content_sources():
+    """{content-addressed source: repository source} of every content: volume of the compose."""
+    return {item.hashed_source: item.source for item in render.content_items(ROOT, template_text())}
+
+
+def materialize(source, config_dir):
+    """Write what Coolify writes for one content: volume: the config_dir file under its hashed name."""
+    repository = content_sources()[source]
+    origin = Path(config_dir) / repository[len("./config/") :]
+    written = COOLIFY / source[len("./") :]
+    if written.is_dir() and not written.is_symlink():
+        shutil.rmtree(written)
+    elif written.exists() or written.is_symlink():
+        written.unlink()
+    written.parent.mkdir(parents=True, exist_ok=True)
+    if origin.is_dir():
+        written.mkdir()
+    elif origin.is_file():
+        shutil.copyfile(origin, written)
+    return written
+
+
+def extra_ports(name):
+    """Internal gRPC listeners declared by the YAML configs of a service (server.grpc_listen_*)."""
+    ports = []
+    for item in render.content_items(ROOT, template_text()):
+        if item.service == name and item.source.endswith((".yaml", ".yml")):
+            server = (yaml.safe_load(item.text) or {}).get("server") or {}
+            if "grpc_listen_port" in server:
+                ports.append((str(server.get("grpc_listen_address", SERVICE_IPS[name])), int(server["grpc_listen_port"])))
+    return ports
 
 
 def load_env_values(sets):
@@ -2691,6 +3071,13 @@ def interpolate(value, env):
     return VAR_RE.sub(replace, str(value))
 
 
+def memory_bytes(value):
+    """Compose memory sizes: 768m, 1536m, 1g, 64m..."""
+    text = str(value).strip().lower()
+    unit = text[-1] if text[-1] in MEMORY_UNITS else "b"
+    return int(float(text.rstrip("bkmg")) * MEMORY_UNITS[unit])
+
+
 def image_repository(image):
     name, _, tag = image.rpartition(":")
     return name if name and "/" not in tag else image
@@ -2706,8 +3093,13 @@ def mounts(name, service, config_dir):
         else:
             spec = volume
         source, target = spec["source"], spec["target"]
-        if spec.get("type") == "bind" and source.startswith("./config"):
-            local = Path(config_dir) / source[len("./config"):].lstrip("/")
+        if spec.get("type") == "bind" and source == "./config":
+            # config-guard reads the whole directory: write every content file first.
+            for hashed in content_sources():
+                materialize(hashed, config_dir)
+            local = COOLIFY / "config"
+        elif spec.get("type") == "bind" and source.startswith("./config/"):
+            local = materialize(source, config_dir)
         elif spec.get("type") == "bind":
             local = Path(source)
         else:
@@ -2753,6 +3145,8 @@ def build(name, service, env_values, config_dir):
     for key, value in (service.get("environment") or {}).items():
         if value is not None:
             env[key] = rewrite(interpolate(value, env_values))
+    if repository in AUTO_GOMEMLIMIT and service.get("mem_limit"):
+        env["GOMEMLIMIT"] = env_values.get("GOMEMLIMIT") or str(int(memory_bytes(service["mem_limit"]) * 0.9))
     return {"args": args, "env": env, "ip": ip}
 
 
@@ -2785,7 +3179,7 @@ def remove_hosts():
 
 def ports_of(name, service):
     ports = [(SERVICE_IPS[name], int(p)) for p in service.get("expose", []) or []]
-    return ports + EXTRA_PORTS.get(name, [])
+    return ports + extra_ports(name)
 
 
 def preflight(pairs):
@@ -3026,15 +3420,15 @@ Attendu : aucune sortie.
 
 Run : `python3 -m unittest discover -s tests -p test_harness.py -v`
 
-Attendu : `Ran 7 tests` … `OK (skipped=2)` : les deux tests du banc demandent `GC_HARNESS=1`.
+Attendu : `Ran 10 tests` … `OK (skipped=2)` : les deux tests du banc demandent `GC_HARNESS=1`.
 
 Run : `GC_HARNESS=1 python3 -m unittest discover -s tests -p test_harness.py -v`
 
-Attendu : `Ran 7 tests` … `OK` (≈ 1 min 30) : le trio démarre depuis le gabarit et répond par son nom de service, `down` retire le bloc `/etc/hosts`, une adresse occupée est signalée « 127.0.10.2:3100 (Address already in use) ».
+Attendu : `Ran 10 tests` … `OK` (≈ 1 min 30) : le trio démarre depuis le gabarit et répond par son nom de service, `down` retire le bloc `/etc/hosts`, une adresse occupée est signalée « 127.0.10.2:3100 (Address already in use) ».
 
 Run : `python3 harness/stack.py up && python3 harness/stack.py status && tail -n 1 .harness/logs/config-guard.log && python3 harness/stack.py down`
 
-Attendu : `stack: config-guard exited with 0`, `loki`, `tempo`, `prometheus`, `node-exporter` « running ready », puis `config-guard: all checks passed`.
+Attendu : `stack: config-guard exited with 0`, `loki`, `tempo`, `prometheus`, `node-exporter` « running ready », puis `config-guard: all checks passed` (il a vérifié les fichiers à empreinte de `.harness/coolify/config`).
 
 Run : `.bin/ruff check .`
 
@@ -3054,9 +3448,15 @@ git commit -m "test(harness): add native harness running compose services as pro
 `sending_queue` et `retry_on_failure` désactivés, pour que l'émetteur reçoive l'erreur si `alloy`
 est indisponible (§ 9.2). `alloy` reçoit l'OTLP, passe par `memory_limiter`, raccourcit
 l'environnement (`deployment.environment.name` ou l'ancien `deployment.environment` → `env`,
-original supprimé), rejette ce qui n'a pas `project` ou `env`, groupe, puis exporte vers Tempo,
-Loki (`/otlp`) et Prometheus (`/api/v1/otlp`) avec une file persistante
-(`otelcol.storage.file`, `max_elapsed_time = "1h"` pour survivre à une indisponibilité longue).
+original supprimé), rejette ce qui n'a pas `project` ou `env`, les chaînes vides (`== nil or
+== ""`) et tout `env` autre que `prod` ou `preprod`, groupe par lots de 1024 à 2048 éléments
+(`send_batch_max_size`), puis exporte vers Tempo, Loki (`/otlp`) et Prometheus (`/api/v1/otlp`)
+avec une file persistante (`otelcol.storage.file`, `queue_size = 1000` lots par exportateur :
+une taille bornée et connue du volume `alloy-data`, `max_elapsed_time = "1h"` pour survivre à
+une indisponibilité longue). Le label d'`alloy` place `gc-faro-cors@file` en premier (voir la
+tâche 15) ; le tmpfs d'`alloy-gateway` est borné à 64 Mo ; `FARO_API_KEY` est obligatoire
+(`${FARO_API_KEY:?…}`) et `PROJECTS` est transmis à `alloy` (liste d'autorisation des logs Faro,
+tâche 11).
 Les deux instances tournent en `--stability.level=public-preview` : `alloy validate` refuse tout
 composant de niveau inférieur. Les compteurs de rejet réels portent le suffixe `_total`
 (`otelcol_processor_filter_logs_filtered_total`…). Les envois de test utilisent OTLP/HTTP JSON
@@ -3077,10 +3477,10 @@ en bibliothèque standard : `telemetrygen` n'a pas de binaire publié dans
 
 - Consumes : `harness/stack.py` (tâche 8) : `up`, `down`, `stop`, `start` ; noms `alloy`, `alloy-gateway`, `loki`, `tempo`, `prometheus` résolus par `/etc/hosts`.
 - Consumes : `scripts/render.py`, `scripts/check.py` (tâches 2 et 7).
-- Produces : `scripts/gclib.py` (stdlib) : `settings()` (valeurs de `harness.env`, puis `.harness/edge.json`, puis variables `GC_*` : `GC_OTLP_URL`, `GC_GATEWAY_URL`, `GC_GATEWAY_HOST`, `GC_GATEWAY_USER`, `GC_GATEWAY_PASSWORD`, `GC_FARO_URL`, `GC_LOKI_URL`, `GC_TEMPO_URL`, `GC_PROM_URL`, `GC_ALLOY_METRICS_URL`), `Response`, `http(method, url, body=None, headers=None, host=None, auth=None, timeout=15)`, `get_json`, `wait_for(fetch, what, timeout, interval)`, `run_id`, `new_trace_id`, `new_span_id`, `attrs`, `otlp_logs`, `otlp_traces`, `span`, `otlp_sum`, `send_otlp`, `faro_payload`, `faro_log`, `send_faro`, `loki_entries(loki_url, query) -> [(labels, line, metadata)]` (en-tête `categorize-labels`), `tempo_trace` (None si absente : Tempo répond 200 et une trace vide), `otlp_attr_map`, `trace_resources_and_spans`, `prom_query`, `metric_value`, `scrape`, `duration_seconds`, `size_bytes`, `yaml_section_value`.
-- Produces : `scripts/smoke.py` : registre `SECTIONS` rempli par `@section("nom")`, classe `Ctx` (`run`, `project`, `resource()`, `gateway()`, `faro_app()`, `logs()`, `wait_logs()`, `wait_trace()`, `wait_prom()`, `ip_hash(ip)`), `expect(cond, msg)`, `INDEXED`, marqueur d'insertion `# --- end of sections ---`, CLI `python3 scripts/smoke.py [--only a,b] [--list]`. Sections de cette tâche : `otlp-names`, `reject`.
+- Produces : `scripts/gclib.py` (stdlib) : `settings()` (valeurs de `harness.env`, puis `.harness/edge.json`, puis variables `GC_*` : `GC_OTLP_URL`, `GC_GATEWAY_URL`, `GC_GATEWAY_HOST`, `GC_GATEWAY_USER`, `GC_GATEWAY_PASSWORD`, `GC_FARO_URL`, `GC_LOKI_URL`, `GC_TEMPO_URL`, `GC_PROM_URL`, `GC_ALLOY_METRICS_URL`), `Response`, `http(method, url, body=None, headers=None, host=None, auth=None, timeout=15)`, `get_json`, `wait_for(fetch, what, timeout, interval)`, `run_id`, `new_trace_id`, `new_span_id`, `attrs`, `otlp_logs`, `otlp_traces`, `span`, `otlp_sum`, `send_otlp`, `faro_payload(app, page_url, logs=None, traces=None, session_attributes=None, events=None, browser=None)`, `faro_event(name, attributes)`, `faro_log`, `send_faro`, `loki_entries(loki_url, query) -> [(labels, line, metadata)]` (en-tête `categorize-labels`), `tempo_trace` (None si absente : Tempo répond 200 et une trace vide), `otlp_attr_map`, `trace_resources_and_spans`, `prom_query`, `metric_value`, `scrape`, `duration_seconds`, `size_bytes`, `yaml_section_value`.
+- Produces : `scripts/smoke.py` : registre `SECTIONS` rempli par `@section("nom")`, classe `Ctx` (`run`, `project`, `faro_project` (premier projet de `PROJECTS`), `resource()`, `gateway()`, `faro_app()`, `logs()`, `wait_logs()`, `wait_trace()`, `wait_prom()`, `ip_hash(ip)`), `expect(cond, msg)`, `INDEXED`, marqueur d'insertion `# --- end of sections ---`, CLI `python3 scripts/smoke.py [--only a,b] [--list]`. Sections de cette tâche : `otlp-names`, `reject`.
 - Produces : `config/alloy/config.alloy` : variables `BIND_ADDR`, `ALLOY_QUEUE_DIR` ; ports 4317, 4318 (`BIND_ADDR`), 12345 (flag `--server.http.listen-addr`).
-- Produces : Gabarit : services `alloy` (utilisateur `473:473`, `read_only`, `cap_drop: [ALL]`, `no-new-privileges`, volume `alloy-data:/var/lib/alloy`, label `coolify.traefik.middlewares=gc-faro-ratelimit@file,gc-faro-cors@file,gc-faro-body@file`, `SERVICE_FQDN_ALLOY_12347`) et `alloy-gateway` (tmpfs `/var/lib/alloy:mode=1777`, label `coolify.traefik.middlewares=gc-otlp-auth@file`, `SERVICE_FQDN_ALLOY_GATEWAY_4318`).
+- Produces : Gabarit : services `alloy` (utilisateur `473:473`, `read_only`, `cap_drop: [ALL]`, `no-new-privileges`, volume `alloy-data:/var/lib/alloy`, label `coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file`, `SERVICE_FQDN_ALLOY_12347`, `FARO_API_KEY` obligatoire, `PROJECTS`) et `alloy-gateway` (tmpfs `/var/lib/alloy:mode=1777,size=64m`, label `coolify.traefik.middlewares=gc-otlp-auth@file`, `SERVICE_FQDN_ALLOY_GATEWAY_4318`).
 
 - [ ] **Étape 1 : écrire les contrôles de bout en bout qui échouent**
 
@@ -3265,12 +3665,19 @@ def send_otlp(base_url, signal, payload, host=None, auth=None):
 
 
 # ------------------------------------------------------------------ Faro
-def faro_payload(app, page_url, logs=None, traces=None, session_attributes=None):
+def faro_payload(app, page_url, logs=None, traces=None, session_attributes=None, events=None, browser=None):
     meta = {"app": app, "session": {"id": "gc-" + run_id(), "attributes": session_attributes or {}}, "page": {"url": page_url}}
-    payload = {"meta": meta, "logs": logs or [], "events": [], "measurements": [], "exceptions": []}
+    if browser:
+        meta["browser"] = browser
+    payload = {"meta": meta, "logs": logs or [], "events": events or [], "measurements": [], "exceptions": []}
     if traces:
         payload["traces"] = traces
     return payload
+
+
+def faro_event(name, attributes=None):
+    """A Faro event: its attributes become event_data_<key> in the logfmt line."""
+    return {"name": name, "domain": "gc", "attributes": attributes or {}, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())}
 
 
 def faro_log(message, level="info", trace_id=None, span_id=None, context=None):
@@ -3423,6 +3830,9 @@ class Ctx:
         self.s = g.settings()
         self.run = g.run_id()
         self.project = f"smoke-{self.run}"
+        # Faro logs only accept the projects of PROJECTS (any well-formed one when it is empty).
+        allowed = [p for p in self.s.get("PROJECTS", "").split(",") if p]
+        self.faro_project = allowed[0] if allowed else self.project
 
     def resource(self, service, env_attr="deployment.environment.name", env="prod", **extra):
         values = {"project": self.project, env_attr: env, "service.name": f"{service}-{self.run}"}
@@ -3434,8 +3844,8 @@ class Ctx:
         auth = (s["GC_GATEWAY_USER"], s["GC_GATEWAY_PASSWORD"]) if s["GC_GATEWAY_USER"] else None
         return s["GC_GATEWAY_URL"], (s["GC_GATEWAY_HOST"] or None), auth
 
-    def faro_app(self, name="web", environment="clientenv", namespace=None):
-        return {"name": f"{name}-{self.run}", "namespace": namespace or self.project, "environment": environment, "version": "1.0.0"}
+    def faro_app(self, name="web", environment="preprod", namespace=None):
+        return {"name": f"{name}-{self.run}", "namespace": namespace or self.faro_project, "environment": environment, "version": "1.0.0"}
 
     def logs(self, query, since_s=900):
         return g.loki_entries(self.s["GC_LOKI_URL"], query, since_s)
@@ -3497,7 +3907,7 @@ def otlp_names(c):
 
 @section("reject")
 def reject(c):
-    """12.3.5: data without project (or env) is dropped and counted."""
+    """12.3.5: data without project or env, empty or with an env other than prod/preprod, is dropped and counted."""
     alloy = c.s["GC_ALLOY_METRICS_URL"]
     names = {
         "logs": "otelcol_processor_filter_logs_filtered_total",
@@ -3510,18 +3920,25 @@ def reject(c):
     g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(resource, "no project"))
     g.send_otlp(c.s["GC_OTLP_URL"], "traces", g.otlp_traces(resource, [g.span(trace_id, "orphan")]))
     g.send_otlp(c.s["GC_OTLP_URL"], "metrics", g.otlp_sum(resource, f"smoke_{c.run}_orphan", 1))
-    no_env = {"project": c.project, "service.name": f"noenv-{c.run}"}
-    g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(no_env, "no env"))
+    invalid = {
+        "noenv": {"project": c.project},
+        "emptyproject": {"project": "", "deployment.environment.name": "prod"},
+        "emptyenv": {"project": c.project, "deployment.environment.name": ""},
+        "staging": {"project": c.project, "deployment.environment.name": "staging"},
+    }
+    for name, values in invalid.items():
+        g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs({**values, "service.name": f"{name}-{c.run}"}, f"invalid {name}"))
 
     def increased():
         text = g.scrape(alloy)
         now = {signal: g.metric_value(text, metric) for signal, metric in names.items()}
-        return now if now["logs"] >= before["logs"] + 2 and all(now[k] > before[k] for k in names) else None
+        return now if now["logs"] >= before["logs"] + 1 + len(invalid) and all(now[k] > before[k] for k in names) else None
 
     g.wait_for(increased, "filter counters", timeout=30)
     time.sleep(5)
     expect(not c.logs(f'{{service_name="noproject-{c.run}"}}'), "log without project reached Loki")
-    expect(not c.logs(f'{{service_name="noenv-{c.run}"}}'), "log without env reached Loki")
+    for name in invalid:
+        expect(not c.logs(f'{{service_name="{name}-{c.run}"}}'), f"log {name} reached Loki")
     expect(g.tempo_trace(c.s["GC_TEMPO_URL"], trace_id) is None, "trace without project reached Tempo")
     expect(not g.prom_query(c.s["GC_PROM_URL"], f"smoke_{c.run}_orphan_total"), "metric without project reached Prometheus")
 
@@ -3703,26 +4120,27 @@ otelcol.processor.transform "default" {
   }
 }
 
-// Drop everything without project or env (spec 6.3). Counters:
+// Drop everything without project, without env, or whose env is neither prod nor preprod; an
+// empty string counts as missing (spec 6.3). Counters:
 // otelcol_processor_filter_{spans,logs,datapoints}_filtered_total.
 otelcol.processor.filter "default" {
   error_mode = "ignore"
 
   traces {
     span = [
-      `resource.attributes["project"] == nil or resource.attributes["env"] == nil`,
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
     ]
   }
 
   logs {
     log_record = [
-      `resource.attributes["project"] == nil or resource.attributes["env"] == nil`,
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
     ]
   }
 
   metrics {
     datapoint = [
-      `resource.attributes["project"] == nil or resource.attributes["env"] == nil`,
+      `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
     ]
   }
 
@@ -3733,7 +4151,12 @@ otelcol.processor.filter "default" {
   }
 }
 
+// At most 2048 items per batch: with queue_size = 1000 batches, the persistent queue of each
+// exporter holds at most ~2 million items on the alloy-data volume (spec 9.2).
 otelcol.processor.batch "default" {
+  send_batch_size     = 1024
+  send_batch_max_size = 2048
+
   output {
     logs    = [otelcol.exporter.otlphttp.loki.input]
     metrics = [otelcol.exporter.otlphttp.prometheus.input]
@@ -3751,8 +4174,9 @@ otelcol.exporter.otlp "tempo" {
   }
 
   sending_queue {
-    enabled = true
-    storage = otelcol.storage.file.queue.handler
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
   }
 
   retry_on_failure {
@@ -3766,8 +4190,9 @@ otelcol.exporter.otlphttp "loki" {
   }
 
   sending_queue {
-    enabled = true
-    storage = otelcol.storage.file.queue.handler
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
   }
 
   retry_on_failure {
@@ -3781,8 +4206,9 @@ otelcol.exporter.otlphttp "prometheus" {
   }
 
   sending_queue {
-    enabled = true
-    storage = otelcol.storage.file.queue.handler
+    enabled    = true
+    queue_size = 1000
+    storage    = otelcol.storage.file.queue.handler
   }
 
   retry_on_failure {
@@ -3828,7 +4254,8 @@ et insérer juste **avant** lui :
       BIND_ADDR: 0.0.0.0
       ALLOY_QUEUE_DIR: /var/lib/alloy/queue
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
-      FARO_API_KEY: ${FARO_API_KEY:-}
+      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      PROJECTS: ${PROJECTS:-}
       FARO_RATE: ${FARO_RATE:-100}
       FARO_BURST: ${FARO_BURST:-200}
       FARO_MAX_PAYLOAD: ${FARO_MAX_PAYLOAD:-5MiB}
@@ -3843,7 +4270,8 @@ et insérer juste **avant** lui :
         read_only: true
       - alloy-data:/var/lib/alloy
     labels:
-      - coolify.traefik.middlewares=gc-faro-ratelimit@file,gc-faro-cors@file,gc-faro-body@file
+      # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
+      - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
     expose:
       - "4317"
       - "4318"
@@ -3880,7 +4308,7 @@ et insérer juste **avant** lui :
         content: "@@CONTENT@@"
         read_only: true
     tmpfs:
-      - /var/lib/alloy:mode=1777
+      - /var/lib/alloy:mode=1777,size=64m
     labels:
       - coolify.traefik.middlewares=gc-otlp-auth@file
     expose:
@@ -3913,8 +4341,6 @@ SERVICE_FQDN_ALLOY_12347=
 SERVICE_FQDN_ALLOY_GATEWAY_4318=
 
 # --- Faro (clients : navigateur, desktop, mobile) ---
-# Clé d'application Faro. Vide : le point Faro refuse toute requête.
-FARO_API_KEY=
 # Limites côté Alloy (globales au récepteur). Défauts : 100 / 200 / 5MiB.
 FARO_RATE=100
 FARO_BURST=200
@@ -3923,13 +4349,13 @@ FARO_MAX_PAYLOAD=5MiB
 
 Run : `python3 scripts/render.py && python3 scripts/check.py`
 
-Attendu : `render: wrote docker-compose.yaml` et `compose.dev.yaml`, puis huit `[PASS]` (dont `validators` pour les deux configs Alloy).
+Attendu : `render: wrote docker-compose.yaml` et `compose.dev.yaml`, puis dix `[PASS]` (dont `validators` pour les deux configs Alloy et `targets` : leurs deux fichiers de config ont des cibles distinctes).
 
 - [ ] **Étape 5 : lancer — succès attendu**
 
 Run : `python3 harness/stack.py down && python3 harness/stack.py up && python3 scripts/smoke.py`
 
-Attendu : `alloy` et `alloy-gateway` « ready », puis `smoke: [PASS] otlp-names` et `smoke: [PASS] reject`, `2/2 sections passed`.
+Attendu : `alloy` et `alloy-gateway` « ready », puis `smoke: [PASS] otlp-names` et `smoke: [PASS] reject` (sans projet, sans env, projet vide, env vide, env `staging` : tous rejetés), `2/2 sections passed`.
 
 Run : `python3 -m unittest discover -s tests -v`
 
@@ -3955,7 +4381,11 @@ stable qui parcourt les clés, les valeurs des clés sensibles sont masquées pa
 Les cartes ne sont masquées que dans le texte libre (corps, `message`, `exception.message`,
 `exception.stacktrace`) : un epoch en millisecondes sous `*_ms`, `*timestamp*` ou `*_id`
 reste intact. La regex IPv6 exige soit huit groupes, soit `::` entouré de groupes : une heure
-`01:30:29` ou un appel `App\User::find` ne sont pas hachés (point de vigilance n° 1).
+`01:30:29` ou un appel `App\User::find` ne sont pas hachés (point de vigilance n° 1). Les IP des
+attributs sont hachées par le même détour par le cache (`set(cache["ip"], attrs)` →
+`delete_matching_keys` des clés contenant `version` ou `user_agent` → `replace_all_patterns` →
+`merge_maps`) : `128.0.0.0` dans `user_agent.original` ou `browser.version` reste intact, la même
+valeur sous une autre clé est hachée.
 
 **Files:**
 
@@ -3996,6 +4426,9 @@ def masking(c):
         "http.request.header.authorization": "Basic dXNlcjpwYXNz",
         "db.password": "hunter2",
         "client.address": "198.51.100.23",
+        "user_agent.original": "Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36",
+        "browser.version": "128.0.0.0",
+        "net.peer.name": "128.0.0.0",
     }
     resource = c.resource("masking")
     g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(resource, body, attributes))
@@ -4013,6 +4446,10 @@ def masking(c):
     expect(meta.get("http_request_header_authorization") == "[redacted]", f"authorization: {meta}")
     expect(meta.get("db_password") == "[redacted]", f"password: {meta}")
     expect(meta.get("client_address") == c.ip_hash("198.51.100.23"), f"client.address: {meta}")
+    # Review focus 1: a browser version is not an address, whatever the key holding it says.
+    expect(meta.get("user_agent_original") == attributes["user_agent.original"], f"user agent hashed: {meta.get('user_agent_original')}")
+    expect(meta.get("browser_version") == "128.0.0.0", f"version hashed: {meta.get('browser_version')}")
+    expect(meta.get("net_peer_name") == c.ip_hash("128.0.0.0"), f"same value under another key not hashed: {meta.get('net_peer_name')}")
 
 
 ```
@@ -4077,7 +4514,9 @@ par :
 //    original attribute deleted (spec 6.1).
 // 2. Masking safety net (spec 8.1): secret keys and Bearer tokens -> [redacted], emails ->
 //    [email], card numbers -> [card] in free text only (body, message, exception.*),
-//    IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip). Regexes are RE2; backticks are Alloy raw strings.
+//    IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip), except in keys holding a version or a user agent
+//    (a browser version 128.0.0.0 is not an address). Regexes are RE2; backticks are Alloy raw
+//    strings.
 otelcol.processor.transform "default" {
   error_mode = "ignore"
 
@@ -4095,7 +4534,10 @@ otelcol.processor.transform "default" {
       `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-      `replace_all_patterns(resource.attributes, "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
     ]
   }
   trace_statements {
@@ -4108,7 +4550,10 @@ otelcol.processor.transform "default" {
       `replace_all_patterns(span.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(span.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
       `replace_all_patterns(span.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-      `replace_all_patterns(span.attributes, "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["ip"], span.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(span.attributes, cache["ip"], "upsert")`,
       `replace_pattern(span.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.message"] != nil`,
     ]
   }
@@ -4122,7 +4567,10 @@ otelcol.processor.transform "default" {
       `replace_all_patterns(spanevent.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(spanevent.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
       `replace_all_patterns(spanevent.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-      `replace_all_patterns(spanevent.attributes, "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["ip"], spanevent.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(spanevent.attributes, cache["ip"], "upsert")`,
       `replace_pattern(spanevent.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.message"] != nil`,
       `replace_pattern(spanevent.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.stacktrace"] != nil`,
     ]
@@ -4141,7 +4589,10 @@ otelcol.processor.transform "default" {
       `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-      `replace_all_patterns(resource.attributes, "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
     ]
   }
   log_statements {
@@ -4159,7 +4610,10 @@ otelcol.processor.transform "default" {
       `replace_all_patterns(log.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(log.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
       `replace_all_patterns(log.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-      `replace_all_patterns(log.attributes, "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["ip"], log.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(log.attributes, cache["ip"], "upsert")`,
       `replace_pattern(log.attributes["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["message"] != nil`,
       `replace_pattern(log.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.message"] != nil`,
       `replace_pattern(log.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.stacktrace"] != nil`,
@@ -4179,7 +4633,10 @@ otelcol.processor.transform "default" {
       `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
       `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-      `replace_all_patterns(resource.attributes, "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["ip"], resource.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(resource.attributes, cache["ip"], "upsert")`,
     ]
   }
   metric_statements {
@@ -4192,7 +4649,10 @@ otelcol.processor.transform "default" {
       `replace_all_patterns(datapoint.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
       `replace_all_patterns(datapoint.attributes, "value", "(?i)\\b(authorization|cookie|password|token|secret)(\\x22?\\s*[:=]\\s*\\x22?)[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
       `replace_all_patterns(datapoint.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-      `replace_all_patterns(datapoint.attributes, "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `set(cache["ip"], datapoint.attributes)`,
+      `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+      `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+      `merge_maps(datapoint.attributes, cache["ip"], "upsert")`,
     ]
   }
 
@@ -4225,37 +4685,46 @@ git commit -m "feat(alloy): mask personal data in the otlp pipeline"
 
 ### Task 11: Logs Faro : réception, déduction depuis l'hôte, masquage
 
-`faro.receiver` : clé `api_key` (si `FARO_API_KEY` est vide, repli sur une clé impossible à
-deviner dérivée du sel secret : un point public ne doit jamais s'ouvrir par oubli — point de
-vigilance n° 2), `rate_limiting`, `max_allowed_payload_size`, `cors_allowed_origins = []` (le
-CORS est fait par Traefik). Les logs passent par `loki.process`, qui applique l'algorithme
-normatif du § 6.4. Mécanisme retenu pour des règles venues de l'environnement : `HOST_MAP` et
-`RESERVED_SUBDOMAINS` sont copiés dans la carte extraite par `stage.template` (gabarit
+`faro.receiver` : clé `api_key = sys.env("FARO_API_KEY")`, sans repli (une clé vide
+désactiverait le contrôle : `config-guard` exige 16 caractères, et Compose refuse une variable
+vide par `${FARO_API_KEY:?…}` — point de vigilance n° 2, prouvé par la tâche 14),
+`rate_limiting`, `max_allowed_payload_size`, `cors_allowed_origins = []` (le CORS est fait par
+Traefik). Les logs passent par `loki.process`, qui applique l'algorithme normatif du § 6.4.
+Mécanisme retenu pour des règles venues de l'environnement : `HOST_MAP`, `RESERVED_SUBDOMAINS`
+et `PROJECTS` sont copiés dans la carte extraite par `stage.template` (gabarit
 = `"," + sys.env(...)`, jamais vide), puis parcourus par des gabarits Go avec les fonctions sprig
-`splitList` et `has` ; `TENANT_HOST_REGEX` est enveloppé dans un groupe nommé
+`splitList`, `has` et `regexMatch` ; `TENANT_HOST_REGEX` est enveloppé dans un groupe nommé
 `gc_host_match` (vide : classe `[^\s\S]` qui ne correspond à rien). Les valeurs absentes
 passent toujours par `{{ with … }}` : sans cela Go écrit `<no value>` et la ligne sans `project`
-n'est pas rejetée (constaté). Masquage Faro : Bearer, clés sensibles et emails sur toute la
-ligne ; cartes et IP **seulement** dans `message`, `value` et `stacktrace`, sinon la version
-navigateur `128.0.0.0` serait hachée comme une IP ; chaque IP est hachée par
+n'est pas rejetée (constaté). Validation avant Loki : un gabarit calcule le motif de rejet
+(`missing_project`, `invalid_project` hors de `^[a-z0-9-]{1,64}$`, `unknown_project` absent de
+`PROJECTS` quand `PROJECTS` est renseigné, `missing_env`, `invalid_env` hors de `prod`/`preprod`,
+`invalid_service` hors de `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), puis un `stage.drop` par motif
+le compte dans `loki_process_dropped_lines_total{reason}`. Le tenant client d'un hôte inconnu
+est validé comme sur les traces (§ 6.5) : `[a-z0-9-]+` et non réservé, sinon retiré. Masquage
+Faro : Bearer, clés sensibles et emails sur toute la ligne ; cartes seulement dans `message`,
+`value` et `stacktrace` (§ 8.1) ; IP dans **toutes** les valeurs (`page_url`, `context_*`,
+`event_data_*`…) sauf les clés techniques `browser_*`, `sdk_*`, `app_version`, `*_id`, `*_ms`,
+`*timestamp*`, `*version*`, `user_agent*`, où `128.0.0.0` est une version : chaque paire
+`clé=valeur` passe par un gabarit qui lit la clé, puis hache chaque IP par
 `{{ Sha2Hash "<sel>" $ip }}` dans une boucle `regexFindAll`, même empreinte que l'OTTL. Pas de
-WAL pour `loki.write` (expérimental).
+WAL pour `loki.write` (expérimental). Les traces Faro passent provisoirement par le
+`memory_limiter` du chemin OTLP.
 
 **Files:**
 
 - Modify: `scripts/smoke.py`
 - Modify: `config/alloy/config.alloy`
 - Modify: `docker-compose.yaml, compose.dev.yaml (régénérés)`
-- Test: `tests/test_faro_closed.py`
 
 **Interfaces:**
 
-- Consumes : `scripts/gclib.py` : `faro_payload`, `faro_log`, `send_faro`, `loki_entries`, `metric_value`, `scrape`.
-- Consumes : Variables du banc : `FARO_API_KEY`, `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX`, `IP_HASH_SALT`.
+- Consumes : `scripts/gclib.py` : `faro_payload`, `faro_event`, `faro_log`, `send_faro`, `loki_entries`, `metric_value`, `scrape`.
+- Consumes : Variables du banc : `FARO_API_KEY`, `PROJECTS`, `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX`, `IP_HASH_SALT`.
 - Produces : Port Faro 12347 sur `BIND_ADDR`, chemin `/collect`, en-tête `x-api-key`.
 - Produces : Correspondances : `app_namespace` → `project`, `app_name` → `service_name`, `app_environment` → `env` (si l'hôte ne décide pas), attribut de session `tenant` (logfmt `session_attr_tenant`) → `tenant`, `traceID` → `trace_id`, `level` → `detected_level`.
-- Produces : Compteur `loki_process_dropped_lines_total{reason="missing_project"|"missing_env"}`.
-- Produces : Sections `faro-hosts` (constante `HOST_CASES`), `faro-names`, `faro-reject`, `ip-parity` ; test `tests/test_faro_closed.py` (`GC_HARNESS=1`, banc démarré).
+- Produces : Compteur `loki_process_dropped_lines_total{reason}` : `missing_project`, `invalid_project`, `unknown_project`, `missing_env`, `invalid_env`, `invalid_service`.
+- Produces : Sections `faro-hosts` (constante `HOST_CASES`), `faro-names`, `faro-reject`, `ip-parity`.
 
 - [ ] **Étape 1 : écrire les contrôles qui échouent**
 
@@ -4269,30 +4738,37 @@ et insérer juste **avant** lui :
 
 ```python
 # 12.3.2: the reference table of spec 6.4 (harness values of HOST_MAP, RESERVED_SUBDOMAINS,
-# TENANT_HOST_REGEX). None = attribute absent.
+# TENANT_HOST_REGEX), plus the validation of the client tenant on an unknown host (spec 6.5):
+# (page host, tenant sent by the client, service_name, env, stored tenant). None = absent;
+# "client" = the app name; the client environment is "preprod".
 HOST_CASES = [
-    ("example.me", "guest-front", "prod", None),
-    ("www.example.me", "client", "prod", None),
-    ("api-dev.example.me", "client", "preprod", None),
-    ("acme.example.me", "client", "prod", "acme"),
-    ("acme-dev.example.app", "client", "preprod", "acme"),
-    ("inconnu.autre.org", "client", "clientenv", "clienttenant"),
-    ("ACME.Example.ME", "client", "prod", "acme"),
+    ("example.me", "clienttenant", "guest-front", "prod", None),
+    ("www.example.me", "clienttenant", "client", "prod", None),
+    ("api-dev.example.me", "clienttenant", "client", "preprod", None),
+    ("acme.example.me", "clienttenant", "client", "prod", "acme"),
+    ("acme-dev.example.app", "clienttenant", "client", "preprod", "acme"),
+    ("inconnu.autre.org", "clienttenant", "client", "preprod", "clienttenant"),
+    ("ACME.Example.ME", "clienttenant", "client", "prod", "acme"),
+    ("inconnu.autre.org", "Bad Tenant", "client", "preprod", None),
+    ("inconnu.autre.org", "www", "client", "preprod", None),
+    ("198.51.100.7", "clienttenant", "client", "preprod", "clienttenant"),
 ]
 
 
 @section("faro-hosts")
 def faro_hosts(c):
-    """12.3.2: env/tenant/service deduced from the page host (spec 6.4), client values otherwise."""
-    for index, (host, service, env, tenant) in enumerate(HOST_CASES):
+    """12.3.2: env/tenant/service deduced from the page host (spec 6.4), validated client values otherwise."""
+    for index, (host, client_tenant, service, env, tenant) in enumerate(HOST_CASES):
         token = f"host-{index}-{c.run}"
-        payload = g.faro_payload(c.faro_app(), f"https://{host}/path?q=1", logs=[g.faro_log(token)], session_attributes={"tenant": "clienttenant"})
+        payload = g.faro_payload(c.faro_app(), f"https://{host}/path?q=1", logs=[g.faro_log(token)], session_attributes={"tenant": client_tenant})
         g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
-        labels, _line, meta = c.wait_logs(f'{{project="{c.project}"}} |= "{token}"')[0]
+        labels, line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{token}"')[0]
         expected_service = f"web-{c.run}" if service == "client" else service
         expect(labels.get("service_name") == expected_service, f"{host}: service_name {labels.get('service_name')} != {expected_service}")
         expect(labels.get("env") == env, f"{host}: env {labels.get('env')} != {env}")
-        expect(meta.get("tenant") == tenant, f"{host}: tenant {meta.get('tenant')} != {tenant}")
+        expect(meta.get("tenant") == tenant, f"{host} ({client_tenant}): tenant {meta.get('tenant')} != {tenant}")
+        if host[0].isdigit():
+            expect(host not in line and c.ip_hash(host) in line, f"page_url IP not hashed: {line}")
 
 
 @section("faro-names")
@@ -4302,96 +4778,68 @@ def faro_names(c):
     token = f"names-{c.run}"
     payload = g.faro_payload(c.faro_app(environment="prod"), "https://inconnu.autre.org/", logs=[g.faro_log(token, "warn", trace_id)])
     g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
-    labels, _line, meta = c.wait_logs(f'{{project="{c.project}"}} |= "{token}"')[0]
+    labels, _line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{token}"')[0]
     expect(set(labels) == INDEXED, f"Faro indexed labels {sorted(labels)}")
-    expect(labels == {"project": c.project, "env": "prod", "service_name": f"web-{c.run}"}, f"Faro labels {labels}")
+    expect(labels == {"project": c.faro_project, "env": "prod", "service_name": f"web-{c.run}"}, f"Faro labels {labels}")
     expect(meta.get("trace_id") == trace_id, f"trace_id not normalised from traceID: {meta}")
     expect(meta.get("detected_level") == "warn", f"detected_level: {meta}")
 
 
 @section("faro-reject")
 def faro_reject(c):
-    """12.3.5 (Faro path): lines without project or env are dropped with a reason."""
+    """12.3.5 (Faro path): lines with a missing, malformed or unknown project, a missing or unexpected env, or
+    a malformed service name are dropped, each with its reason."""
     alloy = c.s["GC_ALLOY_METRICS_URL"]
     metric = "loki_process_dropped_lines_total"
-    before = {r: g.metric_value(g.scrape(alloy), metric, {"reason": r}) for r in ("missing_project", "missing_env")}
-    no_project = g.faro_payload({"name": f"web-{c.run}", "environment": "prod"}, "https://inconnu.autre.org/", logs=[g.faro_log(f"np-{c.run}")])
-    no_env = g.faro_payload({"name": f"web-{c.run}", "namespace": c.project}, "https://inconnu.autre.org/", logs=[g.faro_log(f"ne-{c.run}")])
-    g.send_faro(c.s["GC_FARO_URL"], no_project, c.s["FARO_API_KEY"])
-    g.send_faro(c.s["GC_FARO_URL"], no_env, c.s["FARO_API_KEY"])
+    app = {"name": f"web-{c.run}", "namespace": c.faro_project, "environment": "prod"}
+    cases = {
+        "missing_project": {k: v for k, v in app.items() if k != "namespace"},
+        "invalid_project": dict(app, namespace="Bad_Project"),
+        "missing_env": {k: v for k, v in app.items() if k != "environment"},
+        "invalid_env": dict(app, environment="staging"),
+        "invalid_service": dict(app, name="bad name!"),
+    }
+    if c.s.get("PROJECTS"):
+        cases["unknown_project"] = dict(app, namespace=f"unlisted-{c.run}")
+    before = {reason: g.metric_value(g.scrape(alloy), metric, {"reason": reason}) for reason in cases}
+    for reason, case_app in cases.items():
+        payload = g.faro_payload(case_app, "https://inconnu.autre.org/", logs=[g.faro_log(f"{reason}-{c.run}")])
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
 
     def counted():
         text = g.scrape(alloy)
-        return all(g.metric_value(text, metric, {"reason": r}) > before[r] for r in before)
+        return all(g.metric_value(text, metric, {"reason": reason}) > before[reason] for reason in cases)
 
-    g.wait_for(counted, "loki_process_dropped_lines_total increments", timeout=30)
-    expect(not c.logs(f'{{service_name="web-{c.run}"}} |= "np-{c.run}"'), "Faro line without project stored")
-    expect(not c.logs(f'{{project="{c.project}"}} |= "ne-{c.run}"'), "Faro line without env stored")
+    g.wait_for(counted, f"{metric} increments for {sorted(cases)}", timeout=30)
+    time.sleep(3)
+    for reason in cases:
+        expect(not c.logs(f'{{service_name=~".+"}} |= "{reason}-{c.run}"'), f"Faro line with {reason} stored")
 
 
 @section("ip-parity")
 def ip_parity(c):
-    """12.3.4: the same IP gives the same digest in a Faro log and in an OTLP log."""
+    """12.3.4: an IP gets the same digest in Faro and OTLP logs, in every Faro value but the technical keys."""
     ip = "192.0.2.77"
     token = f"parity-{c.run}"
-    faro = g.faro_payload(c.faro_app(environment="prod"), "https://inconnu.autre.org/", logs=[g.faro_log(f"{token} from {ip} card 4111 1111 1111 1111")])
+    log = g.faro_log(f"{token} from {ip} card 4111 1111 1111 1111", context={"ip": ip})
+    event = g.faro_event(f"{token}-event", {"x": ip})
+    browser = {"name": "chrome", "version": "128.0.0.0"}
+    faro = g.faro_payload(c.faro_app(environment="prod"), f"https://{ip}/login", logs=[log], events=[event], browser=browser)
     g.send_faro(c.s["GC_FARO_URL"], faro, c.s["FARO_API_KEY"])
     g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(c.resource("parity"), f"{token} from {ip}"))
-    lines = [line for _l, line, _m in c.wait_logs(f'{{project="{c.project}"}} |= "{token}"', count=2)]
+    lines = [line for _l, line, _m in c.wait_logs(f'{{project=~"{c.project}|{c.faro_project}"}} |= "{token}"', count=3)]
     digest = c.ip_hash(ip)
     for line in lines:
         expect(ip not in line and digest in line, f"IP not hashed as sha256(salt+ip): {line}")
-    faro_line = next(line for line in lines if "kind=log" in line)
-    expect("[card]" in faro_line and "4111" not in faro_line, f"card not masked in Faro message: {faro_line}")
+    faro_log = next(line for line in lines if "kind=log" in line)
+    expect("[card]" in faro_log and "4111" not in faro_log, f"card not masked in Faro message: {faro_log}")
+    expect(f"context_ip={digest}" in faro_log, f"context_ip not hashed: {faro_log}")
+    expect(f"page_url=https://{digest}/login" in faro_log, f"page_url not hashed: {faro_log}")
+    expect("browser_version=128.0.0.0" in faro_log, f"review focus 1: browser version hashed: {faro_log}")
+    faro_event = next(line for line in lines if "kind=event" in line)
+    expect(f"event_data_x={digest}" in faro_event, f"event_data_x not hashed: {faro_event}")
 
 
-```
-
-Fichier complet `tests/test_faro_closed.py` :
-
-```python
-import sys
-import unittest
-
-from support import ROOT, require_harness, run
-
-sys.path.insert(0, str(ROOT / "scripts"))
-import gclib as g  # noqa: E402
-
-STACK = [sys.executable, str(ROOT / "harness" / "stack.py")]
-
-
-def stack(*args):
-    result = run([*STACK, *args], timeout=300)
-    if result.returncode != 0:
-        raise AssertionError(f"stack.py {' '.join(args)} failed:\n{result.stdout}")
-
-
-class EmptyFaroKeyTest(unittest.TestCase):
-    """Review focus: an empty FARO_API_KEY must keep the public Faro endpoint closed.
-
-    Needs a running harness: python3 harness/stack.py up.
-    """
-
-    def setUp(self):
-        require_harness(self)
-
-    def test_empty_key_rejects_every_request(self):
-        payload = g.faro_payload({"name": "web", "namespace": "closed", "environment": "prod"}, "https://x.org/", logs=[g.faro_log("x")])
-        stack("stop", "alloy")
-        try:
-            stack("start", "alloy", "--set", "FARO_API_KEY=")
-            self.assertEqual(g.http("POST", "http://alloy:12347/collect", payload).status, 401)
-            self.assertEqual(g.http("POST", "http://alloy:12347/collect", payload, headers={"x-api-key": ""}).status, 401)
-            self.assertEqual(g.http("POST", "http://alloy:12347/collect", payload, headers={"x-api-key": "-faro-disabled"}).status, 401)
-        finally:
-            stack("stop", "alloy")
-            stack("start", "alloy")
-        self.assertEqual(g.http("POST", "http://alloy:12347/collect", payload, headers={"x-api-key": g.settings()["FARO_API_KEY"]}).status, 202)
-
-
-if __name__ == "__main__":
-    unittest.main()
 ```
 
 - [ ] **Étape 2 : lancer — échec attendu**
@@ -4402,7 +4850,7 @@ Attendu : quatre `[FAIL]` (« Connection refused » sur `alloy:12347`), code 1.
 
 - [ ] **Étape 3 : ajouter le chemin Faro à la fin de `config/alloy/config.alloy`**
 
-Ajouter à la fin de `config/alloy/config.alloy` — le bloc commence par une ligne vide ; les traces Faro vont provisoirement au transform `default` :
+Ajouter à la fin de `config/alloy/config.alloy` — le bloc commence par une ligne vide ; les traces Faro vont provisoirement au `memory_limiter` du chemin OTLP :
 
 ```alloy
 
@@ -4411,9 +4859,9 @@ faro.receiver "default" {
   server {
     listen_address = sys.env("BIND_ADDR")
     listen_port    = 12347
-    // An empty FARO_API_KEY must never open the endpoint: fall back to an unguessable key
-    // derived from the mandatory, secret IP hash salt.
-    api_key = coalesce(sys.env("FARO_API_KEY"), sys.env("IP_HASH_SALT") + "-faro-disabled")
+    // Mandatory: config-guard refuses a key shorter than 16 characters (an empty api_key would
+    // disable the check of faro.receiver).
+    api_key = sys.env("FARO_API_KEY")
     // CORS is answered by Traefik (gc-faro-cors@file): a second header would break browsers.
     cors_allowed_origins     = []
     max_allowed_payload_size = coalesce(sys.env("FARO_MAX_PAYLOAD"), "5MiB")
@@ -4427,13 +4875,13 @@ faro.receiver "default" {
 
   output {
     logs   = [loki.process.faro.receiver]
-    traces = [otelcol.processor.transform.default.input]
+    traces = [otelcol.processor.memory_limiter.default.input]
   }
 }
 
 // Faro logs (logfmt lines): deduce env/tenant from the page host (normative algorithm,
 // spec 6.4), map app_* to the contract, emit exactly the Loki names of the OTLP path,
-// drop lines without project/env, then mask.
+// validate project/env/service (drop with a reason) and the client tenant, then mask.
 loki.process "faro" {
   forward_to = [loki.write.loki.receiver]
 
@@ -4471,6 +4919,11 @@ loki.process "faro" {
     template = "," + sys.env("RESERVED_SUBDOMAINS")
   }
 
+  stage.template {
+    source   = "gc_projects"
+    template = "," + sys.env("PROJECTS")
+  }
+
   // HOST_MAP lookup (exact match, has priority): "service:env" or empty.
   stage.template {
     source   = "gc_hm_hit"
@@ -4493,9 +4946,11 @@ loki.process "faro" {
     template = `{{ if .gc_hm_env }}{{ .gc_hm_env }}{{ else if .gc_host_match }}{{ if .dev }}preprod{{ else }}prod{{ end }}{{ else }}{{ with .gc_app_environment }}{{ . }}{{ end }}{{ end }}`
   }
 
+  // A tenant sent by the client (unknown host) is validated like on Faro traces (spec 6.5):
+  // [a-z0-9-]+ and not a reserved subdomain, otherwise it is removed.
   stage.template {
     source   = "tenant"
-    template = `{{ if .gc_hm_env }}{{ else if .gc_host_match }}{{ if not (has .sub (splitList "," .gc_reserved)) }}{{ .sub }}{{ end }}{{ else }}{{ with .gc_client_tenant }}{{ . }}{{ end }}{{ end }}`
+    template = `{{ if .gc_hm_env }}{{ else if .gc_host_match }}{{ if not (has .sub (splitList "," .gc_reserved)) }}{{ .sub }}{{ end }}{{ else }}{{ with .gc_client_tenant }}{{ if and (regexMatch "^[a-z0-9-]+$" .) (not (has . (splitList "," $.gc_reserved))) }}{{ . }}{{ end }}{{ end }}{{ end }}`
   }
 
   stage.template {
@@ -4529,17 +4984,48 @@ loki.process "faro" {
     }
   }
 
-  // Counter: loki_process_dropped_lines_total{reason="missing_project"|"missing_env"}.
+  // Why the line must be dropped, empty when it is valid: project missing, malformed or absent
+  // from PROJECTS (when PROJECTS is set), env missing or neither prod nor preprod, service name
+  // malformed. Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
+  stage.template {
+    source   = "gc_reject"
+    template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9-]{1,64}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ end }}`
+  }
+
   stage.drop {
-    source              = "project"
-    expression          = "^$"
+    source              = "gc_reject"
+    value               = "missing_project"
     drop_counter_reason = "missing_project"
   }
 
   stage.drop {
-    source              = "env"
-    expression          = "^$"
+    source              = "gc_reject"
+    value               = "invalid_project"
+    drop_counter_reason = "invalid_project"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "unknown_project"
+    drop_counter_reason = "unknown_project"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "missing_env"
     drop_counter_reason = "missing_env"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "invalid_env"
+    drop_counter_reason = "invalid_env"
+  }
+
+  stage.drop {
+    source              = "gc_reject"
+    value               = "invalid_service"
+    drop_counter_reason = "invalid_service"
   }
 
   // Masking (spec 8.1) on the whole line: Bearer tokens, secret key=value pairs, emails.
@@ -4558,11 +5044,19 @@ loki.process "faro" {
     replace    = "[email]"
   }
 
-  // Free text only (message, value, stacktrace): card numbers, then every IPv4/IPv6 hashed as
-  // sha256(salt + ip) - Sha2Hash(salt, input), salt first, same digest as the OTTL SHA256.
+  // Card numbers in free text only: message, value, stacktrace (spec 8.1).
   stage.replace {
     expression = `(?:^|\s)(?:message|value|stacktrace)=("(?:[^"\\]|\\.)*"|\S*)`
-    replace    = `{{ $v := regexReplaceAll "\\b(?:\\d[ -]?){12,18}\\d\\b" .Value "[card]" }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $v -1 }}{{ $v = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $v }}{{ end }}{{ $v }}`
+    replace    = `{{ regexReplaceAll "\\b(?:\\d[ -]?){12,18}\\d\\b" .Value "[card]" }}`
+  }
+
+  // Every IPv4/IPv6 of every key=value pair hashed as sha256(salt + ip) - Sha2Hash(salt, input),
+  // salt first, same digest as the OTTL SHA256 - except in technical keys whose dotted numbers
+  // are not addresses: browser_*, sdk_*, app_version, *_id, *_ms, *timestamp*, *version*,
+  // user_agent* (browser_version=128.0.0.0 stays intact).
+  stage.replace {
+    expression = `(?:^|\s)([A-Za-z0-9_.-]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
+    replace    = `{{ $kv := .Value }}{{ $k := regexReplaceAll "=[\\s\\S]*$" $kv "" }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
   }
 }
 
@@ -4582,16 +5076,12 @@ Attendu : quatre `[PASS]`.
 
 Run : `python3 harness/stack.py stop alloy && python3 harness/stack.py start alloy && python3 scripts/smoke.py`
 
-Attendu : `7/7 sections passed` : les sept hôtes de `HOST_CASES` (dont `ACME.Example.ME`, en majuscules) donnent exactement le tableau du § 6.4.
-
-Run : `GC_HARNESS=1 python3 -m unittest discover -s tests -p test_faro_closed.py -v`
-
-Attendu : `Ran 1 test` … `OK` : clé vide → 401 même sans en-tête, avec `x-api-key` vide ou `-faro-disabled`.
+Attendu : `7/7 sections passed` : les dix cas de `HOST_CASES` (dont `ACME.Example.ME`, en majuscules, un tenant client mal formé ou réservé, retiré, et un hôte IP haché) donnent exactement le tableau du § 6.4 ; les six motifs de rejet sont comptés ; `context_ip`, `event_data_x` et `page_url` sont hachés, `browser_version=128.0.0.0` reste intact.
 
 - [ ] **Étape 5 : commit**
 
 ```bash
-git add scripts/smoke.py tests/test_faro_closed.py config/alloy/config.alloy docker-compose.yaml compose.dev.yaml
+git add scripts/smoke.py config/alloy/config.alloy docker-compose.yaml compose.dev.yaml
 git commit -m "feat(alloy): add faro logs pipeline with host-based env and tenant"
 ```
 
@@ -4604,6 +5094,9 @@ Un transform `faro` les met au contrat avant le transform partagé : `project` d
 `app.namespace`, `env` depuis `deployment.environment(.name)`, puis suppression de `env` et
 `tenant` s'ils ne respectent pas `^[a-z0-9-]+$` ou s'ils sont un sous-domaine réservé. La regex
 des réservés est construite par `string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|")`.
+Comme le chemin OTLP, le chemin des traces Faro commence par un `memory_limiter` (`faro`), placé
+avant le transform `faro` ; le filtre partagé rejette ensuite tout `env` autre que `prod` ou
+`preprod`.
 
 **Files:**
 
@@ -4614,7 +5107,7 @@ des réservés est construite par `string.replace(sys.env("RESERVED_SUBDOMAINS")
 **Interfaces:**
 
 - Consumes : Transform `default` (tâche 10), `faro.receiver` (tâche 11), `gclib.otlp_traces`, `gclib.span`, `gclib.trace_resources_and_spans`.
-- Produces : Transform `otelcol.processor.transform "faro"` ; section `faro-traces`.
+- Produces : `otelcol.processor.memory_limiter "faro"`, transform `otelcol.processor.transform "faro"` ; section `faro-traces`.
 
 - [ ] **Étape 1 : écrire le contrôle qui échoue**
 
@@ -4661,16 +5154,16 @@ Attendu : `smoke: [FAIL] faro-traces: timeout … waiting for Tempo trace …` :
 
 - [ ] **Étape 3 : insérer le transform `faro` et y brancher le récepteur**
 
-Dans `config/alloy/config.alloy`, remplacer exactement (le bloc `faro.receiver` entier devient le récepteur suivi du transform) :
+Dans `config/alloy/config.alloy`, remplacer exactement (le bloc `faro.receiver` entier devient le récepteur suivi du limiteur et du transform) :
 
 ```alloy
 faro.receiver "default" {
   server {
     listen_address = sys.env("BIND_ADDR")
     listen_port    = 12347
-    // An empty FARO_API_KEY must never open the endpoint: fall back to an unguessable key
-    // derived from the mandatory, secret IP hash salt.
-    api_key = coalesce(sys.env("FARO_API_KEY"), sys.env("IP_HASH_SALT") + "-faro-disabled")
+    // Mandatory: config-guard refuses a key shorter than 16 characters (an empty api_key would
+    // disable the check of faro.receiver).
+    api_key = sys.env("FARO_API_KEY")
     // CORS is answered by Traefik (gc-faro-cors@file): a second header would break browsers.
     cors_allowed_origins     = []
     max_allowed_payload_size = coalesce(sys.env("FARO_MAX_PAYLOAD"), "5MiB")
@@ -4684,7 +5177,7 @@ faro.receiver "default" {
 
   output {
     logs   = [loki.process.faro.receiver]
-    traces = [otelcol.processor.transform.default.input]
+    traces = [otelcol.processor.memory_limiter.default.input]
   }
 }
 
@@ -4697,9 +5190,9 @@ faro.receiver "default" {
   server {
     listen_address = sys.env("BIND_ADDR")
     listen_port    = 12347
-    // An empty FARO_API_KEY must never open the endpoint: fall back to an unguessable key
-    // derived from the mandatory, secret IP hash salt.
-    api_key = coalesce(sys.env("FARO_API_KEY"), sys.env("IP_HASH_SALT") + "-faro-disabled")
+    // Mandatory: config-guard refuses a key shorter than 16 characters (an empty api_key would
+    // disable the check of faro.receiver).
+    api_key = sys.env("FARO_API_KEY")
     // CORS is answered by Traefik (gc-faro-cors@file): a second header would break browsers.
     cors_allowed_origins     = []
     max_allowed_payload_size = coalesce(sys.env("FARO_MAX_PAYLOAD"), "5MiB")
@@ -4713,7 +5206,7 @@ faro.receiver "default" {
 
   output {
     logs   = [loki.process.faro.receiver]
-    traces = [otelcol.processor.transform.faro.input]
+    traces = [otelcol.processor.memory_limiter.faro.input]
   }
 }
 
@@ -4721,6 +5214,17 @@ faro.receiver "default" {
 // the Faro SDK resource (service.namespace = app.namespace); client tenant/env must match
 // [a-z0-9-]+ and must not be a reserved subdomain, otherwise they are deleted.
 // Masking and the project/env filter then happen in the shared "default" transform.
+// Like the OTLP path, the Faro trace path starts with a memory limiter.
+otelcol.processor.memory_limiter "faro" {
+  check_interval         = "1s"
+  limit_percentage       = 80
+  spike_limit_percentage = 20
+
+  output {
+    traces = [otelcol.processor.transform.faro.input]
+  }
+}
+
 otelcol.processor.transform "faro" {
   error_mode = "ignore"
 
@@ -4899,13 +5403,22 @@ git commit -m "test(smoke): check span-metrics, otlp metric labels and retention
 
 Tests du banc, gérés de bout en bout (ils arrêtent le banc au début et à la fin) : Loki arrêté
 pendant un envoi, redémarrage d'`alloy` avec des données en file (rejouées depuis
-`otelcol.storage.file`), envoi massif (8 × 40 lots de 500 logs) sous l'enveloppe mémoire
-d'`alloy` (`mem_limit` 768 Mio, mesurée par `VmRSS`), `PROM_ENABLE_FEATURES` vide (vérifié :
-Prometheus 3.15 accepte `--enable-feature=` vide, aucun défaut de repli n'est nécessaire),
-`config-guard` qui échoue et bloque tout démarrage (fichier devenu dossier, contenu altéré,
-fichier vide), sur une copie de `config/` passée par `--config-dir`. Le comportement testé existe
-déjà : le test passe d'emblée, puis la preuve d'échec retire la file persistante et constate la
-perte.
+`otelcol.storage.file`), envoi massif de **1 Gio** (8 × 64 lots de 2048 logs de 1 Kio, plus que
+l'enveloppe : Loki freine, la file doit partir sur disque) sous l'enveloppe mémoire d'`alloy`
+(`mem_limit` 768 Mio), `PROM_ENABLE_FEATURES` vide (vérifié : Prometheus 3.15 accepte
+`--enable-feature=` vide, aucun défaut de repli n'est nécessaire), `config-guard` qui échoue et
+bloque tout démarrage (fichier devenu dossier, contenu altéré, fichier vide, sur une copie de
+`config/` passée par `--config-dir`), et `FARO_API_KEY` vide (Compose refuse `${FARO_API_KEY:?}`)
+ou trop courte (`config-guard` refuse). Mesures faites pour ce plan : `VmRSS` compte aussi les
+pages de fichiers que le noyau reprend sous une limite de conteneur (binaire de 570 Mo, file
+bbolt projetée en mémoire) et atteint ~1 Gio même quand tout va bien ; le test mesure donc
+`RssAnon` (tas, piles) : ~330 Mio avec la file sur disque, ~970 Mio avec une file en mémoire.
+Le banc applique le `GOMEMLIMIT` qu'Alloy tire de son `mem_limit` en conteneur (tâche 8) ; le
+`memory_limiter`, réglé sur la mémoire totale de la machine faute de cgroup, n'agit qu'en
+conteneur. Le comportement testé existe déjà : les tests passent d'emblée, puis la preuve d'échec
+retire la file persistante et constate la perte (test 2) et le dépassement de l'enveloppe
+(test 3). `tearDownClass` efface la file de 1 Gio laissée par le test 3, pour qu'elle ne soit
+jamais rejouée dans les bancs suivants.
 
 **Files:**
 
@@ -4951,9 +5464,14 @@ def pid_of(name):
     return json.loads((ROOT / ".harness" / "state.json").read_text(encoding="utf-8"))["processes"][name]["pid"]
 
 
-def rss_bytes(pid):
+def anon_rss_bytes(pid):
+    """Anonymous resident memory (heap, stacks): what a cgroup limit cannot reclaim.
+
+    VmRSS also counts file pages (the 570 MB alloy binary, the mmapped bbolt queue) that the
+    kernel reclaims under a container limit.
+    """
     for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8").splitlines():
-        if line.startswith("VmRSS:"):
+        if line.startswith("RssAnon:"):
             return int(line.split()[1]) * 1024
     return 0
 
@@ -4971,6 +5489,8 @@ class RobustnessTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         run([*STACK, "down"], timeout=120)
+        # test_3 leaves ~1 GiB in the persistent queue: never replay it into the next runs.
+        shutil.rmtree(ROOT / ".harness" / "data" / "alloy-data", ignore_errors=True)
 
     def send_log(self, service):
         resource = {"project": "robust", "deployment.environment.name": "prod", "service.name": service}
@@ -4998,21 +5518,27 @@ class RobustnessTest(unittest.TestCase):
         self.wait_log(service)
 
     def test_3_massive_send_stays_in_the_memory_envelope(self):
+        """1 GiB of logs, more than the envelope: Loki throttles, the queue must go to disk.
+
+        The harness sets the GOMEMLIMIT that Alloy derives from mem_limit in its container; the
+        memory_limiter itself, sized on the total memory of the machine here, only acts in Docker.
+        """
         pid = pid_of("alloy")
-        peak = [rss_bytes(pid)]
+        peak = [anon_rss_bytes(pid)]
         stop = threading.Event()
 
         def watch():
             while not stop.is_set():
-                peak[0] = max(peak[0], rss_bytes(pid))
+                peak[0] = max(peak[0], anon_rss_bytes(pid))
                 time.sleep(0.2)
 
         def burst(worker):
+            # 8 workers x 64 requests x 2048 records x 1 KiB = 1 GiB.
             resource = {"project": "robust", "deployment.environment.name": "prod", "service.name": f"burst-{worker}"}
-            record = g.otlp_logs(resource, "x" * 512)["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
-            payload = {"resourceLogs": [{"resource": {"attributes": g.attrs(resource)}, "scopeLogs": [{"logRecords": [record] * 500}]}]}
-            for _ in range(40):
-                g.http("POST", "http://alloy:4318/v1/logs", payload, timeout=30)
+            record = g.otlp_logs(resource, "x" * 1024)["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+            body = json.dumps({"resourceLogs": [{"resource": {"attributes": g.attrs(resource)}, "scopeLogs": [{"logRecords": [record] * 2048}]}]}).encode()
+            for _ in range(64):
+                g.http("POST", "http://alloy:4318/v1/logs", body, timeout=60)
 
         watcher = threading.Thread(target=watch)
         watcher.start()
@@ -5023,7 +5549,7 @@ class RobustnessTest(unittest.TestCase):
             worker.join()
         stop.set()
         watcher.join()
-        self.assertLess(peak[0], ALLOY_MEM_LIMIT, f"alloy RSS peaked at {peak[0] / 2**20:.0f} MiB")
+        self.assertLess(peak[0], ALLOY_MEM_LIMIT, f"alloy anonymous RSS peaked at {peak[0] / 2**20:.0f} MiB")
         status = stack("status").stdout
         for name in ("loki", "tempo", "prometheus", "alloy", "alloy-gateway", "node-exporter"):
             self.assertRegex(status, rf"{name}\s+pid=\d+\s+running ready")
@@ -5054,6 +5580,16 @@ class RobustnessTest(unittest.TestCase):
                 with socket.socket() as sock:
                     self.assertNotEqual(sock.connect_ex(("127.0.10.2", 3100)), 0, "loki started despite config-guard")
                 run([*STACK, "down"], timeout=120)
+        # Review focus 2: the public Faro endpoint never runs without a real key. Empty: Compose
+        # refuses the ${FARO_API_KEY:?} reference; too short: config-guard refuses it.
+        for key, message in (("", "FARO_API_KEY is required"), ("short-key-01234", "FARO_API_KEY must be at least 16")):
+            with self.subTest(faro_api_key=key):
+                result = run([*STACK, "up", "--set", f"FARO_API_KEY={key}"], timeout=120)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(message, result.stdout)
+                with socket.socket() as sock:
+                    self.assertNotEqual(sock.connect_ex(("127.0.10.5", 12347)), 0, "alloy started without a valid Faro key")
+                run([*STACK, "down"], timeout=120)
 
 
 if __name__ == "__main__":
@@ -5068,13 +5604,13 @@ Attendu : `OK (skipped=1)` sans `GC_HARNESS` (la classe entière est sautée).
 
 Run : `GC_HARNESS=1 python3 -m unittest discover -s tests -p test_robustness.py -v`
 
-Attendu : `Ran 5 tests` … `OK` (≈ 2 min).
+Attendu : `Ran 5 tests` … `OK` (≈ 3 min).
 
-- [ ] **Étape 3 : prouver que le test de rejeu peut échouer, puis restaurer**
+- [ ] **Étape 3 : prouver que les tests de rejeu et de mémoire peuvent échouer, puis restaurer**
 
-Run : `sed -i '/storage = otelcol.storage.file.queue.handler/d' config/alloy/config.alloy && GC_HARNESS=1 python3 -m unittest discover -s tests -p test_robustness.py -k test_2 -v`
+Run : `sed -i '/storage *= otelcol.storage.file.queue.handler/d' config/alloy/config.alloy && GC_HARNESS=1 python3 -m unittest discover -s tests -p test_robustness.py -k test_2 -k test_3 -v`
 
-Attendu : FAIL « timeout after 180s waiting for log replay-… in Loki » : sans file sur disque, le redémarrage d'`alloy` perd les données.
+Attendu : deux FAIL : « timeout after 180s waiting for log replay-… in Loki » (sans file sur disque, le redémarrage d'`alloy` perd les données) et « alloy anonymous RSS peaked at 9xx MiB » (la file en mémoire dépasse l'enveloppe de 768 Mio).
 
 Run : `git checkout -- config/alloy/config.alloy && git status --short`
 
@@ -5092,10 +5628,18 @@ git commit -m "test(robustness): check outages, queue replay, memory and config-
 
 Le modèle `traefik/grafana-coolify.yaml.example` définit `gc-otlp-auth` (avec
 `removeHeader: true` : les identifiants ne sont pas relayés), `gc-faro-cors`,
-`gc-faro-ratelimit`, `gc-faro-body`. Décision du plan (écart assumé avec l'ordre écrit au § 5.4) :
-le label d'`alloy` place `gc-faro-ratelimit@file` **en premier**, car le middleware CORS de
-Traefik répond lui-même aux requêtes `OPTIONS` ; placé avant, il les soustrairait à la limite de
-débit, contrairement au § 5.3 (vérifié : 409 réponses 429 sur 600 préalables concurrentes).
+`gc-faro-ratelimit`, `gc-faro-body`, et documente `sourceCriterion.ipStrategy.depth` pour un
+proxy placé devant Traefik (Cloudflare…). Ordre du label d'`alloy` (spec § 5.4) :
+`gc-faro-cors@file` **en premier**, pour que toute réponse, un 429 de la limite de débit compris,
+porte les en-têtes CORS : sans eux le navigateur masque le 429 au SDK Faro. Le middleware CORS de
+Traefik répond lui-même aux requêtes préalables `OPTIONS`, qui ne comptent donc pas dans la
+limite (elles ne coûtent rien à `alloy`). Le contrôle 5 envoie une rafale de `POST` avec `Origin`
+et exige des 429 portant `Access-Control-Allow-Origin` ; il échoue avec l'ordre inverse (vérifié,
+et rejoué à l'étape 5). Les contrôles 1, 7 et 8 sont structurels sur le banc (écouteurs, routeurs
+émulés, réglages du compose) et l'affichent : seul `--remote` les rend probants. Le contrôle 8
+n'attend plus `read_only` sur le fichier de config (Coolify le retire) : en mode distant il
+vérifie par `docker exec` que l'utilisateur 473 ne peut pas l'écrire, et que les montages de
+`node-exporter` sont en lecture seule.
 `harness/edge.py` lance un Traefik HTTP qui reproduit les routeurs que Coolify dériverait des
 labels `coolify.traefik.middlewares` et des variables `SERVICE_FQDN_*`, plus un routeur
 `other.gc.test` (« un autre domaine public du serveur »), et un Grafana 13.2.2 (admin/admin,
@@ -5115,7 +5659,7 @@ alors qu'`urllib` enverrait tout le corps et recevrait un « connection reset »
 - Consumes : `harness/stack.py` : `SERVICE_IPS`, `HARNESS`, `BIN`, `load_compose`, `load_state`, `save_state`, `spawn`, `alive`, `terminate`, `preflight`, `http_ok`, `HarnessError`.
 - Consumes : `scripts/check.py` : `compose_json()` (contrôle 8 en mode banc) ; `scripts/gclib.py` : `settings`, `http`.
 - Produces : `harness/edge.py` : Traefik sur `127.0.10.100:8080` (routeurs `Host(alloy.gc.test)`, `Host(alloy-gateway.gc.test)`, `Host(other.gc.test)`), Grafana sur `127.0.10.101:3300`, utilisateurs `proj-a` / `harness-pass-a1` et `proj-b` / `harness-pass-b2` (révocable), origine valide `https://acme.example.me`. Écrit `.harness/edge.json` (`traefik_url`, `traefik_ip`, `hosts`, `user`, `password`, `revocable_user`, `revocable_password`, `origin_ok`, `grafana_url`, `grafana_token`) et `.harness/runtime.env` (`GRAFANA_URL`, `GRAFANA_SA_TOKEN`), tous deux en 0600. CLI `python3 harness/edge.py up | down | revoke USER | restore`.
-- Produces : `scripts/security.py` : `python3 scripts/security.py [--remote] [--only 1,…,8]` ; en mode distant, variables `GC_PUBLIC_IP`, `GC_FARO_PUBLIC_URL`, `GC_GATEWAY_PUBLIC_URL`, `GC_OTHER_PUBLIC_URL`, `GC_GATEWAY_USER`, `GC_GATEWAY_PASSWORD`, `GC_REVOKED_USER`, `GC_REVOKED_PASSWORD`, `GC_ORIGIN_OK`, `FARO_API_KEY`, `GC_ALLOY_CONTAINER`, `GC_GATEWAY_CONTAINER`.
+- Produces : `scripts/security.py` : `python3 scripts/security.py [--remote] [--only 1,…,8]` ; en mode distant, variables `GC_PUBLIC_IP`, `GC_FARO_PUBLIC_URL`, `GC_GATEWAY_PUBLIC_URL`, `GC_OTHER_PUBLIC_URL`, `GC_GATEWAY_USER`, `GC_GATEWAY_PASSWORD`, `GC_REVOKED_USER`, `GC_REVOKED_PASSWORD`, `GC_ORIGIN_OK`, `FARO_API_KEY`, `GC_ALLOY_CONTAINER`, `GC_GATEWAY_CONTAINER`, `GC_NODE_EXPORTER_CONTAINER` ; `CONFIG_MOUNT_RE` (`/etc/alloy/config.<sha8>.alloy`), `BENCH_NOTE`.
 
 - [ ] **Étape 1 : écrire les contrôles qui échouent**
 
@@ -5127,10 +5671,13 @@ Fichier complet `scripts/security.py` :
 
 Harness mode (default): the public side is Traefik on the harness edge (harness/edge.py up).
 "Unreachable from outside" means: no listener on the Traefik-facing address and no route.
+Items 1, 7 and 8 are structural on the bench (listeners, emulated routers, compose settings):
+only --remote makes them conclusive.
 Remote mode (--remote): against a Coolify deployment; set
   GC_PUBLIC_IP, GC_FARO_PUBLIC_URL, GC_GATEWAY_PUBLIC_URL, GC_OTHER_PUBLIC_URL,
   GC_GATEWAY_USER, GC_GATEWAY_PASSWORD, GC_REVOKED_USER, GC_REVOKED_PASSWORD, GC_ORIGIN_OK,
-  FARO_API_KEY, and for item 8 GC_ALLOY_CONTAINER, GC_GATEWAY_CONTAINER (run on the server).
+  FARO_API_KEY, and for item 8 GC_ALLOY_CONTAINER, GC_GATEWAY_CONTAINER,
+  GC_NODE_EXPORTER_CONTAINER (run on the server).
 
 Usage: python3 scripts/security.py [--remote] [--only 1,2,...]
 """
@@ -5139,10 +5686,12 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import socket
 import ssl
 import subprocess
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -5153,6 +5702,9 @@ INTERNAL_PORTS = [3100, 3200, 9090, 9100, 4317, 4318, 9095, 9096, 12345, 12347]
 INTERNAL_NAMES = ["loki", "tempo", "prometheus", "node-exporter"]
 EVIL_ORIGINS = ["https://evil-example.me", "https://x.example.me.attacker.com"]
 HARDENED = ("alloy", "alloy-gateway")
+# The only host file alloy and alloy-gateway may mount: their content-addressed config.
+CONFIG_MOUNT_RE = re.compile(r"^/etc/alloy/config\.[0-9a-f]{8}\.alloy$")
+BENCH_NOTE = "structural on bench, conclusive with --remote"
 
 
 class Target:
@@ -5212,6 +5764,8 @@ def item1_unreachable(t):
         for name in INTERNAL_NAMES + [f"{n}.gc.test" for n in INTERNAL_NAMES]:
             status = g.http("GET", url + "/ready", host=name).status
             expect(status == 404, f"Traefik routes Host {name} (HTTP {status})")
+        return BENCH_NOTE
+    return None
 
 
 def item2_gateway_auth(t):
@@ -5256,14 +5810,22 @@ def item4_faro_key(t):
 
 
 def item5_rate_limit(t):
-    """5. A burst beyond the limit gets 429 from Traefik (preflights never reach Alloy)."""
+    """5. A burst of POST beyond the limit gets 429 from Traefik, with the CORS headers a browser needs to read it."""
+    headers = {"Origin": t.origin_ok, "x-api-key": t.faro_key}
 
     def one(_):
-        return t.faro_request("OPTIONS", headers=preflight_headers(t.origin_ok)).status
+        resp = t.faro_request("POST", {"meta": {}}, headers=headers)
+        return resp.status, resp.header_values("Access-Control-Allow-Origin")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as pool:
-        statuses = list(pool.map(one, range(600)))
-    expect(429 in statuses, f"no 429 in a burst of 600 requests: {sorted(set(statuses))}")
+        answers = list(pool.map(one, range(600)))
+    limited = [origins for status, origins in answers if status == 429]
+    expect(limited, f"no 429 in a burst of 600 requests: {sorted({status for status, _ in answers})}")
+    expect(all(origins == [t.origin_ok] for origins in limited), f"429 without Access-Control-Allow-Origin: {limited[:3]}")
+    # Leave a full bucket to the next items (item 6 would otherwise get 429 instead of 413): wait
+    # until a request passes again, then for a whole burst to refill (burst 100 / average 50 = 2s).
+    g.wait_for(lambda: one(0)[0] != 429, "the rate limit bucket to refill", timeout=30, interval=1)
+    time.sleep(5)
 
 
 def read_status(sock):
@@ -5315,6 +5877,7 @@ def item7_middleware_leak(t):
     other = g.http("GET", url + "/api/health", headers={"Origin": t.origin_ok}, host=host)
     expect(other.status != 401 and "Basic" not in other.headers.get("WWW-Authenticate", ""), f"other domain asks for auth (HTTP {other.status})")
     expect(not other.header_values("Access-Control-Allow-Origin"), "other domain returns the package CORS header")
+    return None if t.remote else BENCH_NOTE
 
 
 def hardening_errors(name, user, read_only, cap_drop, security_opt, host_mounts):
@@ -5327,24 +5890,37 @@ def hardening_errors(name, user, read_only, cap_drop, security_opt, host_mounts)
         errors.append(f"{name}: cap_drop ALL missing")
     if not any(o.replace("=", ":") == "no-new-privileges:true" for o in security_opt or []):
         errors.append(f"{name}: no-new-privileges missing")
-    for source, target, writable in host_mounts:
-        errors.append(f"{name}: host mount {source} -> {target}{' (rw)' if writable else ''}")
+    for source, target in host_mounts:
+        errors.append(f"{name}: host mount {source} -> {target}")
     return errors
 
 
+def docker_inspect(container):
+    return json.loads(subprocess.run(["docker", "inspect", container], capture_output=True, text=True, check=True).stdout)[0]
+
+
+def config_is_writable(container, path):
+    """Coolify drops `read_only: true` of the content mounts: the non-root user must not be able to write."""
+    result = subprocess.run(["docker", "exec", container, "sh", "-c", ': >> "$1"', "sh", path], capture_output=True, text=True, check=False)
+    return result.returncode == 0
+
+
 def item8_hardening(t):
-    """8. alloy and alloy-gateway: no host mount except their read-only config, non-root, read-only FS."""
+    """8. alloy and alloy-gateway: no host mount except their config, non-root, read-only FS; node-exporter mounts read-only."""
     errors = []
     if t.remote:
         for name, env in (("alloy", "GC_ALLOY_CONTAINER"), ("alloy-gateway", "GC_GATEWAY_CONTAINER")):
-            info = json.loads(subprocess.run(["docker", "inspect", os.environ[env]], capture_output=True, text=True, check=True).stdout)[0]
-            mounts = [
-                (m["Source"], m["Destination"], m.get("RW", True))
-                for m in info["Mounts"]
-                if m["Type"] == "bind" and not (m["Destination"] == "/etc/alloy/config.alloy" and not m.get("RW", True))
-            ]
+            container = os.environ[env]
+            info = docker_inspect(container)
+            binds = [(m["Source"], m["Destination"]) for m in info["Mounts"] if m["Type"] == "bind"]
+            others = [bind for bind in binds if not CONFIG_MOUNT_RE.match(bind[1])]
             host = info["HostConfig"]
-            errors += hardening_errors(name, info["Config"]["User"], host["ReadonlyRootfs"], host["CapDrop"], host["SecurityOpt"], mounts)
+            errors += hardening_errors(name, info["Config"]["User"], host["ReadonlyRootfs"], host["CapDrop"], host["SecurityOpt"], others)
+            for _source, target in binds:
+                if CONFIG_MOUNT_RE.match(target) and config_is_writable(container, target):
+                    errors.append(f"{name}: {target} is writable by the service user")
+        info = docker_inspect(os.environ["GC_NODE_EXPORTER_CONTAINER"])
+        errors += [f"node-exporter: {m['Destination']} is mounted read-write" for m in info["Mounts"] if m["Type"] == "bind" and m.get("RW", True)]
     else:
         sys.path.insert(0, str(ROOT / "scripts"))
         import check  # noqa: PLC0415 - reuse the docker compose config helper
@@ -5352,13 +5928,13 @@ def item8_hardening(t):
         services = check.compose_json()["services"]
         for name in HARDENED:
             svc = services[name]
-            mounts = [
-                (v["source"], v["target"], not v.get("read_only", False))
-                for v in svc.get("volumes", [])
-                if v["type"] == "bind" and not (v["target"] == "/etc/alloy/config.alloy" and v.get("read_only"))
-            ]
-            errors += hardening_errors(name, svc.get("user"), svc.get("read_only"), svc.get("cap_drop"), svc.get("security_opt"), mounts)
+            binds = [(v["source"], v["target"]) for v in svc.get("volumes", []) if v["type"] == "bind"]
+            others = [bind for bind in binds if not CONFIG_MOUNT_RE.match(bind[1])]
+            errors += hardening_errors(name, svc.get("user"), svc.get("read_only"), svc.get("cap_drop"), svc.get("security_opt"), others)
+        host_binds = [v for v in services["node-exporter"].get("volumes", []) if v["type"] == "bind"]
+        errors += [f"node-exporter: {v['target']} is not read-only" for v in host_binds if not v.get("read_only")]
     expect(not errors, "; ".join(errors))
+    return None if t.remote else BENCH_NOTE
 
 
 ITEMS = {
@@ -5384,8 +5960,8 @@ def main(argv=None):
     for name in names:
         func = ITEMS[name]
         try:
-            func(target)
-            print(f"security: [PASS] {func.__doc__.splitlines()[0]}")
+            note = func(target)
+            print(f"security: [PASS] {func.__doc__.splitlines()[0]}" + (f" ({note})" if note else ""))
         except (AssertionError, KeyError, OSError, subprocess.CalledProcessError) as exc:
             failed += 1
             print(f"security: [FAIL] {func.__doc__.splitlines()[0]} -> {exc}")
@@ -5420,7 +5996,9 @@ Fichier complet `traefik/grafana-coolify.yaml.example` :
 #   - the regular expression of the origins allowed to send Faro data.
 # Revoking a project = deleting its line: Traefik reloads this file without any redeployment.
 # The services reference these middlewares through the coolify.traefik.middlewares labels of
-# compose.template.yaml (alloy-gateway: gc-otlp-auth; alloy: the three gc-faro-* middlewares).
+# compose.template.yaml (alloy-gateway: gc-otlp-auth; alloy: gc-faro-cors, then gc-faro-ratelimit,
+# then gc-faro-body). CORS comes first so that every answer, a 429 included, carries the CORS
+# headers; Traefik answers the preflight OPTIONS requests itself, before the rate limit.
 http:
   middlewares:
     gc-otlp-auth:
@@ -5444,11 +6022,17 @@ http:
         addVaryHeader: true
     gc-faro-ratelimit:
       # Per source IP. An agency behind one NAT shares this quota: keep it generous.
-      # Listed first on alloy so that CORS preflight requests are counted too (spec 5.3).
       rateLimit:
         average: 50
         burst: 100
         period: 1s
+        # Behind another proxy (Cloudflare...), every request comes from the proxy's IP: count
+        # the client IP instead, the one the proxy appends to X-Forwarded-For. Also declare the
+        # proxy's ranges in forwardedHeaders.trustedIPs of the Traefik entry point, otherwise
+        # Traefik discards that header.
+        # sourceCriterion:
+        #   ipStrategy:
+        #     depth: 1
     gc-faro-body:
       buffering:
         # Same value as FARO_MAX_PAYLOAD (5MiB).
@@ -5710,7 +6294,7 @@ Attendu : « All checks passed! ».
 
 Run : `python3 harness/edge.py up && python3 scripts/security.py`
 
-Attendu : « edge: Traefik on 127.0.10.100:8080, Grafana on 127.0.10.101:3300 », « edge: proj-b revoked (hot reload) », « edge: every user restored », puis `security: 8/8 items passed`.
+Attendu : « edge: Traefik on 127.0.10.100:8080, Grafana on 127.0.10.101:3300 », « edge: proj-b revoked (hot reload) », « edge: every user restored », puis `security: 8/8 items passed`, les lignes 1, 7 et 8 suivies de « (structural on bench, conclusive with --remote) ».
 
 Run : `python3 scripts/smoke.py --only otlp-names`
 
@@ -5725,6 +6309,14 @@ Attendu : `security: [FAIL] 3. Faro CORS … -> max-age 60`, code 1 (la boucle a
 Run : `sed -i 's/accessControlMaxAge: 60$/accessControlMaxAge: 600/' traefik/grafana-coolify.yaml.example && python3 harness/edge.py restore && for i in $(seq 30); do python3 scripts/security.py --only 3 >/dev/null && break; sleep 1; done; python3 scripts/security.py --only 3`
 
 Attendu : `security: [PASS] 3. …` : le modèle est revenu à `accessControlMaxAge: 600`.
+
+Run : `sed -i 's/middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,/middlewares=gc-faro-ratelimit@file,gc-faro-cors@file,/' compose.template.yaml && python3 harness/edge.py restore && for i in $(seq 10); do python3 scripts/security.py --only 5 >/dev/null || break; sleep 1; done; python3 scripts/security.py --only 5`
+
+Attendu : `security: [FAIL] 5. … -> 429 without Access-Control-Allow-Origin: [[], [], []]`, code 1 : limite de débit avant le CORS, le 429 n'a pas d'en-tête CORS.
+
+Run : `git checkout -- compose.template.yaml && python3 harness/edge.py restore && for i in $(seq 10); do python3 scripts/security.py --only 5 >/dev/null && break; sleep 1; done; python3 scripts/security.py --only 5 && git status --short`
+
+Attendu : `security: [PASS] 5. …`, puis aucune sortie de `git status` : le gabarit est restauré.
 
 - [ ] **Étape 6 : commit**
 
@@ -5747,8 +6339,11 @@ Corrélations du § 7.3 : champ dérivé `trace_id` (`matcherType: label`, qui l
 métadonnées structurées), `tracesToLogsV2` avec la requête
 `{project=~".+"} | trace_id="${__trace.traceId}"` (la même constante sert au contrôle
 `correlation`), `tracesToMetrics` sur les span-metrics. Dossiers `gc-<projet>` pour `PROJECTS`
-(noms `[a-z0-9-]+`, doublons ignorés). Le token n'apparaît jamais dans la sortie : chaque message
-d'erreur est expurgé.
+(noms `[a-z0-9-]+`, doublons ignorés ; `PROJECTS` est déjà déclaré depuis la tâche 7). Le token
+n'apparaît jamais dans la sortie : chaque message d'erreur est expurgé. Les tests tournent sous le
+Python 3.12 de la machine alors que le script vise `python:3.13-alpine` : ruff (`target-version
+py312`) refuse toute syntaxe postérieure à 3.12, et `PythonTargetTest` refuse tout import hors
+de la bibliothèque standard ou retiré par Python 3.13 (PEP 594 : `cgi`, `telnetlib`…).
 
 **Files:**
 
@@ -5771,6 +6366,7 @@ d'erreur est expurgé.
 Fichier complet `tests/test_grafana_setup.py` :
 
 ```python
+import ast
 import json
 import os
 import sys
@@ -5937,6 +6533,26 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         self.assertEqual(setup.parse_projects(""), [])
 
 
+class PythonTargetTest(unittest.TestCase):
+    """setup.py runs in python:3.13-alpine; the tests run on the Python 3.12 of the machine.
+
+    ruff (target-version py312) already refuses syntax newer than 3.12; this test refuses the
+    modules that Python 3.13 no longer ships, and anything outside the standard library.
+    """
+
+    REMOVED_BY_3_13 = {
+        "aifc", "asynchat", "asyncore", "audioop", "cgi", "cgitb", "chunk", "crypt", "distutils", "imghdr", "imp", "lib2to3",
+        "mailcap", "msilib", "nis", "nntplib", "ossaudiodev", "pipes", "smtpd", "sndhdr", "spwd", "sunau", "telnetlib", "uu", "xdrlib",
+    }
+
+    def test_imports_exist_in_python_3_13(self):
+        tree = ast.parse(SETUP.read_text(encoding="utf-8"))
+        imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+        imported |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
+        self.assertEqual(imported & self.REMOVED_BY_3_13, set())
+        self.assertEqual(imported - set(sys.stdlib_module_names), set())
+
+
 class GrafanaSetupHarnessTest(unittest.TestCase):
     """Against the real test Grafana started by `harness/stack.py up --with-edge`."""
 
@@ -6003,7 +6619,7 @@ def correlation(c):
     faro = g.faro_payload(c.faro_app(environment="prod"), "https://inconnu.autre.org/", logs=[g.faro_log(f"faro-corr-{c.run}", trace_id=trace_id)])
     g.send_faro(c.s["GC_FARO_URL"], faro, c.s["FARO_API_KEY"])
     for token in (f"otlp-corr-{c.run}", f"faro-corr-{c.run}"):
-        _labels, _line, meta = c.wait_logs(f'{{project="{c.project}"}} |= "{token}"')[0]
+        _labels, _line, meta = c.wait_logs(f'{{project=~"{c.project}|{c.faro_project}"}} |= "{token}"')[0]
         expect(meta.get("trace_id") == trace_id, f"{token}: trace_id metadata {meta}")
         expect(c.wait_trace(meta["trace_id"]), f"{token}: trace not found from the log")
     query = setup.TRACE_TO_LOGS_QUERY.replace("${__trace.traceId}", trace_id)
@@ -6348,8 +6964,6 @@ PROMETHEUS_INTERNAL_URL=
 # URL publique de Grafana et token d'un compte de service au rôle Admin.
 GRAFANA_URL=
 GRAFANA_SA_TOKEN=
-# Projets pour lesquels créer un dossier Grafana gc-<projet> (ex. in-immo,autre-projet).
-PROJECTS=
 
 # --- Notifications et seuils (plan B) ---
 TELEGRAM_BOT_TOKEN=
@@ -6364,17 +6978,17 @@ CARDINALITY_ALERT_THRESHOLD=200000
 
 Run : `python3 scripts/render.py && python3 scripts/check.py`
 
-Attendu : huit `[PASS]` (le contrôle `secrets` accepte `setup.py`).
+Attendu : dix `[PASS]` (le contrôle `secrets` accepte `setup.py`, `limits` voit `mem_limit` et `cpus` de `grafana-setup`).
 
 - [ ] **Étape 4 : lancer — succès attendu**
 
 Run : `python3 -m unittest discover -s tests -p test_grafana_setup.py -v`
 
-Attendu : `Ran 10 tests` … `OK (skipped=1)` : faux Grafana en mémoire (création, second passage sans écriture, `isDefault` conservé, Grafana 11.6.3 refusé, token expurgé).
+Attendu : `Ran 11 tests` … `OK (skipped=1)` : faux Grafana en mémoire (création, second passage sans écriture, `isDefault` conservé, Grafana 11.6.3 refusé, token expurgé) et imports compatibles avec Python 3.13.
 
 Run : `python3 harness/stack.py down && python3 harness/stack.py up && python3 harness/edge.py up && python3 harness/stack.py oneshot grafana-setup && GC_HARNESS=1 python3 -m unittest discover -s tests -p test_grafana_setup.py -v`
 
-Attendu : `datasource gc-loki: created` … `folder gc-other-project: created`, `stack: grafana-setup exited with 0`, puis `Ran 10 tests` … `OK` contre le vrai Grafana.
+Attendu : `datasource gc-loki: created` … `folder gc-other-project: created`, `stack: grafana-setup exited with 0`, puis `Ran 11 tests` … `OK` contre le vrai Grafana.
 
 Run : `python3 scripts/smoke.py`
 
@@ -6391,10 +7005,13 @@ git commit -m "feat(grafana-setup): provision datasources, correlations and fold
 ### Task 17: Documentation de déploiement (README en français)
 
 README pas à pas conforme au § 14 : ressource Application Git, variables (dont « Is Literal? »
-pour `TENANT_HOST_REGEX`), configuration dynamique Traefik, réseau prédéfini et noms internes,
-compte de service et rotation du token, conteneurs « exited » normaux, vérification par
-`security.py --remote`, sonde externe, contrat des attributs, masquage et ses limites, banc
-natif et banc Docker. Le banc Docker (`compose.dev.yaml`) n'a pas pu être exercé dans cet
+pour `TENANT_HOST_REGEX`, `FARO_API_KEY` obligatoire et point Faro fermé sans domaine),
+configuration dynamique Traefik (ordre des middlewares, proxy devant Traefik), réseau prédéfini
+et noms internes, compte de service et rotation du token, conteneurs « exited » normaux,
+modification d'une configuration (`git push` puis Redeploy ; anciens fichiers à empreinte
+laissés sur l'hôte, inoffensifs), taille du volume `alloy-data` pendant une longue panne,
+vérification par `security.py --remote`, sonde externe, contrat des attributs et motifs de rejet,
+masquage et ses limites, banc natif et banc Docker. Le banc Docker (`compose.dev.yaml`) n'a pas pu être exercé dans cet
 environnement (aucun conteneur ne peut démarrer) : le README le dit explicitement. Un test
 garde les points que l'opérateur ne doit pas manquer.
 
@@ -6438,6 +7055,11 @@ class ReadmeTest(unittest.TestCase):
             "sonde",
             "docs/spikes.md",
             "#9886",
+            "openssl rand -hex 24",
+            "Modifier une configuration",
+            "alloy-data",
+            "ipStrategy",
+            "structural on bench",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, README)
@@ -6501,7 +7123,7 @@ Coolify → **New Resource** → **Application** → depuis ce dépôt Git (publ
 **Docker Compose**, fichier `docker-compose.yaml` (le fichier **généré**, jamais
 `compose.template.yaml`).
 
-Les mises à jour se font par `git push` puis **Redeploy**.
+Les mises à jour se font par `git push` puis **Redeploy** (voir « Modifier une configuration »).
 
 ### 2. Renseigner les variables
 
@@ -6510,20 +7132,23 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 | Variable | Valeur |
 |---|---|
 | `IP_HASH_SALT` | Obligatoire. Au moins 16 caractères `[A-Za-z0-9]`, par exemple `openssl rand -hex 24`. |
-| `FARO_API_KEY` | Clé des SDK Faro (navigateur, desktop, mobile). **Vide = point Faro fermé.** |
+| `FARO_API_KEY` | Obligatoire. Clé des SDK Faro (navigateur, desktop, mobile), au moins 16 caractères : `openssl rand -hex 24`. |
+| `PROJECTS` | Projets autorisés, séparés par des virgules **sans espace** (`in-immo,autre-projet`) : logs Faro d'un autre projet rejetés, un dossier Grafana `gc-<projet>` par projet. |
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | Règles de déduction depuis l'hôte (voir plus bas). |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Noms réels sur le réseau `coolify` (étape 4). |
 | `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | URL **publique** de Grafana et token du compte de service (étape 5). |
-| `PROJECTS` | Projets pour lesquels créer un dossier Grafana `gc-<projet>`, séparés par des virgules. |
 
 - **`TENANT_HOST_REGEX` contient des `$`** : cocher **« Is Literal? »** sur cette variable, sinon
   Coolify tente de l'interpréter.
 - Les domaines publics `SERVICE_FQDN_ALLOY_12347` (Faro) et `SERVICE_FQDN_ALLOY_GATEWAY_4318`
   (OTLP) sont générés par Coolify : renseigner le domaine de chaque service dans l'onglet de la
   ressource, par exemple `https://faro.example.com:12347` et `https://otlp.example.com:4318`.
-- `config-guard` refuse de démarrer la stack si `IP_HASH_SALT`, `HOST_MAP`,
-  `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide : le message d'erreur est
-  dans les logs de `config-guard`.
+- **Point Faro fermé** : `alloy` écoute toujours Faro, la clé reste donc obligatoire. Pour ne
+  pas exposer Faro, ne donner **aucun domaine** au service `alloy` dans Coolify : sans domaine,
+  Traefik n'a aucun routeur vers le port 12347.
+- `config-guard` refuse de démarrer la stack si `IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`,
+  `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide : le message
+  d'erreur est dans les logs de `config-guard`.
 
 ### 3. Configurer les middlewares Traefik
 
@@ -6546,11 +7171,19 @@ publié ; rechargement à chaud) :
 Révoquer un projet : supprimer sa ligne. Traefik recharge le fichier sans redéploiement.
 
 Le rattachement est déjà fait par les labels du compose :
-`alloy-gateway` → `gc-otlp-auth@file` ; `alloy` → `gc-faro-ratelimit@file`,
-`gc-faro-cors@file`, `gc-faro-body@file`.
+`alloy-gateway` → `gc-otlp-auth@file` ; `alloy` → `gc-faro-cors@file`,
+`gc-faro-ratelimit@file`, `gc-faro-body@file`, dans cet ordre : le CORS d'abord, pour que
+toute réponse, un 429 compris, porte les en-têtes CORS que le navigateur exige pour la lire.
+Traefik répond lui-même aux requêtes préalables `OPTIONS`, avant la limite de débit.
 
 > **Limite par IP et NAT** : une agence dont tous les postes sortent par une seule IP partage le
 > quota `gc-faro-ratelimit` (50 req/s, rafale 100). Augmenter `average` et `burst` si besoin.
+
+> **Derrière un autre proxy (Cloudflare…)** : toutes les requêtes arrivent de l'IP du proxy et
+> partageraient un seul quota. Décommenter `sourceCriterion.ipStrategy.depth: 1` dans
+> `gc-faro-ratelimit` (l'IP du client est celle que le proxy ajoute en dernier à
+> `X-Forwarded-For`) et déclarer les plages d'IP du proxy dans
+> `forwardedHeaders.trustedIPs` du point d'entrée Traefik, sans quoi Traefik ignore cet en-tête.
 
 ### 4. Réseau et noms internes
 
@@ -6605,8 +7238,11 @@ GC_FARO_PUBLIC_URL=https://faro.example.com GC_GATEWAY_PUBLIC_URL=https://otlp.e
 GC_OTHER_PUBLIC_URL=https://grafana.example.com GC_ORIGIN_OK=https://app.example.com \
 GC_GATEWAY_USER=mon-projet GC_GATEWAY_PASSWORD=... GC_REVOKED_USER=ancien GC_REVOKED_PASSWORD=... \
 FARO_API_KEY=... GC_ALLOY_CONTAINER=alloy-<uuid> GC_GATEWAY_CONTAINER=alloy-gateway-<uuid> \
-python3 scripts/security.py --remote
+GC_NODE_EXPORTER_CONTAINER=node-exporter-<uuid> python3 scripts/security.py --remote
 ```
+
+Sur le banc local, les contrôles 1, 7 et 8 sont structurels (« structural on bench ») : seul
+`--remote` les rend probants.
 
 `scripts/smoke.py` interroge Loki, Tempo et Prometheus, qui ne sont joignables que depuis le
 réseau `coolify` : le lancer depuis un conteneur rattaché à ce réseau, avec les variables
@@ -6623,6 +7259,31 @@ chaque mise à jour de Coolify**.
 Configurer une sonde **hors du serveur** (Uptime Kuma sur une autre machine, service SaaS…) sur
 les URL publiques Faro et OTLP : c'est la seule alerte qui survit à une panne du serveur.
 
+## Exploitation
+
+### Modifier une configuration
+
+Modifier le fichier dans `config/`, relancer `python3 scripts/render.py`, committer, **`git push`
+puis Redeploy**. Aucune autre action : ni fichier à retoucher sur le serveur, ni stockage à vider
+dans Coolify.
+
+Pourquoi : Coolify range chaque fichier `content:` par chemin de montage et, une fois ce fichier
+créé, réutilise le contenu enregistré au lieu de celui du compose. `render.py` ajoute donc
+l'empreinte du contenu au nom de chaque fichier (`loki.yaml` devient `loki.<8 hex>.yaml`, dans la
+source, la cible et les commandes) : un contenu modifié porte un nom neuf, que Coolify écrit, et
+`config-guard` le vérifie. Les anciens fichiers restent sur l'hôte, dans
+`/data/coolify/applications/<app>/config/`, sans être montés : ils sont inoffensifs et peuvent
+être supprimés à la main.
+
+### Taille du volume `alloy-data`
+
+La file d'envoi persistante d'`alloy` (volume `alloy-data`) absorbe les pannes de Loki, Tempo ou
+Prometheus jusqu'à une heure. Pendant une longue panne elle grossit : au plus 1000 lots de
+2048 éléments par exportateur (Loki, Tempo, Prometheus), soit de l'ordre de quelques Gio. File
+pleine, `alloy` refuse les nouvelles données et les émetteurs reçoivent une erreur. Surveiller
+l'espace disque de l'hôte pendant une panne prolongée ; la file se vide d'elle-même au retour
+des stockages.
+
 ## Envoyer des données
 
 | Émetteur | Adresse | Protection |
@@ -6633,13 +7294,18 @@ les URL publiques Faro et OTLP : c'est la seule alerte qui survit à une panne d
 
 Attributs obligatoires (ressource OpenTelemetry) : `project`, `deployment.environment.name`
 (`prod` ou `preprod`), `service.name`. `tenant` en ressource ou en attribut de span selon le
-projet. Toute donnée sans `project` ou sans environnement est rejetée (compteurs
-`otelcol_processor_filter_*_filtered_total` et
-`loki_process_dropped_lines_total{reason=...}`).
+projet. Toute donnée sans `project`, sans environnement (une chaîne vide compte comme absente) ou
+dont l'environnement n'est ni `prod` ni `preprod` est rejetée (compteurs
+`otelcol_processor_filter_*_filtered_total`).
 
 Faro : `app.namespace` → `project`, `app.name` → `service_name`, `app.environment` → `env` ;
-le tenant déclaré par le client passe par l'attribut de session `tenant`. Pour les logs Faro,
-`env` et `tenant` sont **déduits de l'hôte de la page** :
+le tenant déclaré par le client passe par l'attribut de session `tenant`. Un log Faro est rejeté,
+avec son motif dans `loki_process_dropped_lines_total{reason=...}`, si son projet manque
+(`missing_project`), est mal formé (`invalid_project`, attendu `[a-z0-9-]{1,64}`) ou absent de
+`PROJECTS` (`unknown_project`), si son environnement manque (`missing_env`) ou n'est ni `prod` ni
+`preprod` (`invalid_env`), ou si son nom de service est mal formé (`invalid_service`). Un tenant
+client hors de `[a-z0-9-]+` ou réservé est retiré. Pour les logs Faro, `env` et `tenant` sont
+**déduits de l'hôte de la page** :
 
 | Variable | Exemple |
 |---|---|
@@ -6665,9 +7331,11 @@ numéros de carte par `[card]` (**seulement** dans le texte libre : corps, `mess
 `exception.*`), et chaque adresse IP par `sha256(IP_HASH_SALT + ip)`, identique sur les chemins
 OTLP et Faro.
 
-Limites connues : un numéro de version à quatre nombres (`1.2.3.4`) dans un attribut OTLP est
-pris pour une IP ; dans les logs Faro, seules les IP du texte libre (`message`, `value`,
-`stacktrace`) sont hachées, pas celles d'une URL.
+Les IP sont hachées dans toutes les valeurs, URL comprises (`page_url`, `context_*`,
+`event_data_*`), sauf dans les clés techniques où un nombre pointé est une version : sur le
+chemin OTLP, les clés contenant `version` ou `user_agent` ; dans les logs Faro, `browser_*`,
+`sdk_*`, `app_version`, `*_id`, `*_ms`, `*timestamp*`, `*version*`, `user_agent*`. Limite
+connue : ailleurs, un numéro de version à quatre nombres (`1.2.3.4`) est pris pour une IP.
 
 ## Exemplars (expérimental)
 
@@ -6705,7 +7373,10 @@ GC_HARNESS=1 python3 -m unittest discover -s tests -v   # + banc, robustesse, Gr
 python3 harness/stack.py down                   # arrête tout, retire le bloc /etc/hosts
 ```
 
-Logs et données du banc : `.harness/` (non versionné).
+Logs et données du banc : `.harness/` (non versionné). `.harness/coolify/` y joue le dossier où
+Coolify écrit les fichiers `content:`, sous leur nom à empreinte. Faute de cgroup, le banc donne
+lui-même à `alloy` et `prometheus` le `GOMEMLIMIT` (90 % du `mem_limit`) que ces binaires tirent
+de la limite de leur conteneur ; le `memory_limiter` d'Alloy, lui, ne se déclenche qu'en conteneur.
 
 ### Banc Docker (`compose.dev.yaml`)
 
@@ -6758,7 +7429,7 @@ modifier les tests.
 
 Run : `python3 harness/stack.py down --purge && python3 scripts/render.py --check && python3 scripts/check.py`
 
-Attendu : `render: docker-compose.yaml base64 size 77… bytes (budget 122880)` puis huit `[PASS]`.
+Attendu : `render: docker-compose.yaml base64 size 86800 bytes (budget 122880)` puis dix `[PASS]`.
 
 Run : `python3 -m unittest discover -s tests -v`
 
@@ -6772,22 +7443,24 @@ Attendu : les deux suites `OK`.
 
 - [ ] **Étape 3 : banc complet, bout en bout et sécurité**
 
-Run : `python3 harness/stack.py down && python3 harness/stack.py up && python3 harness/edge.py up && python3 harness/stack.py oneshot grafana-setup && GC_HARNESS=1 python3 -m unittest discover -s tests -p 'test_[fg]*.py' -v && python3 scripts/smoke.py && python3 scripts/security.py`
+Run : `python3 harness/stack.py down && python3 harness/stack.py up && python3 harness/edge.py up && python3 harness/stack.py oneshot grafana-setup && GC_HARNESS=1 python3 -m unittest discover -s tests -p test_grafana_setup.py -v && python3 scripts/smoke.py && python3 scripts/security.py`
 
-Attendu : `grafana-setup exited with 0`, tests `test_faro_closed` et `test_grafana_setup` `OK`, `smoke: 12/12 sections passed`, `security: 8/8 items passed`.
+Attendu : `grafana-setup exited with 0`, `test_grafana_setup` `OK` contre le vrai Grafana, `smoke: 12/12 sections passed`, `security: 8/8 items passed`.
 
 Run : `python3 harness/stack.py down && git status --short && test "$(git log --format='%an <%ae>' main..HEAD | sort -u)" = 'Henoc Djabia <henoc35@gmail.com>' && ! git log --format=%B main..HEAD | grep -qi 'co-authored-by' && echo 'authorship OK'`
 
-Attendu : `git status --short` vide (seul le plan, non suivi, peut apparaître en `??`), puis « authorship OK » : tous les commits sont de Henoc Djabia et aucun ne porte de ligne `Co-Authored-By`.
+Attendu : `git status --short` vide (la spec et le plan sont committés sur `docs/design-spec`, d'où part la branche), puis « authorship OK » : tous les commits sont de Henoc Djabia et aucun ne porte de ligne `Co-Authored-By`.
 
 
 ### Task 19: Checklist des spikes opérateur (non exécutable par un agent)
 
 Les spikes du § 16 exigent une vraie instance Coolify. L'agent écrit la checklist ; son
-**exécution** revient à l'opérateur. S0 à S4 sont ceux de la spec ; S5 ajoute les points que
-les décisions du plan font reposer sur Coolify (utilisateur 473 et volumes, tmpfs,
-`read_only` des montages `content:`, montage du dossier `./config` par `config-guard`,
-variable littérale).
+**exécution** revient à l'opérateur. S0 à S4 sont ceux de la spec ; S4 couvre aussi une
+modification de config poussée puis redéployée (nouveau fichier à empreinte utilisé,
+`config-guard` qui passe, sort des stockages périmés). S5 ajoute les points que les décisions du
+plan font reposer sur Coolify (utilisateur 473 et volumes, tmpfs, écriture refusée dans le
+fichier de config malgré la perte de `read_only`, montages `:ro` de `config-guard` et
+`node-exporter`, variable littérale).
 
 **Files:**
 
@@ -6857,7 +7530,7 @@ l'alias nu `loki` résout (il ne doit pas être utilisé, il peut entrer en coll
    ```
 
    Attendu : chaque routeur d'`alloy` porte exactement
-   `gc-faro-ratelimit@file,gc-faro-cors@file,gc-faro-body@file` ; chaque routeur
+   `gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file`, dans cet ordre ; chaque routeur
    d'`alloy-gateway` porte exactement `gc-otlp-auth@file` ; aucun autre routeur du serveur ne
    porte ces middlewares.
 3. Vérifier la résolution `@file` dans le tableau de bord ou les logs du proxy :
@@ -6887,23 +7560,46 @@ réservé. Noter la liste complète des attributs reçus : si le SDK n'envoie pa
 `service.namespace`, ouvrir une issue (le mapping de `config/alloy/config.alloy`, transform
 `faro`, est à ajuster).
 
-## S4 — Fichiers `content:` écrits octet pour octet (spec § 4.2, § 12.2)
+## S4 — Fichiers `content:` écrits octet pour octet, puis modifiés (spec § 4.2, § 12.2)
 
-```bash
-cd /data/coolify/applications/<app>
-sha256sum config/loki/loki.yaml config/tempo/tempo.yaml config/prometheus/prometheus.yml \
-  config/alloy/config.alloy config/alloy-gateway/config.alloy config/grafana-setup/setup.py \
-  config/config-guard/guard.sh
-find config -type d
-docker logs config-guard-<uuid>
-```
+Les fichiers portent l'empreinte de leur contenu (`loki.yaml` → `loki.<8 hex>.yaml`) : les noms
+exacts du commit déployé sont dans `docker-compose.yaml`
+(`grep -E 'source: ./config/' docker-compose.yaml`).
 
-Attendu :
+1. Premier déploiement :
 
-- chaque empreinte est égale à celle du fichier du dépôt au même commit
-  (`git rev-parse HEAD` puis `sha256sum config/...` en local) ;
-- aucun des chemins ci-dessus n'est un dossier ;
-- `config-guard` affiche `config-guard: all checks passed`.
+   ```bash
+   cd /data/coolify/applications/<app>
+   find config -type f | sort
+   find config -type f -exec sha256sum {} +
+   find config -mindepth 2 -type d
+   docker logs config-guard-<uuid>
+   ```
+
+   Attendu :
+
+   - un fichier par volume `content:`, sous le nom à empreinte du compose ; les 8 premiers
+     caractères de chaque SHA-256 sont ceux du nom, et l'empreinte complète est celle du fichier
+     du dépôt au même commit (`sha256sum config/...` en local) ;
+   - aucun de ces chemins n'est un dossier (`find -mindepth 2 -type d` ne liste rien) ;
+   - `config-guard` affiche `config-guard: all checks passed`.
+2. Modification : en local, ajouter une ligne de commentaire à `config/loki/loki.yaml`, lancer
+   `python3 scripts/render.py`, committer, `git push`, puis **Redeploy** dans Coolify.
+
+   ```bash
+   grep -E 'loki\.[0-9a-f]{8}\.yaml' /data/coolify/applications/<app>/docker-compose.yaml | head -n 2
+   ls -l /data/coolify/applications/<app>/config/loki/
+   docker inspect loki-<uuid> --format '{{json .Mounts}}'
+   docker logs config-guard-<uuid>
+   ```
+
+   Attendu : un nouveau fichier `loki.<nouvelle empreinte>.yaml` contenant la ligne ajoutée, monté
+   par `loki` (la commande `-config.file` le désigne) ; `config-guard` passe. Noter si l'ancien
+   `loki.<ancienne empreinte>.yaml` est toujours sur l'hôte et s'il apparaît encore dans l'onglet
+   **Storages** de la ressource : Coolify supprime-t-il les stockages périmés ? (Attendu probable :
+   non ; ils restent inoffensifs, rien ne les monte.)
+3. Revenir au commit précédent (`git revert`, `git push`, Redeploy) : `loki` remonte l'ancien
+   nom, dont le contenu enregistré est inchangé ; `config-guard` passe.
 
 Vérifier aussi dans l'interface Coolify (onglet **Environment Variables**) si les `${…}` des
 contenus (`${BIND_ADDR}`, `${__trace.traceId}`…) apparaissent comme de fausses variables : gêne
@@ -6916,19 +7612,28 @@ Ces points découlent de choix du plan A que le banc natif ne peut pas exercer :
 ```bash
 docker inspect alloy-<uuid> --format '{{.Config.User}} ro={{.HostConfig.ReadonlyRootfs}} {{json .Mounts}}'
 docker exec alloy-<uuid> sh -c 'ls -ld /var/lib/alloy /var/lib/alloy/queue && touch /var/lib/alloy/queue/.w && echo writable'
-docker exec alloy-gateway-<uuid> sh -c 'touch /var/lib/alloy/.w && echo writable'
+docker exec alloy-gateway-<uuid> sh -c 'touch /var/lib/alloy/.w && echo writable && df -h /var/lib/alloy'
+for c in alloy-<uuid> alloy-gateway-<uuid>; do
+  f=$(docker inspect "$c" --format '{{range .Mounts}}{{.Destination}} {{end}}' | tr ' ' '\n' | grep -E '^/etc/alloy/config\.[0-9a-f]{8}\.alloy$')
+  docker exec "$c" sh -c ': >> "$1" && echo "WRITABLE $1" || echo "refused $1"' sh "$f"
+done
 docker inspect config-guard-<uuid> --format '{{json .Mounts}}'
+docker inspect node-exporter-<uuid> --format '{{json .Mounts}}'
 docker inspect loki-<uuid> --format '{{json .Mounts}}'
 ```
 
 Attendu :
 
 - `alloy` et `alloy-gateway` tournent en `473:473`, système de fichiers en lecture seule ;
-  `/var/lib/alloy` (volume `alloy-data`, tmpfs pour la passerelle) est inscriptible ;
-- le montage `/guard` de `config-guard` est le dossier `config` de l'application, en lecture
-  seule, et contient les fichiers écrits par Coolify pour les autres services ;
-- les fichiers de config sont montés en lecture seule (`"RW":false`) : Coolify a conservé
-  `read_only: true` sur les volumes `content:` ;
+  `/var/lib/alloy` (volume `alloy-data`, tmpfs de 64 Mo pour la passerelle) est inscriptible ;
+- l'écriture dans le fichier de config est **refusée** (`refused …`) : Coolify reconstruit les
+  montages `content:` sans leur `read_only: true` (`"RW":true` attendu, à noter), mais
+  l'utilisateur 473 n'a pas le droit d'écrire le fichier que Coolify a créé ;
+- le montage `/guard` de `config-guard` (syntaxe courte `:ro`) est le dossier `config` de
+  l'application, en lecture seule (`"RW":false`), et contient les fichiers écrits par Coolify
+  pour les autres services ;
+- les trois montages de `node-exporter` (`/proc`, `/sys`, `/`, syntaxe courte `:ro`) sont en
+  lecture seule (`"RW":false`) ;
 - `TENANT_HOST_REGEX`, marquée « Is Literal? », arrive intacte :
   `docker exec alloy-<uuid> printenv TENANT_HOST_REGEX` affiche la regex avec ses `$`.
 
@@ -6973,15 +7678,15 @@ git commit -m "docs: add coolify operator spike checklist"
 | § 3 architecture, § 3.1 unités et interfaces, ports | 7, 9, 11, 16 (gabarit), 8 (banc) |
 | § 3.2 aucun `ports:` | 7 (`check.py`, contrôle `ports`) |
 | § 3.3 noms internes en variables | 16 (`*_INTERNAL_URL`), 17 (README), 19 (S1) |
-| § 4.1–4.2 `content:` octet pour octet, variables résolues par les outils | 2, 7 (`RepositoryRenderTest`), 19 (S4) |
+| § 4.1–4.2 `content:` octet pour octet, chemins à empreinte, variables résolues par les outils | 2, 7 (`RepositoryRenderTest`, contrôle `targets`), 8 (`.harness/coolify`), 19 (S4) |
 | § 4.3 budget base64 | 2 (`base64_size`), 7 (`check.py size`), 18 |
-| § 4.4 `config-guard` | 3, 7, 14 (`test_5`) |
+| § 4.4 `config-guard` | 3 (dash et BusyBox), 7, 8, 14 (`test_5`) |
 | § 5.1–5.2 points d'entrée, Basic Auth par projet, révocation à chaud | 9, 15 (`security.py` 1, 2) |
-| § 5.3 CORS, clé, débit, taille | 11 (Alloy), 15 (Traefik, `security.py` 3–6) |
-| § 5.4 middlewares `@file` et fuite #9886 | 15 (`security.py` 7), 19 (S2) |
+| § 5.3 CORS, clé, débit, taille | 3 (clé obligatoire), 11 (Alloy), 14 (`test_5`), 15 (Traefik, `security.py` 3–6) |
+| § 5.4 middlewares `@file`, ordre, fuite #9886 | 9 (label), 15 (`security.py` 5 et 7), 19 (S2) |
 | § 6.1–6.2 contrat et noms effectifs | 4, 6, 9 (`otlp-names`), 11 (`faro-names`), 13 |
-| § 6.3 rejet et compteurs | 9 (`reject`), 11 (`faro-reject`) |
-| § 6.4 déduction depuis l'hôte (6 cas) | 11 (`faro-hosts`) |
+| § 6.3 rejet et compteurs (env hors `prod`/`preprod`, projet hors `PROJECTS`) | 9 (`reject`), 11 (`faro-reject`, six motifs) |
+| § 6.4 déduction depuis l'hôte (6 cas) et tenant client validé | 11 (`faro-hosts`, 10 cas) |
 | § 6.5 traces Faro | 12 (`faro-traces`), 19 (S3) |
 | § 7.1 pipelines | 9, 10, 11, 12 |
 | § 7.2 metrics-generator | 5, 13 (`spanmetrics`) |
@@ -6991,10 +7696,10 @@ git commit -m "docs: add coolify operator spike checklist"
 | § 8.2 cardinalité (routes normalisées, plafond) | 5 (`max_active_series`), 13 (`http.route`) |
 | § 9.1 rétention | 4, 5, 7, 13 (`retention`) |
 | § 9.2 durabilité | 9 (file persistante), 14 (`test_1`, `test_2`) |
-| § 9.4 ressources et durcissement | 7, 9 (gabarit), 14 (`test_3`), 15 (`security.py` 8) |
+| § 9.4 ressources et durcissement | 7 (contrôle `limits`, montages `:ro`), 9, 12 (`memory_limiter` Faro), 14 (`test_3`, 1 Gio), 15 (`security.py` 8) |
 | § 10.1–10.2 `grafana-setup` | 16 |
 | § 11 variables | 7, 9, 16 (`.env.example`, contrôle `env`) |
-| § 12.1 statique | 7 (8 contrôles) |
+| § 12.1 statique | 7 (8 contrôles, plus `targets` et `limits`) |
 | § 12.2 unitaires | 2, 16 ; recette : 19 (S4) |
 | § 12.3 bout en bout (1 à 11) | 9–13, 16 |
 | § 12.4 sécurité (1 à 8) | 15 |
@@ -7006,18 +7711,23 @@ Aucune exigence du périmètre A n'est restée sans tâche. Seule limite assumé
 
 **Recherche de trous.** Aucune occurrence de « TBD », « TODO », « à compléter » ni de renvoi du type « comme la tâche N » : chaque étape donne le fichier complet ou le texte exact à insérer ou remplacer, avec son point d'ancrage.
 
-**Cohérence des noms.** Ports (3100, 3200, 4317, 4318, 9090, 9100, 12345, 12347 ; gRPC internes 9095 et 9096 sur `127.0.0.1`), adresses du banc (`127.0.10.2` à `.9`, Traefik `.100:8080`, Grafana `.101:3300`), UID (`gc-loki`, `gc-tempo`, `gc-prometheus`, dossiers `gc-<projet>`, utilisateur 473), middlewares (`gc-otlp-auth`, `gc-faro-cors`, `gc-faro-ratelimit`, `gc-faro-body`) et variables (`BIND_ADDR`, `LOKI_DATA_DIR`, `TEMPO_DATA_DIR`, `ALLOY_QUEUE_DIR`, et celles du § 11) sont identiques d'une tâche à l'autre. Le contrôle `env` de `check.py` et `RepositoryRenderTest` le vérifient mécaniquement.
+**Cohérence des noms.** Chemins à empreinte (`<nom>.<sha8>.<ext>` dans la source, la cible, les commandes, `CONFIG_GUARD_EXPECTED`, `.harness/coolify/`, `CONFIG_MOUNT_RE` de `security.py`), ports (3100, 3200, 4317, 4318, 9090, 9100, 12345, 12347 ; gRPC internes 9095 et 9096 sur `127.0.0.1`, lus dans les configs par le banc), adresses du banc (`127.0.10.2` à `.9`, Traefik `.100:8080`, Grafana `.101:3300`), UID (`gc-loki`, `gc-tempo`, `gc-prometheus`, dossiers `gc-<projet>`, utilisateur 473), middlewares (`gc-otlp-auth`, `gc-faro-cors`, `gc-faro-ratelimit`, `gc-faro-body`) et variables (`BIND_ADDR`, `LOKI_DATA_DIR`, `TEMPO_DATA_DIR`, `ALLOY_QUEUE_DIR`, et celles du § 11) sont identiques d'une tâche à l'autre. Le contrôle `env` de `check.py` et `RepositoryRenderTest` le vérifient mécaniquement.
 
 **Décisions du plan absentes de la spec** (à valider par la relecture) :
 
-1. `config-guard` monte le dossier `./config` (en lecture seule) au lieu d'une seconde copie `content:` de chaque fichier : sinon le compose dépasse le budget (139,9 Ko contre 77,6 Ko en base64), et il vérifie ainsi les fichiers réellement montés par les services (spike S5).
-2. `config-guard` valide aussi `IP_HASH_SALT`, `HOST_MAP`, `RESERVED_SUBDOMAINS` et `TENANT_HOST_REGEX`.
-3. `FARO_API_KEY` vide ferme le point Faro (clé de repli dérivée du sel) au lieu de l'ouvrir.
-4. Label d'`alloy` : `gc-faro-ratelimit@file` avant `gc-faro-cors@file`, pour que les requêtes préalables comptent dans la limite (§ 5.3), au prix de l'ordre écrit au § 5.4.
-5. Le tenant client des logs Faro passe par l'attribut de session `tenant` (`session_attr_tenant`).
-6. Dans les logs Faro, cartes et IP ne sont masquées que dans `message`, `value` et `stacktrace` (une version navigateur à quatre nombres serait sinon hachée).
+1. `config-guard` monte le dossier `./config` (`:ro`, syntaxe courte) au lieu d'une seconde copie `content:` de chaque fichier : sinon le compose dépasse le budget (environ 156 Ko contre 87 Ko en base64), et il vérifie ainsi les fichiers réellement montés par les services (spike S5).
+2. `config-guard` valide aussi `IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`, `HOST_MAP` (env `prod` ou `preprod`), `RESERVED_SUBDOMAINS` et `TENANT_HOST_REGEX` ; ses tests tournent sous dash et sous BusyBox.
+3. `FARO_API_KEY` est obligatoire (≥ 16 caractères, `openssl rand -hex 24`), sans clé de repli : `alloy` écoute toujours Faro ; point Faro fermé = aucun domaine pour `alloy`.
+4. Label d'`alloy` : `gc-faro-cors@file` en premier (ordre du § 5.4) : un 429 porte les en-têtes CORS ; les requêtes préalables `OPTIONS`, traitées par Traefik, ne comptent pas dans la limite (§ 5.3 révisé).
+5. Le tenant client des logs Faro passe par l'attribut de session `tenant` (`session_attr_tenant`) et est validé comme sur les traces.
+6. Dans les logs Faro, cartes masquées dans `message`, `value` et `stacktrace` ; IP hachées dans toutes les valeurs sauf les clés techniques (`browser_*`, `sdk_*`, `app_version`, `*_id`, `*_ms`, `*timestamp*`, `*version*`, `user_agent*`) ; sur le chemin OTLP, clés contenant `version` ou `user_agent` exclues du hachage d'IP.
 7. Le gRPC interne de Loki (9095) et de Tempo (9096) écoute sur `127.0.0.1` (anneaux mono-binaire).
 8. `grafana-setup` ne gère pas `isDefault` (laissé à l'opérateur).
 9. Les variables du plan B sont déjà transmises à `grafana-setup` pour que `.env.example` corresponde exactement au gabarit.
 10. `telemetrygen` est remplacé par des envois OTLP/HTTP JSON en bibliothèque standard (pas de binaire publié en v0.161.0, pas de `go`).
-11. Les montages `content:` sont en `read_only: true`, et la file d'Alloy réessaie jusqu'à une heure (`max_elapsed_time = "1h"`).
+11. Les montages `content:` gardent `read_only: true` pour le banc Docker (Coolify le retire ; l'utilisateur non-root ne peut pas écrire ces fichiers, spike S5) ; ceux de `node-exporter` sont en syntaxe courte `:ro`.
+12. Chemins `content:` adressés par le contenu (`<nom>.<sha8>.<ext>`), pour que Coolify écrive toute config modifiée et que deux services ne partagent jamais un chemin ; les anciens fichiers restent sur l'hôte.
+13. Logs Faro : rejet motivé (`missing_project`, `invalid_project`, `unknown_project`, `missing_env`, `invalid_env`, `invalid_service`) et liste d'autorisation `PROJECTS` lue par `alloy` ; chemin OTLP : rejet de tout `env` hors `prod`/`preprod` et des chaînes vides.
+14. File d'Alloy bornée (`queue_size = 1000` lots de 2048 éléments au plus), réessais jusqu'à une heure (`max_elapsed_time = "1h"`) ; tmpfs de la passerelle limité à 64 Mo ; `memory_limiter` propre aux traces Faro.
+15. Banc : `GOMEMLIMIT` à 90 % du `mem_limit` pour `alloy` et `prometheus` (ce que ces binaires font en conteneur) ; l'enveloppe mémoire se mesure en `RssAnon` sous 1 Gio d'envoi.
+16. `.claude/settings.json` (`attribution.commit` et `attribution.pr` vides) en plus de la garde `grep` de la tâche 18.

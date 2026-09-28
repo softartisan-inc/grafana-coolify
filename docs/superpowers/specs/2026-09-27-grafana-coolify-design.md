@@ -1,6 +1,11 @@
 # grafana-coolify — Spécification de conception
 
-- **Date :** 2026-09-27 · **Révision :** 4 (après trois relectures critiques)
+- **Date :** 2026-09-27 · **Révision :** 5 (après trois relectures critiques et l'audit du plan A)
+- **Historique :** r5 (2026-09-28), après lecture de `applicationParser()` de Coolify : fichiers
+  `content:` adressés par leur contenu (§ 4.2), `FARO_API_KEY` obligatoire (§ 5.3, § 11), ordre des
+  middlewares justifié (§ 5.4), rejets élargis et liste `PROJECTS` (§ 6.3), tenant client validé
+  (§ 6.4), limiteur mémoire des traces Faro (§ 7.1), exclusions du hachage d'IP (§ 8.1), montages
+  `:ro` en syntaxe courte (§ 9.4, § 12.4).
 - **Statut :** prête pour le plan, en attente de validation
 - **Auteur :** Henoc Djabia
 - **Dépôt :** `grafana-coolify` (public, licence MIT)
@@ -78,7 +83,7 @@ d'environnement Coolify, et `check.py` refuse tout secret écrit en dur (§ 12.1
 | D8 | Rétention : logs **prod 30 j / autres 7 j**, traces **7 j**, métriques **90 j** | Loki gère la rétention par flux ; Tempo et Prometheus ont une durée unique. |
 | D9 | Alertes `critical` + `prod` → **Telegram** ; le reste → **email** | Destinataires : l'administratrice et l'équipe. |
 | D10 | Configs **générées dans un compose unique** (blocs `content:`) | Les montages de fichiers depuis Git redeviennent régulièrement des dossiers sous Coolify (§ 4). |
-| D11 | Ressource Coolify de type **Application depuis le dépôt Git**, compose ≤ **120 Kio encodé en base64** | Mises à jour par `git push`. Coolify transmet le compose en base64 dans la ligne de commande SSH, limitée à 128 Kio (§ 4.3). |
+| D11 | Ressource Coolify de type **Application depuis le dépôt Git**, compose ≤ **120 Kio encodé en base64** | Mises à jour par `git push` puis redéploiement : les fichiers `content:` portent l'empreinte de leur contenu, sans quoi Coolify garderait l'ancien (§ 4.2). Coolify transmet le compose en base64 dans la ligne de commande SSH, limitée à 128 Kio (§ 4.3). |
 | D12 | Middlewares Traefik (Basic Auth, CORS, débit, taille) en **configuration dynamique Traefik** (`@file`), hors du dépôt | Aucun hash de mot de passe dans un dépôt public ; révocation à chaud, sans redéployer ; un label ne peut pas lire une variable `${VAR}`, que Coolify neutralise (§ 5.4). |
 
 ---
@@ -171,8 +176,19 @@ Grafana, sur une vraie instance.
   - Prometheus : arguments `command:` dans `compose.template.yaml`, la seule partie que Compose
     interpole ;
   - `grafana-setup` : variables d'environnement lues par le script.
-- **Spike 4** : vérifier le fichier écrit sur l'hôte, et si l'interface Coolify affiche les `${…}`
-  des contenus comme de fausses variables (gêne purement visuelle).
+- **Chemins adressés par le contenu.** `applicationParser()` enregistre chaque fichier `content:`
+  comme un stockage de l'application **indexé par son chemin de montage**
+  (`LocalFileVolume::updateOrCreate(['mount_path' => $target, …])`) et, une fois ce stockage créé,
+  **réutilise son contenu en ignorant celui du compose**. Sans parade, deux services montant le
+  même chemin s'écrasent, et une config modifiée par `git push` n'atteint jamais l'hôte.
+  `render.py` insère donc les 8 premiers caractères hexadécimaux du SHA-256 du fichier dans la
+  source **et** la cible (`loki.yaml` → `loki.<sha8>.yaml`) et réécrit les références à la cible
+  (`command:`) ; `check.py` refuse deux cibles identiques dans le compose. Modifier une config =
+  `git push` puis redéploiement ; les anciens fichiers restent sur l'hôte, non montés et
+  inoffensifs.
+- **Spike 4** : vérifier le fichier écrit sur l'hôte, puis une config modifiée et redéployée (nouveau
+  nom utilisé, `config-guard` qui passe, sort des stockages périmés), et si l'interface Coolify
+  affiche les `${…}` des contenus comme de fausses variables (gêne purement visuelle).
 
 ### 4.3 Budget de taille
 
@@ -241,14 +257,17 @@ ne permet pas de lire les données, seulement d'envoyer du bruit.
 |---|---|---|
 | CORS | Traefik `headers` (`gc-faro-cors@file`) : `accessControlAllowOriginListRegex`, `accessControlAllowMethods=POST,OPTIONS`, `accessControlAllowHeaders=Content-Type,x-api-key,x-faro-session-id`, `accessControlMaxAge=600`, `addVaryHeader=true` | configuration dynamique (§ 5.4) |
 | CORS côté Alloy | `faro.receiver` `cors_allowed_origins` **laissé vide**, pour éviter un double en-tête `Access-Control-Allow-Origin`, que les navigateurs refusent | — |
-| Clé d'application | `faro.receiver` `server.api_key` | `FARO_API_KEY` |
+| Clé d'application | `faro.receiver` `server.api_key`, **obligatoire** (≥ 16 caractères, vérifiée par `config-guard` : une clé vide désactiverait le contrôle) | `FARO_API_KEY` |
 | Limite de débit | Traefik `rateLimit` (`gc-faro-ratelimit@file`, par IP source) **et** `faro.receiver` `rate_limiting` (global au récepteur) | configuration dynamique ; `FARO_RATE`, `FARO_BURST` côté Alloy |
 | Taille maximale | Traefik `buffering.maxRequestBodyBytes` (`gc-faro-body@file`) **et** `faro.receiver` `max_allowed_payload_size` | configuration dynamique ; `FARO_MAX_PAYLOAD` côté Alloy (ex. `5MiB`) |
 
 - Le CORS est fait **dans Traefik** : `faro.receiver` n'accepte qu'une liste exacte ou `*`. Or les
   sous-domaines tenant sont créés à la volée, donc une liste serait toujours en retard.
-- La **requête préalable `OPTIONS`** est traitée par Traefik. Elle n'exige pas la clé, mais elle
-  compte dans la limite de débit : les valeurs par défaut en tiennent compte.
+- La **requête préalable `OPTIONS`** est traitée par Traefik (`gc-faro-cors`, premier middleware,
+  § 5.4). Elle n'exige pas la clé et ne compte pas dans la limite de débit : elle n'atteint jamais
+  `alloy`.
+- **Point Faro fermé** : `alloy` écoute toujours Faro, la clé reste obligatoire ; ne pas exposer
+  Faro = ne donner aucun domaine à `alloy` (`SERVICE_FQDN_ALLOY_12347` non renseigné).
 - **Limite par IP et NAT :** une agence dont tous les postes sortent par une seule IP partage le même
   quota. Les valeurs par défaut doivent le supporter, et le README le signale.
 
@@ -270,7 +289,9 @@ ne permet pas de lire les données, seulement d'envoyer du bruit.
     et la regex d'origines.
 - Rattachement par le raccourci supporté :
   - `alloy-gateway` : `coolify.traefik.middlewares=gc-otlp-auth@file`
-  - `alloy` : `coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file`
+  - `alloy` : `coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file`,
+    dans cet ordre : le CORS d'abord, pour que toute réponse, un 429 compris, porte les en-têtes
+    CORS sans lesquels le navigateur masque le 429 au SDK.
 - Ce raccourci s'applique à **tous les routeurs du service**. C'est la raison de la séparation
   `alloy` / `alloy-gateway` (D3) : un service = un domaine = un jeu de middlewares.
 - **Spike 2** : vérifier la portée du raccourci, et la résolution des références `@file`.
@@ -330,12 +351,16 @@ Mécanismes :
 
 ### 6.3 Rejet
 
-- Toute donnée sans `project` ou sans `env` est **supprimée** par `alloy`.
+- Toute donnée sans `project` ou sans `env` (une chaîne vide compte comme absente), ou dont `env`
+  n'est ni `prod` ni `preprod`, est **supprimée** par `alloy`.
+- Logs Faro : `project` doit aussi respecter `[a-z0-9-]{1,64}` et, si `PROJECTS` est renseigné, en
+  faire partie ; `service_name` doit respecter `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`.
 - Métriques observables :
   - chemin OTLP : `otelcol_processor_filter_spans_filtered`,
     `otelcol_processor_filter_logs_filtered`, `otelcol_processor_filter_datapoints_filtered`
     (sans motif) ;
-  - chemin Faro : `loki_process_dropped_lines_total{reason="missing_project"|"missing_env"}`
+  - chemin Faro : `loki_process_dropped_lines_total{reason=…}` avec `missing_project`,
+    `invalid_project`, `unknown_project`, `missing_env`, `invalid_env`, `invalid_service`
     (`stage.drop` avec `drop_counter_reason`).
 - Prometheus scrape ces métriques (§ 7.4).
 
@@ -358,7 +383,8 @@ sinon si host correspond à TENANT_HOST_REGEX (groupes nommés `sub` et `dev`) :
     sinon :
         tenant := sub                        # suffixe -dev déjà retiré par la regex
 sinon :
-    env, tenant := valeurs fournies par le client (puis contrôle § 6.3)
+    env, tenant := valeurs fournies par le client (puis contrôle § 6.3 ;
+                   tenant retiré s'il ne respecte pas [a-z0-9-]+ ou s'il est réservé, comme au § 6.5)
 ```
 
 Cas de référence, tous testés au § 12.3.2 (avec `TENANT_HOST_REGEX` =
@@ -399,8 +425,8 @@ otelcol.receiver.otlp ◄┘─► memory_limiter ─► transform (env court, m
                                                                                   ├─ traces  ─► Tempo      (OTLP)
                                                                                   ├─ logs    ─► Loki       (/otlp/v1/logs)
                                                                                   └─ metrics ─► Prometheus (/api/v1/otlp/v1/metrics)
-faro.receiver ─┬─ traces ─► transform (env court, validation tenant/env, masquage) ─► filter ─► batch ─► Tempo
-               └─ logs   ─► loki.process (déduction hôte § 6.4, stage.replace, stage.drop) ─► loki.write ─► Loki
+faro.receiver ─┬─ traces ─► memory_limiter ─► transform (env court, validation tenant/env, masquage) ─► filter ─► batch ─► Tempo
+               └─ logs   ─► loki.process (déduction hôte § 6.4, validation, stage.drop, stage.replace) ─► loki.write ─► Loki
 ```
 
 - `faro.receiver` ne sort les logs que vers des récepteurs Loki : ses logs suivent donc le chemin
@@ -461,7 +487,7 @@ rattrape ce qui a échappé :
 | Email | adresse RFC 5322 simplifiée | `[email]` |
 | Secrets | `Bearer <jeton>` ; valeurs des clés `authorization`, `cookie`, `password`, `token`, `secret` | `[redacted]` |
 | Numéro de carte | `\b(?:\d[ -]?){12,18}\d\b`, appliqué **seulement** au texte libre (`body`, `message`, `exception.*`), jamais aux clés `*_id`, `*timestamp*`, `*_ms` | `[card]` |
-| Adresse IP (v4 et v6) | adresse complète | SHA-256 de la chaîne **`IP_HASH_SALT` suivi de l'IP**, en hexadécimal complet |
+| Adresse IP (v4 et v6) | adresse complète, dans toutes les valeurs (URL comprises) **sauf** les clés techniques où un nombre pointé est une version : chemin OTLP, clés contenant `version` ou `user_agent` ; logs Faro, `browser_*`, `sdk_*`, `app_version`, `*_id`, `*_ms`, `*timestamp*`, `*version*`, `user_agent*` | SHA-256 de la chaîne **`IP_HASH_SALT` suivi de l'IP**, en hexadécimal complet |
 
 Composants :
 
@@ -524,13 +550,17 @@ Seul le PostgreSQL de Grafana l'est, par les backups Coolify, hors package.
 - Chaque conteneur a une limite `mem_limit` et `cpus`. Enveloppe visée : **~6 Go de RAM** au total,
   pour qu'un pic d'ingestion ne prive jamais les applications voisines.
 - `alloy` et `alloy-gateway` :
-  - **aucun montage de fichier de l'hôte** ;
+  - **aucun montage de fichier de l'hôte** hors de leur propre fichier de config ;
   - `user:` non-root, `read_only: true`. Seuls restent inscriptibles le volume de file d'envoi
     d'`alloy` et le répertoire `--storage.path` des deux services (un volume pour `alloy`, un `tmpfs`
     pour `alloy-gateway`) ;
   - `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`.
 - `node-exporter` est le **seul** service à monter l'hôte : `/proc`, `/sys` et `/` en **lecture
-  seule**. Il n'est pas exposé publiquement.
+  seule**, en syntaxe courte `:ro` (Coolify reconstruit les montages `bind` en `source:cible` et ne
+  garde que le mode d'une syntaxe courte : un `read_only: true` de syntaxe longue disparaît). Il
+  n'est pas exposé publiquement.
+- Les fichiers `content:` exigent la syntaxe longue : Coolify les monte donc sans `read_only`, et
+  c'est l'utilisateur non-root des services qui ne peut pas les écrire.
 
 ---
 
@@ -622,7 +652,7 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 | Variable | Oblig. | Défaut | Rôle |
 |---|---|---|---|
 | `SERVICE_FQDN_ALLOY_12347`, `SERVICE_FQDN_ALLOY_GATEWAY_4318` | selon usage | — | Domaines publics (Coolify) |
-| `FARO_API_KEY` | si Faro | — | Clé d'application Faro |
+| `FARO_API_KEY` | oui | — | Clé d'application Faro, ≥ 16 caractères (`openssl rand -hex 24`) |
 | `FARO_RATE`, `FARO_BURST`, `FARO_MAX_PAYLOAD` | non | 100 / 200 / 5MiB | Limites côté Alloy (NAT pris en compte) |
 | `ALLOY_INTERNAL_URL` | non (doc) | — | Adresse interne d'`alloy` pour les apps du même hôte (§ 3.3) |
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | non | vide | Déduction depuis l'hôte (§ 6.4) |
@@ -634,7 +664,7 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 | `PROM_ENABLE_FEATURES`, `ENABLE_EXEMPLARS` | non | vide / false | Exemplars (expérimental) |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | oui | — | Noms réels sur le réseau `coolify` (§ 3.3) |
 | `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | oui | — | Accès API pour `grafana-setup` |
-| `PROJECTS` | non | vide | Dossiers Grafana à créer |
+| `PROJECTS` | non | vide | Projets autorisés pour les logs Faro (vide : tout projet bien formé) et dossiers Grafana à créer |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_EMAILS` | plan B | — | Notifications |
 | `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT` | non | 0.05 / 1500 / 15 / 80 | Seuils d'alerte |
 | `CARDINALITY_ALERT_THRESHOLD` | non | 200000 | Seuil de séries |
@@ -728,14 +758,16 @@ Envois par `ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen`
    - depuis `evil-example.me` ou `x.example.me.attacker.com` : pas d'en-tête CORS ;
    - un seul en-tête `Access-Control-Allow-Origin` sur une réponse valide.
 4. Faro sans clé ou avec une mauvaise clé : rejet.
-5. Rafale au-delà de la limite : 429, renvoyé par Traefik.
+5. Rafale de `POST` au-delà de la limite : 429, renvoyé par Traefik, avec
+   `Access-Control-Allow-Origin`.
 6. Charge au-delà de la taille maximale : 413.
 7. **Fuite de middlewares** (Coolify #9886) :
    - `alloy` ne demande pas de Basic Auth ;
    - `alloy-gateway` ne renvoie pas d'en-tête CORS ;
    - un autre domaine public du serveur ne renvoie ni 401, ni en-tête CORS du package.
-8. `alloy` et `alloy-gateway` : aucun montage de l'hôte, utilisateur non-root, système de fichiers en
-   lecture seule (`docker inspect`).
+8. `alloy` et `alloy-gateway` : aucun montage de l'hôte hors de leur fichier de config, que leur
+   utilisateur non-root ne peut pas écrire, système de fichiers en lecture seule (`docker inspect`,
+   `docker exec`) ; montages de `node-exporter` en lecture seule.
 
 ### 12.5 Robustesse
 
@@ -844,4 +876,5 @@ messages de commit et branches en **anglais**.
    `@file` de la configuration dynamique (§ 5.4).
 3. Attributs présents sur un span Faro reçu (§ 6.5).
 4. Version de Coolify ; fichiers `content:` écrits octet pour octet sur l'hôte dans une ressource
-   Application Git ; affichage des `${…}` dans l'interface (§ 4.2).
+   Application Git, puis une config modifiée, poussée et redéployée (nouveau fichier à empreinte
+   utilisé, sort des stockages périmés) ; affichage des `${…}` dans l'interface (§ 4.2).
