@@ -45,11 +45,11 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 | Variable | Valeur |
 |---|---|
 | `IP_HASH_SALT` | Obligatoire. Au moins 16 caractères `[A-Za-z0-9]`, par exemple `openssl rand -hex 24`. |
-| `FARO_API_KEY` | Obligatoire. Clé des SDK Faro (navigateur, desktop, mobile), au moins 16 caractères : `openssl rand -hex 24`. |
+| `FARO_API_KEY` | Obligatoire. Clé des SDK Faro (navigateur, poste de travail, mobile), au moins 16 caractères : `openssl rand -hex 24`. |
 | `PROJECTS` | Projets autorisés, séparés par des virgules **sans espace** (`in-immo,autre-projet`) : logs Faro d'un autre projet rejetés, un dossier Grafana `gc-<projet>` par projet. |
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | Règles de déduction depuis l'hôte (voir plus bas). |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Noms réels sur le réseau `coolify` (étape 4). |
-| `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | URL **publique** de Grafana et token du compte de service (étape 5). |
+| `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | URL **publique** de Grafana et jeton du compte de service (étape 5). |
 
 - **`TENANT_HOST_REGEX` contient des `$`** : cocher **« Is Literal? »** sur cette variable, sinon
   Coolify tente de l'interpréter.
@@ -122,10 +122,10 @@ publie de port (`scripts/check.py` le vérifie).
 
 Dans Grafana : **Administration** → **Users and access** → **Service accounts** → créer
 `grafana-coolify` avec le rôle **Admin**, puis **Add service account token** (expiration
-conseillée : **90 jours**). Copier le token dans `GRAFANA_SA_TOKEN`.
+conseillée : **90 jours**). Copier le jeton dans `GRAFANA_SA_TOKEN`.
 
-Rotation : créer un nouveau token, remplacer `GRAFANA_SA_TOKEN`, redéployer, puis supprimer
-l'ancien token. Le token n'est jamais écrit dans les logs de `grafana-setup`.
+Rotation : créer un nouveau jeton, remplacer `GRAFANA_SA_TOKEN`, redéployer, puis supprimer
+l'ancien jeton. Le jeton n'est jamais écrit dans les logs de `grafana-setup`.
 
 ### 6. Déployer
 
@@ -158,16 +158,17 @@ GC_NODE_EXPORTER_CONTAINER=node-exporter-<uuid> python3 scripts/security.py --re
 Chaque contrôle négatif a son témoin positif, qui dépend de ces variables :
 
 - **Contrôle 1** (ports internes fermés) : le port du point d'entrée public est celui de
-  `GC_FARO_PUBLIC_URL` (443 pour `https`, sinon le port explicite de l'URL). Il doit répondre sur
+  `GC_FARO_PUBLIC_URL` (le port explicite de l'URL, sinon 443 en `https` et 80 en `http`). Il doit répondre sur
   `GC_PUBLIC_IP` avant que les ports internes soient déclarés fermés : une IP fausse ferait
   sinon passer le contrôle à tort.
 - **Contrôle 2** (révocation) : `GC_REVOKED_USER` doit être un compte dont la ligne htpasswd a
   **fonctionné**, puis a été **retirée** de la configuration dynamique. Ne poser
   `GC_REVOKED_WAS_VALID=1` qu'après ces deux étapes : un utilisateur qui n'a jamais existé reçoit
   lui aussi un 401 et ne prouve rien ; sans cette variable, le contrôle 2 échoue toujours.
-- **Contrôle 3** (CORS) : envoie une **vraie charge Faro** au point public, avec l'app
-  `gc-security` : elle arrive dans le Loki de **production**. Ces lignes sont attendues ; les
-  filtrer dans Grafana (`service_name="gc-security"`) au besoin.
+- **Contrôle 3** (CORS) : envoie une vraie requête Faro (app `gc-security`) au point public.
+  Elle traverse le Traefik et l'`alloy` de **production** (elle est comptée dans les métriques du
+  récepteur Faro), mais la charge ne contient ni log, ni événement, ni mesure, ni exception :
+  **rien n'est écrit dans Loki**.
 - **Contrôle 7** : `GC_OTHER_PUBLIC_URL` doit être un autre service routé par Traefik qui répond
   2xx sur `/api/health` (Grafana convient).
 - **Contrôle 8** (durcissement) : `GC_ALLOY_CONTAINER`, `GC_GATEWAY_CONTAINER` et
@@ -180,7 +181,9 @@ Sur le banc local, les contrôles 1, 7 et 8 sont structurels (« structural on b
 `scripts/smoke.py` interroge Loki, Tempo et Prometheus, qui ne sont joignables que depuis le
 réseau `coolify` : le lancer depuis un conteneur rattaché à ce réseau, avec les variables
 `GC_OTLP_URL`, `GC_FARO_URL`, `GC_LOKI_URL`, `GC_TEMPO_URL`, `GC_PROM_URL`,
-`GC_ALLOY_METRICS_URL` pointant vers les noms réels, et les mêmes valeurs de `HOST_MAP`,
+`GC_ALLOY_METRICS_URL` pointant vers les noms réels, `GC_GATEWAY_URL`, `GC_GATEWAY_HOST`,
+`GC_GATEWAY_USER`, `GC_GATEWAY_PASSWORD` pour la passerelle OTLP (leurs valeurs par défaut
+viennent de `.harness/edge.json`, absent sur un serveur), et les mêmes valeurs de `HOST_MAP`,
 `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` que le banc (`harness/harness.env`) sur un
 **déploiement de recette**.
 
@@ -196,7 +199,7 @@ les URL publiques Faro et OTLP : c'est la seule alerte qui survit à une panne d
 
 ### Modifier une configuration
 
-Modifier le fichier dans `config/`, relancer `python3 scripts/render.py`, committer, **`git push`
+Modifier le fichier dans `config/`, relancer `python3 scripts/render.py`, valider le commit, **`git push`
 puis Redeploy**. Aucune autre action : ni fichier à retoucher sur le serveur, ni stockage à vider
 dans Coolify.
 
@@ -226,7 +229,7 @@ retour des stockages.
 |---|---|---|
 | Serveur du **même hôte** | `ALLOY_INTERNAL_URL` (OTLP/HTTP 4318, ou gRPC 4317) | réseau `coolify` |
 | Serveur **distant** | `https://<domaine OTLP>` | `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64 projet:mot-de-passe>` |
-| Navigateur, desktop, mobile | `https://<domaine Faro>/collect` | CORS, `FARO_API_KEY`, débit, taille |
+| Navigateur, poste de travail, mobile | `https://<domaine Faro>/collect` | CORS, `FARO_API_KEY`, débit, taille |
 
 Attributs obligatoires (ressource OpenTelemetry) : `project`, `deployment.environment.name`
 (`prod` ou `preprod`), `service.name`. `tenant` en ressource ou en attribut de span selon le
@@ -253,7 +256,7 @@ client hors de `[a-z0-9-]+` ou réservé est retiré. Pour les logs Faro, `env` 
 > client (`app.name`, format validé). Le point Faro public peut donc créer de nouveaux flux Loki,
 > au rythme de la limite de débit (seule la limite de flux par défaut de Loki les borne). Garder
 > `PROJECTS` renseigné (une liste vide accepte tout projet au bon format) pour borner `project`,
-> et déclarer chaque front-end connu dans `HOST_MAP`.
+> et déclarer chaque frontal connu dans `HOST_MAP`.
 
 Noms à utiliser dans les requêtes Grafana :
 

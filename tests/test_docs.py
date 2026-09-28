@@ -28,6 +28,11 @@ class ReadmeTest(unittest.TestCase):
             "alloy-data",
             "ipStrategy",
             "structural on bench",
+            "GC_REVOKED_WAS_VALID",
+            "GC_ALLOY_CONTAINER",
+            "[card]",
+            "Risque résiduel connu",
+            "${VAR:-",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, README)

@@ -1,9 +1,9 @@
-# Spikes Coolify — checklist opérateur (plan A)
+# Spikes Coolify — liste de contrôle de l'opérateur (plan A)
 
 Ces vérifications demandent une **vraie instance Coolify** : elles ne peuvent pas être jouées par
 un agent ni par le banc natif. Les jouer **une fois** sur le serveur cible avant la mise en
 production, puis à chaque mise à jour de Coolify pour S2 et S4. Noter le résultat (date, version
-de Coolify, OK/KO, remarque) dans le tableau final et ouvrir une issue pour tout KO.
+de Coolify, OK/KO, remarque) dans le tableau final et ouvrir un ticket pour tout KO.
 
 Préparation commune :
 
@@ -66,13 +66,24 @@ l'alias nu `loki` résout (il ne doit pas être utilisé, il peut entrer en coll
    Attendu : 8/8, et en particulier le contrôle 7 (fuite de middlewares, bug
    coollabsio/coolify #9886). Rappels :
 
-   - le contrôle 1 teste d'abord le port de `GC_FARO_PUBLIC_URL` (443 en `https`) sur
+   - le contrôle 1 teste d'abord le port de `GC_FARO_PUBLIC_URL` (le port explicite de l'URL,
+     sinon 443 en `https` et 80 en `http`) sur
      `GC_PUBLIC_IP` ;
-   - pour le contrôle 2, créer une ligne htpasswd de test, vérifier qu'elle fonctionne, la
-     **retirer**, puis seulement lancer le script avec `GC_REVOKED_USER`, `GC_REVOKED_PASSWORD`
-     et `GC_REVOKED_WAS_VALID=1` (sans cette variable, le contrôle 2 échoue toujours) ;
-   - le contrôle 3 envoie une vraie charge Faro (app `gc-security`) qui arrive dans le Loki de
-     production ;
+   - pour le contrôle 2, créer une ligne htpasswd de test, vérifier qu'elle fonctionne :
+
+     ```bash
+     curl -s -o /dev/null -w '%{http_code}\n' -u ancien:'mot-de-passe' -X POST \
+       -H 'Content-Type: application/json' --data '{"resourceLogs":[]}' \
+       https://<domaine OTLP>/v1/logs
+     ```
+
+     Attendu : un code autre que `401` (normalement `200`). Puis **retirer** la ligne, vérifier
+     que la même commande renvoie `401`, et seulement alors lancer le script avec
+     `GC_REVOKED_USER`, `GC_REVOKED_PASSWORD` et `GC_REVOKED_WAS_VALID=1` (sans cette variable,
+     le contrôle 2 échoue toujours) ;
+   - le contrôle 3 envoie une vraie requête Faro (app `gc-security`) : elle traverse le Traefik
+     et l'`alloy` de production (comptée dans les métriques du récepteur Faro), mais sa charge est
+     vide et **rien n'est écrit dans Loki** ;
    - le contrôle 8 lit `GC_ALLOY_CONTAINER`, `GC_GATEWAY_CONTAINER` et
      `GC_NODE_EXPORTER_CONTAINER` (noms réels, `docker ps`).
 
@@ -90,7 +101,7 @@ Attendu, sur la ressource du span stocké : `project` (issu de `service.namespac
 `deployment.environment` ou `deployment.environment.name`), **pas** d'attribut
 `deployment.environment*`, `tenant` présent seulement s'il respecte `[a-z0-9-]+` et n'est pas
 réservé. Noter la liste complète des attributs reçus : si le SDK n'envoie pas
-`service.namespace`, ouvrir une issue (le mapping de `config/alloy/config.alloy`, transform
+`service.namespace`, ouvrir un ticket (le mapping de `config/alloy/config.alloy`, transform
 `faro`, est à ajuster).
 
 ## S4 — Fichiers `content:` écrits octet pour octet, puis modifiés (spec § 4.2, § 12.2)
@@ -117,7 +128,7 @@ exacts du commit déployé sont dans `docker-compose.yaml`
    - aucun de ces chemins n'est un dossier (`find -mindepth 2 -type d` ne liste rien) ;
    - `config-guard` affiche `config-guard: all checks passed`.
 2. Modification : en local, ajouter une ligne de commentaire à `config/loki/loki.yaml`, lancer
-   `python3 scripts/render.py`, committer, `git push`, puis **Redeploy** dans Coolify.
+   `python3 scripts/render.py`, valider le commit, `git push`, puis **Redeploy** dans Coolify.
 
    ```bash
    grep -E 'loki\.[0-9a-f]{8}\.yaml' /data/coolify/applications/<app>/docker-compose.yaml | head -n 2
@@ -173,8 +184,8 @@ Attendu :
 ### Replis `${VAR:-défaut}` conservés par Coolify
 
 Le compose donne une valeur de repli à `TEMPO_MAX_ACTIVE_SERIES` (`${TEMPO_MAX_ACTIVE_SERIES:-100000}`)
-et à `ENABLE_EXEMPLARS` (`${ENABLE_EXEMPLARS:-false}`) : Tempo ne lit pas sa configuration si
-l'une d'elles est vide.
+et à `ENABLE_EXEMPLARS` (`${ENABLE_EXEMPLARS:-false}`) : si l'une d'elles arrive vide, Tempo
+pourrait mal lire sa configuration (valeur nulle : exemplars coupés, plafond de séries à 0).
 
 1. Vérifier que Coolify garde la syntaxe de repli dans le compose qu'il écrit, puis la valeur
    reçue par Tempo :
@@ -196,9 +207,9 @@ l'une d'elles est vide.
    ```
 
    Attendu : Tempo reçoit `ENABLE_EXEMPLARS=false` (le repli `:-` couvre aussi la valeur vide) et
-   reste `Up`. Si Tempo reçoit une valeur vide et redémarre en boucle sur une erreur de lecture de
-   sa configuration, noter KO : la consigne du README devient obligatoire (ne jamais vider ces
-   variables ; les supprimer ou remettre la valeur de `.env.example`). Remettre ensuite
+   reste `Up`. Si Tempo reçoit une **chaîne vide**, qu'il redémarre ou non, noter KO : la consigne
+   du README devient obligatoire (ne jamais vider ces variables ; les supprimer ou remettre la
+   valeur de `.env.example`). Remettre ensuite
    `ENABLE_EXEMPLARS=false` et redéployer. Même vérification, si le temps le permet, avec
    `TEMPO_MAX_ACTIVE_SERIES`.
 
