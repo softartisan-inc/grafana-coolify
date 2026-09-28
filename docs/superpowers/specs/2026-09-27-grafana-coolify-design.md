@@ -1,7 +1,7 @@
 # grafana-coolify — Spécification de conception
 
 - **Date :** 2026-09-27 · **Révision :** 4 (après trois relectures critiques)
-- **Statut :** en revue
+- **Statut :** prête pour le plan, en attente de validation
 - **Auteur :** Henoc Djabia
 - **Dépôt :** `grafana-coolify` (public, licence MIT)
 
@@ -137,8 +137,8 @@ Coolify (un serveur) — réseau partagé « coolify »
   - `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL`, utilisées par
     `grafana-setup` pour créer les sources de données ;
   - `ALLOY_INTERNAL_URL`, documentée pour les applications.
-- Le README explique comment lire les noms réels dans Coolify. `GRAFANA_URL` vaut par défaut l'**URL
-  publique** de Grafana.
+- Le README explique comment lire les noms réels dans Coolify. La valeur attendue de `GRAFANA_URL`
+  est l'**URL publique** de Grafana.
 
 **Premier point du plan A, par un spike :** vérifier la résolution des noms depuis le conteneur
 Grafana, sur une vraie instance.
@@ -399,7 +399,7 @@ otelcol.receiver.otlp ◄┘─► memory_limiter ─► transform (env court, m
                                                                                   ├─ traces  ─► Tempo      (OTLP)
                                                                                   ├─ logs    ─► Loki       (/otlp/v1/logs)
                                                                                   └─ metrics ─► Prometheus (/api/v1/otlp/v1/metrics)
-faro.receiver ─┬─ traces ─► transform (validation tenant/env, masquage) ─► filter ─► batch ─► Tempo
+faro.receiver ─┬─ traces ─► transform (env court, validation tenant/env, masquage) ─► filter ─► batch ─► Tempo
                └─ logs   ─► loki.process (déduction hôte § 6.4, stage.replace, stage.drop) ─► loki.write ─► Loki
 ```
 
@@ -692,7 +692,8 @@ Envois par `ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen`
 3. Trace Faro avec un `tenant` au mauvais format ou réservé : l'attribut est retiré (§ 6.5).
 4. Masquage :
    - email, `Bearer`, numéro de carte : masqués ;
-   - un **epoch en millisecondes n'est pas** masqué en `[card]` ;
+   - un **epoch en millisecondes** placé sous une clé exclue (`*timestamp*`, `*_ms`) n'est **pas**
+     masqué en `[card]` ; le même nombre dans `message` l'est (comportement attendu, documenté) ;
    - la même IP donne la **même empreinte** dans un log Faro et dans un log OTLP.
 5. Envoi sans `project` : absent du stockage, compteurs du § 6.3 incrémentés.
 6. Span-metrics dans Prometheus avec `tenant`, que `tenant` soit un attribut de **ressource** ou de
