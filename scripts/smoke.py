@@ -406,6 +406,28 @@ def otlp_metrics(c):
     expect("service_name" not in metric, f"service.name promoted as a duplicate label: {metric}")
 
 
+@section("correlation")
+def correlation(c):
+    """12.3.10: from a log of each path, trace_id finds the trace; from the trace, the logs."""
+    sys.path.insert(0, str(g.ROOT / "config" / "grafana-setup"))
+    import setup  # noqa: PLC0415 - the query Grafana is provisioned with
+
+    trace_id = g.new_trace_id()
+    resource = c.resource("corr")
+    g.send_otlp(c.s["GC_OTLP_URL"], "traces", g.otlp_traces(resource, [g.span(trace_id, "server")]))
+    g.send_otlp(c.s["GC_OTLP_URL"], "logs", g.otlp_logs(resource, f"otlp-corr-{c.run}", trace_id=trace_id))
+    faro = g.faro_payload(c.faro_app(environment="prod"), "https://inconnu.autre.org/", logs=[g.faro_log(f"faro-corr-{c.run}", trace_id=trace_id)])
+    g.send_faro(c.s["GC_FARO_URL"], faro, c.s["FARO_API_KEY"])
+    for token in (f"otlp-corr-{c.run}", f"faro-corr-{c.run}"):
+        _labels, _line, meta = c.wait_logs(f'{{project=~"{c.project}|{c.faro_project}"}} |= "{token}"')[0]
+        expect(meta.get("trace_id") == trace_id, f"{token}: trace_id metadata {meta}")
+        expect(c.wait_trace(meta["trace_id"]), f"{token}: trace not found from the log")
+    query = setup.TRACE_TO_LOGS_QUERY.replace("${__trace.traceId}", trace_id)
+    lines = [line for _l, line, _m in c.wait_logs(query, count=2)]
+    expect(any(f"otlp-corr-{c.run}" in line for line in lines), f"trace -> logs misses the OTLP log: {lines}")
+    expect(any(f"faro-corr-{c.run}" in line for line in lines), f"trace -> logs misses the Faro log: {lines}")
+
+
 @section("retention")
 def retention(c):
     """12.3.11: effective retention of Loki, Tempo and Prometheus matches the variables."""
