@@ -244,12 +244,12 @@ défaut. Hypothèse de taille : **1 à 4 Kio par enregistrement de log**, soit d
 passer, trop près de la fenêtre d'une heure. `config/loki/loki.yaml` fixe donc
 `per_stream_rate_limit: 8MB` et `per_stream_rate_limit_burst: 24MB` : la **moitié** du débit du
 tenant, soit ~4 min pour 2 Gio et ~17 min pour 8 Gio sur un seul flux, sans qu'un flux (rattrapage,
-flux Faro bruyant) puisse prendre tout le budget des autres. Loki lit `24MB` en octets décimaux
-(24 000 000 octets, ~22,9 Mio) : la rafale contient deux lots complets de 8 Mio (4 Kio par
-enregistrement ; un envoi plus gros que la rafale ne passerait jamais) et une marge de ~6,9 Mio,
-ou les 10 envois concurrents à 1 Kio par enregistrement (~20 Mio), et reste sous celle du tenant
-(32 Mo). Trois lots de 8 Mio (24 Mio) n'y tiendraient pas. Au-delà de ces hypothèses (enregistrements plus gros, plus de 8 Gio en attente sur
-un seul flux), des lots peuvent encore être abandonnés : raccourcir la panne ou relever ces
+flux Faro bruyant) puisse prendre tout le budget des autres. Loki lit les tailles en unités
+binaires (`24MB` = 24 Mio ; les `*_mb` aussi) : la rafale contient trois des plus gros lots
+(3 × 8 Mio à 4 Kio par enregistrement ; un envoi plus gros que la rafale ne passerait jamais), les
+10 envois concurrents à 1 Kio par enregistrement (~20 Mio), et reste sous celle du tenant
+(32 Mio). Au-delà de ces hypothèses (enregistrements plus gros, plus de 8 Gio en attente sur un
+seul flux), des lots peuvent encore être abandonnés : raccourcir la panne ou relever ces
 plafonds ensemble.
 
 ## Envoyer des données

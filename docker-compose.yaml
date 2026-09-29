@@ -18,7 +18,7 @@ services:
       - -c
       - "echo 'f7d19c390dc0d92af9432e13af41d7c4bbb83bf78f09446b340e9c79d8e56e6f  /opt/config-guard/guard.f7d19c39.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.f7d19c39.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.4db78d01.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.3ce0bbc1.yaml=3ce0bbc18913d8d75ce237a88983915e0ff98e7c1470a7f08d5764f94df4aa82;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.4db78d01.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.f3b7d18c.yaml=f3b7d18c78174732ad73f9b56eecbc7575353a4f968dbeb666dfe31c13fc982d;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -150,7 +150,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - -config.file=/etc/loki/loki.3ce0bbc1.yaml
+      - -config.file=/etc/loki/loki.f3b7d18c.yaml
       - -config.expand-env=true
     environment:
       BIND_ADDR: 0.0.0.0
@@ -159,8 +159,8 @@ services:
       LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-168h}
     volumes:
       - type: bind
-        source: ./config/loki/loki.3ce0bbc1.yaml
-        target: /etc/loki/loki.3ce0bbc1.yaml
+        source: ./config/loki/loki.f3b7d18c.yaml
+        target: /etc/loki/loki.f3b7d18c.yaml
         content: |2
           # Loki single-binary configuration for grafana-coolify.
           # Environment variables are expanded by Loki itself (-config.expand-env=true); compose.template.yaml
@@ -232,10 +232,9 @@ services:
             # 10 consumers get 429s, back off, and 8 GiB would need ~45 min, too close to the 1 h retry
             # window. 8 MB/s = half the tenant rate: one stream drains 2 GiB in ~4 min and 8 GiB in
             # ~17 min, and can never take the whole tenant budget from the others (a replay, a noisy Faro
-            # stream). Burst 24MB, read as decimal bytes (24,000,000 B, ~22.9 MiB): two full batches of the
-            # largest size (2 x 8 MiB at 4 KiB per record; a push above the burst could never succeed) plus
-            # a ~6.9 MiB margin, or the 10 concurrent pushes at 1 KiB per record (~20 MiB), and within the
-            # tenant burst (32 MB). Three of the largest batches (24 MiB) would not fit.
+            # stream). Burst 24MB (Loki's ByteSize is binary: 24 MiB): three of the largest batches
+            # (3 x 8 MiB at 4 KiB per record; a push above the burst could never succeed), the 10 concurrent
+            # pushes at 1 KiB per record (~20 MiB), and within the tenant burst (32 MiB; *_mb are also 2^20).
             per_stream_rate_limit: 8MB
             per_stream_rate_limit_burst: 24MB
             # Every env except prod falls back to the short default (spec 9.1).

@@ -7,15 +7,13 @@ import yaml
 from support import ROOT, binary, run, validator_env
 
 CONFIG = ROOT / "config" / "loki" / "loki.yaml"
-MB = 10**6
 MIB = 2**20
 
 
 def parse_loki_bytes(value):
-    """Size as Loki reads it (humanize.ParseBytes): "MB" decimal, "MiB" binary."""
-    for suffix, unit in (("MiB", MIB), ("MB", MB)):
-        if value.endswith(suffix):
-            return int(value.removesuffix(suffix)) * unit
+    """Size as Loki reads it (flagext.ByteSize, c2h5oh/datasize): "MB" is 2^20; "MiB" is rejected."""
+    if value.endswith("MB") and value.removesuffix("MB").isdigit():
+        return int(value.removesuffix("MB")) * MIB
     raise ValueError(f"unexpected size unit: {value!r}")
 
 
@@ -73,19 +71,16 @@ class LokiConfigTest(unittest.TestCase):
         rate = int(limits["per_stream_rate_limit"].removesuffix("MB"))
         # Half the tenant rate: one stream (a replayed backlog, a Faro stream) cannot starve the others.
         self.assertEqual(rate * 2, limits["ingestion_rate_mb"])
-        # Loki parses per-stream sizes with humanize.ParseBytes: "MB" is decimal (10**6), "MiB" binary.
+        # Loki's ByteSize is binary (c2h5oh/datasize): "24MB" is 24 MiB; *_mb are also x 2^20.
         burst = parse_loki_bytes(limits["per_stream_rate_limit_burst"])
-        self.assertEqual(burst, 24 * MB)
-        # Records of 1 to 4 KiB, 2048 per batch: batches of 2 to 8 MiB. The burst holds two full
-        # 8 MiB batches, or 10 concurrent 2 MiB batches, and nothing more is claimed: three 8 MiB
-        # batches (24 MiB = 25.2 MB) do not fit.
-        need = max(2 * 8 * MIB, 10 * 2 * MIB)
+        # Records of 1 to 4 KiB, 2048 per batch: batches of 2 to 8 MiB. The burst holds three of
+        # the largest (8 MiB) and the 10 concurrent 2 MiB pushes.
+        need = max(3 * 8 * MIB, 10 * 2 * MIB)
         self.assertGreaterEqual(burst, need)
-        self.assertLess(burst, 3 * 8 * MIB)
-        # The check bites: a burst below the stated need (e.g. 20MB = 19.07 MiB) fails it.
+        # The check bites: a burst below the stated need (20MB = 20 MiB) fails it.
         self.assertLess(parse_loki_bytes("20MB"), need)
-        # Within the tenant burst, taken at its lower (decimal) reading, whatever unit Loki uses for *_mb.
-        self.assertLessEqual(burst, limits["ingestion_burst_size_mb"] * MB)
+        # Within the tenant burst.
+        self.assertLessEqual(burst, limits["ingestion_burst_size_mb"] * MIB)
 
     def test_binds_to_bind_addr_and_ring_is_local(self):
         doc = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))

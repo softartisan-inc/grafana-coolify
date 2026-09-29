@@ -68,10 +68,9 @@ limits_config:
   # 10 consumers get 429s, back off, and 8 GiB would need ~45 min, too close to the 1 h retry
   # window. 8 MB/s = half the tenant rate: one stream drains 2 GiB in ~4 min and 8 GiB in
   # ~17 min, and can never take the whole tenant budget from the others (a replay, a noisy Faro
-  # stream). Burst 24MB, read as decimal bytes (24,000,000 B, ~22.9 MiB): two full batches of the
-  # largest size (2 x 8 MiB at 4 KiB per record; a push above the burst could never succeed) plus
-  # a ~6.9 MiB margin, or the 10 concurrent pushes at 1 KiB per record (~20 MiB), and within the
-  # tenant burst (32 MB). Three of the largest batches (24 MiB) would not fit.
+  # stream). Burst 24MB (Loki's ByteSize is binary: 24 MiB): three of the largest batches
+  # (3 x 8 MiB at 4 KiB per record; a push above the burst could never succeed), the 10 concurrent
+  # pushes at 1 KiB per record (~20 MiB), and within the tenant burst (32 MiB; *_mb are also 2^20).
   per_stream_rate_limit: 8MB
   per_stream_rate_limit_burst: 24MB
   # Every env except prod falls back to the short default (spec 9.1).
