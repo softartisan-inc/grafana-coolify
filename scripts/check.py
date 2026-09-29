@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Static checks of spec 12.1. Standard library only; external tools: docker compose and .bin/.
 
-Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint,dashboards]
+Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint,dashboards,bundle]
 """
 
 import argparse
 import functools
+import hashlib
 import json
 import os
 import re
@@ -34,6 +35,7 @@ SECRET_RE = re.compile(
 BARE_SECRET_RE = re.compile(r"[A-Za-z0-9+/_=.-]+")
 # Bare YAML/dotenv values that are not secrets.
 NOT_SECRETS = {"true", "false", "null", "none", "yes", "no", "~"}
+TAG_RE = re.compile(r"^grafana-setup-content-v[1-9][0-9]*$")
 
 
 def env_example_keys(text):
@@ -128,6 +130,42 @@ def target_collisions(mounts):
     for service, target in mounts:
         services.setdefault(target, []).append(service)
     return [f"{target}: content target of {', '.join(names)}" for target, names in sorted(services.items()) if len(names) > 1]
+
+
+def bundle_errors(tag, files, git_show, tag_exists):
+    """Errors of the grafana-setup content tag (spec 4.3): `tag` must be a grafana-setup-content-v<N>
+    tag of this repository holding every file of `files` ([(path under config/grafana-setup/,
+    sha256)]) byte for byte.
+
+    git_show(tag, path) -> bytes or None; tag_exists(tag) -> bool.
+    """
+    if not TAG_RE.match(tag or ""):
+        return [f"GRAFANA_SETUP_TAG={tag!r} must look like grafana-setup-content-v<N>"]
+    if not tag_exists(tag):
+        return [f"tag {tag} absent: create it on the final commit (git tag -a {tag} -m ...) and push it with the branch"]
+    errors = []
+    for path, digest in files:
+        data = git_show(tag, f"{render.GRAFANA_SETUP_DIR}/{path}")
+        if data is None:
+            errors.append(f"{path}: absent from tag {tag}: move the unpushed tag, or bump the tag suffix")
+        elif hashlib.sha256(data).hexdigest() != digest:
+            errors.append(f"{path}: differs between tag {tag} and the working tree: move the unpushed tag, or bump the tag suffix")
+    return errors
+
+
+def git_show(tag, path):
+    result = subprocess.run(["git", "show", f"refs/tags/{tag}:{path}"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    return result.stdout if result.returncode == 0 else None
+
+
+def git_tag_exists(tag):
+    result = subprocess.run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}^{{commit}}"], cwd=ROOT, capture_output=True, check=False)
+    return result.returncode == 0
+
+
+def git_is_shallow():
+    result = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=ROOT, capture_output=True, text=True, check=False)
+    return result.stdout.strip() == "true"
 
 
 def tool(name):
@@ -282,6 +320,14 @@ def check_dashboards():
     return [] if code == 0 else [output.strip()]
 
 
+def check_bundle():
+    tag = render.load_versions(ROOT / "tools" / "versions.env").get("GRAFANA_SETUP_TAG", "")
+    if not git_tag_exists(tag) and git_is_shallow():
+        print(f"    skipped: tag {tag} absent from this shallow clone (git fetch --unshallow --tags to check it)")
+        return []
+    return bundle_errors(tag, render.grafana_setup_files(ROOT), git_show, git_tag_exists)
+
+
 CHECKS = {
     "render": check_render,
     "size": check_size,
@@ -294,6 +340,7 @@ CHECKS = {
     "validators": check_validators,
     "lint": check_lint,
     "dashboards": check_dashboards,
+    "bundle": check_bundle,
 }
 
 
