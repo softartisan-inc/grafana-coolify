@@ -141,16 +141,24 @@ def attrs(values):
     return [{"key": key, "value": any_value(value)} for key, value in values.items()]
 
 
-def otlp_logs(resource, body, attributes=None, trace_id=None, span_id=None, severity="INFO"):
+def scoped(key, items, scope=None):
+    """One scopeLogs/scopeSpans entry; `scope` (attributes of the instrumentation scope) is optional."""
+    entry = {key: items}
+    if scope is not None:
+        entry["scope"] = {"name": "gc-smoke", "attributes": attrs(scope)}
+    return entry
+
+
+def otlp_logs(resource, body, attributes=None, trace_id=None, span_id=None, severity="INFO", scope=None):
     record = {"timeUnixNano": str(now_ns()), "severityText": severity, "body": any_value(body), "attributes": attrs(attributes or {})}
     if trace_id:
         record["traceId"] = trace_id
         record["spanId"] = span_id or new_span_id()
-    return {"resourceLogs": [{"resource": {"attributes": attrs(resource)}, "scopeLogs": [{"logRecords": [record]}]}]}
+    return {"resourceLogs": [{"resource": {"attributes": attrs(resource)}, "scopeLogs": [scoped("logRecords", [record], scope)]}]}
 
 
-def otlp_traces(resource, spans):
-    return {"resourceSpans": [{"resource": {"attributes": attrs(resource)}, "scopeSpans": [{"spans": spans}]}]}
+def otlp_traces(resource, spans, scope=None):
+    return {"resourceSpans": [{"resource": {"attributes": attrs(resource)}, "scopeSpans": [scoped("spans", spans, scope)]}]}
 
 
 def span(trace_id, name, attributes=None, span_id=None, kind=2, events=None):

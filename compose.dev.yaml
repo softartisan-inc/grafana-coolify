@@ -26,7 +26,7 @@ services:
       - -c
       - "echo 'f7d19c390dc0d92af9432e13af41d7c4bbb83bf78f09446b340e9c79d8e56e6f  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=f3d3e206b9b351862ea5a800b549ec6a0426641338abd22ac5cd4a5f5ac53319;/guard/grafana-setup/setup.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.yaml=ca0bfb1737c267419c3de802bff2182a25eeaaaef122333c01aaed54b7859f95;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.yaml=e42749aaa3aec89f11e43db5cf94277fa3d5a814ee1809cfd7ce683a25333d43;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}

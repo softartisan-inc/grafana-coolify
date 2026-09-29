@@ -18,7 +18,7 @@ services:
       - -c
       - "echo 'f7d19c390dc0d92af9432e13af41d7c4bbb83bf78f09446b340e9c79d8e56e6f  /opt/config-guard/guard.f7d19c39.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.f7d19c39.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.f3d3e206.alloy=f3d3e206b9b351862ea5a800b549ec6a0426641338abd22ac5cd4a5f5ac53319;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.ca0bfb17.yaml=ca0bfb1737c267419c3de802bff2182a25eeaaaef122333c01aaed54b7859f95;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.4db78d01.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.e42749aa.yaml=e42749aaa3aec89f11e43db5cf94277fa3d5a814ee1809cfd7ce683a25333d43;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -150,7 +150,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - -config.file=/etc/loki/loki.ca0bfb17.yaml
+      - -config.file=/etc/loki/loki.e42749aa.yaml
       - -config.expand-env=true
     environment:
       BIND_ADDR: 0.0.0.0
@@ -159,8 +159,8 @@ services:
       LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-168h}
     volumes:
       - type: bind
-        source: ./config/loki/loki.ca0bfb17.yaml
-        target: /etc/loki/loki.ca0bfb17.yaml
+        source: ./config/loki/loki.e42749aa.yaml
+        target: /etc/loki/loki.e42749aa.yaml
         content: |2
           # Loki single-binary configuration for grafana-coolify.
           # Environment variables are expanded by Loki itself (-config.expand-env=true); compose.template.yaml
@@ -225,6 +225,18 @@ services:
             # 10 concurrent pushes.
             ingestion_rate_mb: 16
             ingestion_burst_size_mb: 32
+            # Per-stream rate: Loki's default 3 MB/s (burst 15 MB) applies to each (project, env,
+            # service_name) stream, whatever the tenant budget. A backlog is often one stream (the service
+            # that logged during the outage). Record size hypothesis: 1 to 4 KiB per log record, so a batch
+            # of 2048 records weighs 2 to 8 MiB and a full queue (1000 batches) 2 to 8 GiB. At 3 MB/s the
+            # 10 consumers get 429s, back off, and 8 GiB would need ~45 min, too close to the 1 h retry
+            # window. 8 MB/s = half the tenant rate: one stream drains 2 GiB in ~4 min and 8 GiB in
+            # ~17 min, and can never take the whole tenant budget from the others (a replay, a noisy Faro
+            # stream). Burst 24 MB: at least 3 of the largest batches (8 MiB at 4 KiB per record; a push
+            # above the burst could never succeed), the 10 concurrent pushes at 1 KiB per record
+            # (~20 MiB), and within the tenant burst (32 MB).
+            per_stream_rate_limit: 8MB
+            per_stream_rate_limit_burst: 24MB
             # Every env except prod falls back to the short default (spec 9.1).
             retention_period: ${LOKI_RETENTION_DEFAULT}
             retention_stream:
@@ -470,7 +482,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.f3d3e206.alloy
+      - /etc/alloy/config.4db78d01.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -490,8 +502,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.f3d3e206.alloy
-        target: /etc/alloy/config.f3d3e206.alloy
+        source: ./config/alloy/config.4db78d01.alloy
+        target: /etc/alloy/config.4db78d01.alloy
         content: |2
           // grafana-coolify - main Alloy pipeline (spec 7.1).
           // In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
@@ -539,7 +551,18 @@ services:
 
           // 1. Short env: deployment.environment.name (or legacy deployment.environment) -> env,
           //    original attribute deleted (spec 6.1).
-          // 2. Masking safety net (spec 8.1), same rule set on every attribute map and on a map log body:
+          // 2. Masking safety net (spec 8.1), same rule set on every attribute map (resource, scope, span,
+          //    span event, log, data point) and on a map log body:
+          //    - every such map is flattened (flatten, stable): nested maps and arrays become dotted
+          //      leaves (user.profile.email, tags.0), so the rules below reach them; replace_all_patterns
+          //      only rewrites string values, and walking a slice element-wise needs lambdas (alpha,
+          //      ottl.functions.enableLambda gate). Scalar types are kept. No resolveConflicts: it would
+          //      name array elements k, k.0, k.1 instead of k.0, k.1, k.2; a literal dotted key equal to a
+          //      nested path keeps one of the two values (both masked). An attribute map is masked on a
+          //      flattened copy (cache["flat"]) and written back only when a rule changed it
+          //      (pcommon.Map.Equal): clean data keeps its shape (process.command_args, header arrays),
+          //      a masked map is stored flattened. The map log body is flattened in place; a list log
+          //      body becomes its JSON text first;
           //    - secret keys are deleted, whatever the value type (replace_all_patterns only rewrites
           //      strings, and http.request.header.* are arrays). A key is secret when one of the words
           //      authorization, cookie(s), password(s), passwd, token, secret(s), api_key/api-key/apikey
@@ -550,11 +573,12 @@ services:
           //    - in string values: Bearer tokens and key=value / "key":"value" secrets (same key rule)
           //      -> [redacted], emails -> [email];
           //    - card numbers -> [card] in free text only (string body, message, exception.*,
-          //      span status message), before IP hashing so a digest is never rewritten;
+          //      error.message, span status message), before IP hashing so a digest is never rewritten;
           //    - IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip), except under keys holding a version or a user
           //      agent (a browser version 128.0.0.0 is not an address).
-          //    Residual: a map body is masked at its top level only; nested maps and arrays (in the body
-          //    or in attributes) pass unchanged, OTTL having no stable function that walks them.
+          //    Residual: card numbers are only looked for under the free-text keys above (after
+          //    flattening: message, exception.*, error.message at any depth of that exact dotted name);
+          //    a masked attribute map changes shape (k -> k.0, k.1) in Tempo, Loki and Prometheus.
           //    Regexes are RE2; backticks are Alloy raw strings.
           otelcol.processor.transform "default" {
             // Fail-open trade-off: a statement that errors on one item (unexpected type, bad value) is
@@ -570,29 +594,55 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
-                `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
-                `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-                `set(cache["ip"], resource.attributes)`,
+                `set(cache["flat"], resource.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `set(cache["ip"], cache["flat"])`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
-                `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(resource.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
+              ]
+            }
+            trace_statements {
+              context    = "scope"
+              statements = [
+                `set(cache["flat"], scope.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `set(cache["ip"], cache["flat"])`,
+                `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+                `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(scope.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
               ]
             }
             trace_statements {
               context    = "span"
               statements = [
-                `delete_matching_keys(span.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
-                `replace_all_patterns(span.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(span.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
-                `replace_all_patterns(span.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-                `replace_pattern(span.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.message"] != nil`,
-                `replace_pattern(span.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where span.attributes["exception.stacktrace"] != nil`,
-                `set(cache["ip"], span.attributes)`,
+                `set(cache["flat"], span.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `replace_pattern(cache["flat"]["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["exception.message"] != nil`,
+                `replace_pattern(cache["flat"]["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["exception.stacktrace"] != nil`,
+                `replace_pattern(cache["flat"]["error.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["error.message"] != nil`,
+                `set(cache["ip"], cache["flat"])`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
-                `merge_maps(span.attributes, cache["ip"], "upsert")`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(span.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
                 `replace_pattern(span.status.message, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
                 `replace_pattern(span.status.message, "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
                 `replace_pattern(span.status.message, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
@@ -603,16 +653,21 @@ services:
             trace_statements {
               context    = "spanevent"
               statements = [
-                `delete_matching_keys(spanevent.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
-                `replace_all_patterns(spanevent.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(spanevent.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
-                `replace_all_patterns(spanevent.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-                `replace_pattern(spanevent.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.message"] != nil`,
-                `replace_pattern(spanevent.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where spanevent.attributes["exception.stacktrace"] != nil`,
-                `set(cache["ip"], spanevent.attributes)`,
+                `set(cache["flat"], spanevent.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `replace_pattern(cache["flat"]["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["exception.message"] != nil`,
+                `replace_pattern(cache["flat"]["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["exception.stacktrace"] != nil`,
+                `replace_pattern(cache["flat"]["error.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["error.message"] != nil`,
+                `set(cache["ip"], cache["flat"])`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
-                `merge_maps(spanevent.attributes, cache["ip"], "upsert")`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(spanevent.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
               ]
             }
             log_statements {
@@ -622,24 +677,47 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
-                `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
-                `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-                `set(cache["ip"], resource.attributes)`,
+                `set(cache["flat"], resource.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `set(cache["ip"], cache["flat"])`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
-                `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(resource.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
+              ]
+            }
+            log_statements {
+              context    = "scope"
+              statements = [
+                `set(cache["flat"], scope.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `set(cache["ip"], cache["flat"])`,
+                `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+                `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(scope.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
               ]
             }
             log_statements {
               context    = "log"
               statements = [
+                `set(log.body, String(log.body)) where IsList(log.body)`,
                 `replace_pattern(log.body, "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsString(log.body)`,
                 `replace_pattern(log.body, "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsString(log.body)`,
                 `replace_pattern(log.body, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]") where IsString(log.body)`,
                 `replace_pattern(log.body, "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsString(log.body)`,
                 `replace_pattern(log.body, "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsString(log.body)`,
+                `flatten(log.body) where IsMap(log.body)`,
                 `delete_matching_keys(log.body, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$") where IsMap(log.body)`,
                 `replace_all_patterns(log.body, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]") where IsMap(log.body)`,
                 `replace_all_patterns(log.body, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]") where IsMap(log.body)`,
@@ -647,21 +725,27 @@ services:
                 `replace_pattern(log.body["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
                 `replace_pattern(log.body["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
                 `replace_pattern(log.body["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
+                `replace_pattern(log.body["error.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where IsMap(log.body)`,
                 `set(cache["body_ip"], log.body) where IsMap(log.body)`,
                 `delete_matching_keys(cache["body_ip"], "(?i).*(version|user_agent).*") where IsMap(log.body)`,
                 `replace_all_patterns(cache["body_ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256) where IsMap(log.body)`,
                 `merge_maps(log.body, cache["body_ip"], "upsert") where IsMap(log.body)`,
-                `delete_matching_keys(log.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
-                `replace_all_patterns(log.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(log.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
-                `replace_all_patterns(log.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-                `replace_pattern(log.attributes["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["message"] != nil`,
-                `replace_pattern(log.attributes["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.message"] != nil`,
-                `replace_pattern(log.attributes["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where log.attributes["exception.stacktrace"] != nil`,
-                `set(cache["ip"], log.attributes)`,
+                `set(cache["flat"], log.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `replace_pattern(cache["flat"]["message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["message"] != nil`,
+                `replace_pattern(cache["flat"]["exception.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["exception.message"] != nil`,
+                `replace_pattern(cache["flat"]["exception.stacktrace"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["exception.stacktrace"] != nil`,
+                `replace_pattern(cache["flat"]["error.message"], "\\b(?:\\d[ -]?){12,18}\\d\\b", "[card]") where cache["flat"]["error.message"] != nil`,
+                `set(cache["ip"], cache["flat"])`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
-                `merge_maps(log.attributes, cache["ip"], "upsert")`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(log.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
               ]
             }
             metric_statements {
@@ -671,27 +755,52 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
-                `delete_matching_keys(resource.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
-                `replace_all_patterns(resource.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
-                `replace_all_patterns(resource.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-                `set(cache["ip"], resource.attributes)`,
+                `set(cache["flat"], resource.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `set(cache["ip"], cache["flat"])`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
-                `merge_maps(resource.attributes, cache["ip"], "upsert")`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(resource.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
+              ]
+            }
+            metric_statements {
+              context    = "scope"
+              statements = [
+                `set(cache["flat"], scope.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `set(cache["ip"], cache["flat"])`,
+                `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
+                `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(scope.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
               ]
             }
             metric_statements {
               context    = "datapoint"
               statements = [
-                `delete_matching_keys(datapoint.attributes, "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
-                `replace_all_patterns(datapoint.attributes, "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
-                `replace_all_patterns(datapoint.attributes, "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
-                `replace_all_patterns(datapoint.attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
-                `set(cache["ip"], datapoint.attributes)`,
+                `set(cache["flat"], datapoint.attributes)`,
+                `flatten(cache["flat"])`,
+                `set(cache["orig"], cache["flat"])`,
+                `delete_matching_keys(cache["flat"], "^.*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-].*|[A-Z].*)?$")`,
+                `replace_all_patterns(cache["flat"], "value", "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "\\b([\\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\\w-]*|[A-Z][\\w-]*)?)(\\x22?\\s*[:=]\\s*\\x22?)(?:(?i:basic|digest|token|apikey)\\s+)?[^\\s\\x22&,;]+", "${1}${2}[redacted]")`,
+                `replace_all_patterns(cache["flat"], "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "[email]")`,
+                `set(cache["ip"], cache["flat"])`,
                 `delete_matching_keys(cache["ip"], "(?i).*(version|user_agent).*")`,
                 `replace_all_patterns(cache["ip"], "value", "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)", "` + sys.env("IP_HASH_SALT") + `${0}", SHA256)`,
-                `merge_maps(datapoint.attributes, cache["ip"], "upsert")`,
+                `merge_maps(cache["flat"], cache["ip"], "upsert")`,
+                `set(datapoint.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
               ]
             }
 

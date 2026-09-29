@@ -61,6 +61,18 @@ limits_config:
   # 10 concurrent pushes.
   ingestion_rate_mb: 16
   ingestion_burst_size_mb: 32
+  # Per-stream rate: Loki's default 3 MB/s (burst 15 MB) applies to each (project, env,
+  # service_name) stream, whatever the tenant budget. A backlog is often one stream (the service
+  # that logged during the outage). Record size hypothesis: 1 to 4 KiB per log record, so a batch
+  # of 2048 records weighs 2 to 8 MiB and a full queue (1000 batches) 2 to 8 GiB. At 3 MB/s the
+  # 10 consumers get 429s, back off, and 8 GiB would need ~45 min, too close to the 1 h retry
+  # window. 8 MB/s = half the tenant rate: one stream drains 2 GiB in ~4 min and 8 GiB in
+  # ~17 min, and can never take the whole tenant budget from the others (a replay, a noisy Faro
+  # stream). Burst 24 MB: at least 3 of the largest batches (8 MiB at 4 KiB per record; a push
+  # above the burst could never succeed), the 10 concurrent pushes at 1 KiB per record
+  # (~20 MiB), and within the tenant burst (32 MB).
+  per_stream_rate_limit: 8MB
+  per_stream_rate_limit_burst: 24MB
   # Every env except prod falls back to the short default (spec 9.1).
   retention_period: ${LOKI_RETENTION_DEFAULT}
   retention_stream:

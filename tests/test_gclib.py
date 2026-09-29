@@ -41,6 +41,16 @@ class OtlpValueTest(unittest.TestCase):
         record = gclib.otlp_logs({}, "line")["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
         self.assertEqual(record["body"], {"stringValue": "line"})
 
+    def test_scope_attributes_of_logs_and_traces(self):
+        scope_logs = gclib.otlp_logs({}, "line", scope={"owner": "a"})["resourceLogs"][0]["scopeLogs"][0]
+        scope_spans = gclib.otlp_traces({}, [], scope={"owner": "a"})["resourceSpans"][0]["scopeSpans"][0]
+        for scope in (scope_logs["scope"], scope_spans["scope"]):
+            self.assertEqual(scope["attributes"], [{"key": "owner", "value": {"stringValue": "a"}}])
+            self.assertTrue(scope["name"])
+
+    def test_no_scope_by_default(self):
+        self.assertNotIn("scope", gclib.otlp_logs({}, "line")["resourceLogs"][0]["scopeLogs"][0])
+
 
 if __name__ == "__main__":
     unittest.main()
