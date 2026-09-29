@@ -184,6 +184,11 @@ def cmd_up(_args):
                 "GF_ANALYTICS_REPORTING_ENABLED": "false",
                 "GF_ANALYTICS_CHECK_FOR_UPDATES": "false",
                 "GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES": "false",
+                # Bench only: SQLite under test load answers "database is locked" (HTTP 500);
+                # WAL and query retries (conf/defaults.ini, [database]) make that rare.
+                "GF_DATABASE_WAL": "true",
+                "GF_DATABASE_QUERY_RETRIES": "10",
+                "GF_DATABASE_TRANSACTION_RETRIES": "20",
                 "GF_SMTP_ENABLED": "true",
                 "GF_SMTP_HOST": f"{sink.SINK_IP}:{sink.SMTP_PORT}",
                 "GF_SMTP_FROM_ADDRESS": "grafana@gc.test",
