@@ -1,0 +1,256 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Détail par route et logs d'erreur liés.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (service, http_route) (rate(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{http_route}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Débit par route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (service, http_route) (rate(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{http_route}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Erreurs par route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "1000 * histogram_quantile(0.95, sum by (le, service, http_route) (rate(traces_spanmetrics_latency_bucket{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[$__rate_interval])))",
+          "legendFormat": "{{service}} {{http_route}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Latence p95 par route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "description": "Chaque log porte trace_id : le lien « Trace » ouvre la trace dans Tempo.",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 4,
+      "options": {
+        "enableLogDetails": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "{project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | detected_level=~\"error|fatal|critical\" | tenant=~\"$tenant\"",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs d'erreur",
+      "type": "logs"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "tags": [
+    "grafana-coolify"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "gc-prometheus"
+        },
+        "definition": "label_values(traces_spanmetrics_calls_total, project)",
+        "includeAll": true,
+        "label": "project",
+        "multi": false,
+        "name": "project",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_spanmetrics_calls_total, project)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "gc-prometheus"
+        },
+        "definition": "label_values(traces_spanmetrics_calls_total{project=~\"$project\"}, env)",
+        "includeAll": true,
+        "label": "env",
+        "multi": true,
+        "name": "env",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_spanmetrics_calls_total{project=~\"$project\"}, env)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "gc-prometheus"
+        },
+        "definition": "label_values(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\"}, service)",
+        "includeAll": true,
+        "label": "service",
+        "multi": true,
+        "name": "service",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\"}, service)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "gc-prometheus"
+        },
+        "definition": "label_values(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\"}, tenant)",
+        "includeAll": true,
+        "label": "tenant",
+        "multi": true,
+        "name": "tenant",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\"}, tenant)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Erreurs et latence par service",
+  "uid": "gc-service"
+}

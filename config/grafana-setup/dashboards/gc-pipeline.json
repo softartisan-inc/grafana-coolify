@@ -1,0 +1,314 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Ingestion, rejets, file d'envoi et santé de Loki, Tempo et Prometheus.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(otelcol_receiver_accepted_spans_total{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "spans",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(otelcol_receiver_accepted_log_records_total{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "logs",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "points de métriques",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Ingestion OTLP (alloy)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(faro_receiver_logs_total[$__rate_interval]))",
+          "legendFormat": "logs",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(faro_receiver_exceptions_total[$__rate_interval]))",
+          "legendFormat": "exceptions",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(faro_receiver_measurements_total[$__rate_interval]))",
+          "legendFormat": "mesures",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Ingestion Faro",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum (increase(otelcol_processor_filter_spans_filtered_total[$__rate_interval]))",
+          "legendFormat": "OTLP traces",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum (increase(otelcol_processor_filter_logs_filtered_total[$__rate_interval]))",
+          "legendFormat": "OTLP logs",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum (increase(otelcol_processor_filter_datapoints_filtered_total[$__rate_interval]))",
+          "legendFormat": "OTLP métriques",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (reason) (increase(loki_process_dropped_lines_total[$__rate_interval]))",
+          "legendFormat": "Faro {{reason}}",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Rejets (§ 6.3)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "max by (component_id, data_type) (otelcol_exporter_queue_size{job=\"alloy\"})",
+          "legendFormat": "{{component_id}} {{data_type}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "File d'envoi d'alloy",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "up{job=~\"prometheus|loki|tempo|alloy|alloy-gateway|node-exporter\"}",
+          "legendFormat": "{{job}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Services de la stack (up)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 6,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(loki_distributor_lines_received_total[$__rate_interval]))",
+          "legendFormat": "Loki lignes/s",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(tempo_distributor_spans_received_total[$__rate_interval]))",
+          "legendFormat": "Tempo spans/s",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(prometheus_tsdb_head_samples_appended_total[$__rate_interval]))",
+          "legendFormat": "Prometheus échantillons/s",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Stockages",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "tags": [
+    "grafana-coolify"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Santé du pipeline",
+  "uid": "gc-pipeline"
+}

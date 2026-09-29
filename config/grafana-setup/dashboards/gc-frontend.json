@@ -1,0 +1,287 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Erreurs JS, Web Vitals et sessions (données Faro dans Loki).",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (service_name) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt kind | kind=\"exception\" [$__auto]))",
+          "legendFormat": "{{service_name}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Erreurs JS",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "count(sum by (session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt session_id | session_id!=\"\" [$__auto])))",
+          "legendFormat": "sessions",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Sessions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "quantile_over_time(0.75, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt kind, type, lcp | kind=\"measurement\" | type=\"web-vitals\" | lcp!=\"\" | unwrap lcp [$__auto]) by (service_name)",
+          "legendFormat": "LCP {{service_name}}",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "quantile_over_time(0.75, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt kind, type, inp | kind=\"measurement\" | type=\"web-vitals\" | inp!=\"\" | unwrap inp [$__auto]) by (service_name)",
+          "legendFormat": "INP {{service_name}}",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "title": "LCP et INP p75",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "quantile_over_time(0.75, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt kind, type, cls | kind=\"measurement\" | type=\"web-vitals\" | cls!=\"\" | unwrap cls [$__auto]) by (service_name)",
+          "legendFormat": "CLS {{service_name}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "CLS p75",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "enableLogDetails": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "{project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt kind | kind=\"exception\"",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Dernières erreurs JS",
+      "type": "logs"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "tags": [
+    "grafana-coolify"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "gc-loki"
+        },
+        "definition": "label_values({project=~\".+\"}, project)",
+        "includeAll": true,
+        "label": "project",
+        "multi": false,
+        "name": "project",
+        "query": {
+          "label": "project",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{project=~\".+\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "gc-loki"
+        },
+        "definition": "label_values({project=~\"$project\"}, env)",
+        "includeAll": true,
+        "label": "env",
+        "multi": true,
+        "name": "env",
+        "query": {
+          "label": "env",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{project=~\"$project\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "gc-loki"
+        },
+        "definition": "label_values({project=~\"$project\", env=~\"$env\"}, service_name)",
+        "includeAll": true,
+        "label": "service",
+        "multi": true,
+        "name": "service",
+        "query": {
+          "label": "service_name",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{project=~\"$project\", env=~\"$env\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "label": "tenant (regex)",
+        "name": "tenant",
+        "query": ".*",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Frontend",
+  "uid": "gc-frontend"
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Static checks of spec 12.1. Standard library only; external tools: docker compose and .bin/.
 
-Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint]
+Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint,dashboards]
 """
 
 import argparse
@@ -271,6 +271,11 @@ def check_lint():
     return errors
 
 
+def check_dashboards():
+    code, output = run([sys.executable, str(ROOT / "scripts" / "build_dashboards.py"), "--check"])
+    return [] if code == 0 else [output.strip()]
+
+
 CHECKS = {
     "render": check_render,
     "size": check_size,
@@ -282,6 +287,7 @@ CHECKS = {
     "limits": check_limits,
     "validators": check_validators,
     "lint": check_lint,
+    "dashboards": check_dashboards,
 }
 
 
