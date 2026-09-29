@@ -166,10 +166,6 @@ class MaskingLiteralsTest(unittest.TestCase):
         self.assertTrue(convert and convert[0] < first_string_rule, statements[:first_string_rule])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class MetricJobTest(unittest.TestCase):
     """Prometheus' OTLP translator prefixes job with service.namespace: the metrics path drops it."""
 
@@ -184,3 +180,7 @@ class MetricJobTest(unittest.TestCase):
 
     def test_project_is_kept_on_metrics(self):
         self.assertNotIn('delete_key(resource.attributes, "project")', self.metric_resource_statements())
+
+
+if __name__ == "__main__":
+    unittest.main()
