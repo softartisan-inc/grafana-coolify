@@ -217,6 +217,33 @@ span-metrics).
    le temps le permet, avec `TEMPO_MAX_ACTIVE_SERIES` : vide, Tempo tourne avec un **plafond
    illimité** de séries (`0`), sans erreur non plus.
 
+## S6 — `grafana-setup` du plan B sur la recette (bloquant avant la production)
+
+Tableaux de bord et alertes, avec le vrai Grafana, le vrai SMTP et le vrai bot. **Prérequis
+bloquant** : pas de mise en production tant que S6 n'est pas OK.
+
+```bash
+docker logs grafana-setup-<uuid> | grep -E 'datasources and folders: done|content files verified|grafana-setup: done|ERROR'
+docker inspect grafana-setup-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(GRAFANA_SETUP_(PINNED_URL|FILES)|HOST_ENV)=' | cut -c1-120
+grep -n GRAFANA_SETUP_TAG tools/versions.env
+GRAFANA_URL=https://grafana.example.com GRAFANA_SA_TOKEN=glsa_... python3 scripts/notify_test.py
+```
+
+Attendu :
+
+- `grafana-setup: datasources and folders: done`, `grafana-setup: 8 content files verified (SHA-256)`
+  puis `grafana-setup: done` : le conteneur joint `raw.githubusercontent.com` et le tag épinglé
+  contient les fichiers attendus ;
+- `GRAFANA_SETUP_PINNED_URL` se termine par le `GRAFANA_SETUP_TAG` du dépôt déployé : après un
+  nouveau tag poussé puis redéployé, la valeur **littérale** du compose est bien mise à jour par
+  Coolify (comme `CONFIG_GUARD_EXPECTED`, S4) ; `HOST_ENV` vaut `prod` sur le serveur de
+  production ;
+- `notify-test: gc-telegram: sent` et `notify-test: gc-email: sent`, puis le message dans le
+  groupe Telegram et dans chaque boîte de `ALERT_EMAILS` ;
+- dans Grafana, dossier **grafana-coolify** : six tableaux sans panneau en erreur, six règles
+  **Normal** ou **Firing**, aucune en **Error** ; dossier de chaque projet : les liens ouvrent les
+  tableaux avec le bon `var-project`.
+
 ## Résultats
 
 | Spike | Date | Version Coolify | Résultat | Remarque |
@@ -227,3 +254,4 @@ span-metrics).
 | S3 | | | | |
 | S4 | | | | |
 | S5 | | | | |
+| S6 | | | | |
