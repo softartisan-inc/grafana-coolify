@@ -24,6 +24,7 @@ services:
       HOST_MAP: ${HOST_MAP:-}
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+      HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh
@@ -251,6 +252,7 @@ services:
       ALERT_SILENCE_MIN: ${ALERT_SILENCE_MIN:-15}
       ALERT_DISK_PCT: ${ALERT_DISK_PCT:-80}
       CARDINALITY_ALERT_THRESHOLD: ${CARDINALITY_ALERT_THRESHOLD:-200000}
+      HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
         source: ./config/grafana-setup/setup.py

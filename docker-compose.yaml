@@ -16,7 +16,7 @@ services:
     command:
       - sh
       - -c
-      - "echo 'f7d19c390dc0d92af9432e13af41d7c4bbb83bf78f09446b340e9c79d8e56e6f  /opt/config-guard/guard.f7d19c39.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.f7d19c39.sh"
+      - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.fa19fbc1.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.fa19fbc1.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.4db78d01.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.e42749aa.yaml=e42749aaa3aec89f11e43db5cf94277fa3d5a814ee1809cfd7ce683a25333d43;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
@@ -26,10 +26,11 @@ services:
       HOST_MAP: ${HOST_MAP:-}
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+      HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.f7d19c39.sh
-        target: /opt/config-guard/guard.f7d19c39.sh
+        source: ./config/config-guard/guard.fa19fbc1.sh
+        target: /opt/config-guard/guard.fa19fbc1.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -121,6 +122,11 @@ services:
           if [ -n "$reserved" ] && ! matches "$reserved" '^[a-z0-9-]+(,[a-z0-9-]+)*$'; then
             error "RESERVED_SUBDOMAINS must look like www,api (lowercase, comma separated)"
           fi
+          # env label of the host-level alerts (grafana-setup): same values as the env of the data.
+          case ${HOST_ENV:-prod} in
+            prod | preprod) ;;
+            *) error "HOST_ENV must be prod or preprod" ;;
+          esac
           tenant_regex=${TENANT_HOST_REGEX:-}
           if [ -n "$tenant_regex" ]; then
             case $tenant_regex in
@@ -1340,6 +1346,7 @@ services:
       ALERT_SILENCE_MIN: ${ALERT_SILENCE_MIN:-15}
       ALERT_DISK_PCT: ${ALERT_DISK_PCT:-80}
       CARDINALITY_ALERT_THRESHOLD: ${CARDINALITY_ALERT_THRESHOLD:-200000}
+      HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
         source: ./config/grafana-setup/setup.f6429835.py
