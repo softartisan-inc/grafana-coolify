@@ -259,7 +259,7 @@ tenant, soit ~4 min pour 2 Gio et ~17 min pour 8 Gio sur un seul flux, sans qu'u
 flux Faro bruyant) puisse prendre tout le budget des autres. La rafale contient au moins trois des
 plus gros lots (8 Mio à 4 Kio par enregistrement ; un envoi plus gros que la rafale ne passerait
 jamais), les 10 envois concurrents à 1 Kio par enregistrement (~20 Mio), et reste sous celle du
-tenant (32 Mo). Au-delà de ces hypothèses (enregistrements plus gros, plus de 8 Gio en attente sur
+tenant (32 Mio). Au-delà de ces hypothèses (enregistrements plus gros, plus de 8 Gio en attente sur
 un seul flux), des lots peuvent encore être abandonnés : raccourcir la panne ou relever ces
 plafonds ensemble.
 
@@ -338,10 +338,12 @@ tant qu'il n'est pas OK, aucune alerte n'est réputée arriver.
 1. Dans Telegram, écrire à **@BotFather** : `/newbot`, choisir un nom, puis copier le token
    (`123456789:AA…`) dans `TELEGRAM_BOT_TOKEN`.
 2. Créer le groupe des alertes (administratrice et équipe) et y **ajouter le bot**.
-3. Écrire un message dans le groupe, puis lire son identifiant :
+3. Écrire un message dans le groupe, puis lire son identifiant (`read -rs` demande le token sans
+   l'afficher ni l'écrire dans l'historique du shell) :
 
    ```bash
-   curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | python3 -m json.tool | grep -A3 '"chat"'
+   read -rs TELEGRAM_BOT_TOKEN
+   curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates" | python3 -m json.tool | grep -A3 '"chat"'
    ```
 
    L'identifiant d'un groupe est négatif (`-100…` pour un supergroupe) : le copier dans
