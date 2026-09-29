@@ -1,7 +1,8 @@
 # grafana-coolify — Spécification de conception
 
-- **Date :** 2026-09-27 · **Révision :** 6 (après l'exécution du plan A : décisions reportées en § 6, § 8.1, § 9.1, § 11)
-- **Historique :** r5 (2026-09-28), après lecture de `applicationParser()` de Coolify : fichiers
+- **Date :** 2026-09-27 · **Révision :** 7 (plan B : contenu de `grafana-setup` téléchargé à un tag épinglé, § 4.3 et § 10 ; règles d'alerte construites en code, § 13 ; `HOST_ENV`, § 10.4 et § 11 ; spike S6, § 12.6 et § 16)
+- **Historique :** r6, après l'exécution du plan A : décisions reportées en § 6, § 8.1, § 9.1, § 11.
+  r5 (2026-09-28), après lecture de `applicationParser()` de Coolify : fichiers
   `content:` adressés par leur contenu (§ 4.2), `FARO_API_KEY` obligatoire (§ 5.3, § 11), ordre des
   middlewares justifié (§ 5.4), rejets élargis et liste `PROJECTS` (§ 6.3), tenant client validé
   (§ 6.4), limiteur mémoire des traces Faro (§ 7.1), exclusions du hachage d'IP (§ 8.1), montages
@@ -202,8 +203,25 @@ long ».
   120 Kio**, ce qui laisse de la marge pour le reste de la commande. Cela représente environ 90 Ko
   bruts.
 - Les tableaux de bord (plan B) sont les plus lourds. S'ils font dépasser le budget, ils sortent du
-  compose : `grafana-setup` les télécharge depuis ce dépôt public, à un **commit épinglé**, et
+  compose : `grafana-setup` les télécharge depuis ce dépôt public, à un **tag épinglé**, et
   vérifie leur empreinte SHA-256.
+- **Décision (r7, plan B)** : le budget ne laisse pas la place au contenu du plan B (tableaux et
+  code des alertes). `config/grafana-setup/setup.py` (sources de données et dossiers, plan A) reste
+  **dans** le compose ; `dashboards.py`, `alerting.py` et `dashboards/*.json` en sortent.
+  - Le compose porte le nom d'un **tag** fixe (`GRAFANA_SETUP_TAG`, par exemple
+    `grafana-setup-content-v1`, dans l'URL littérale `GRAFANA_SETUP_PINNED_URL`) et la liste des
+    empreintes SHA-256 de ces fichiers (`GRAFANA_SETUP_FILES`, calculée par `render.py`).
+  - Après les sources et les dossiers, `setup.py` télécharge ces fichiers (2 Mio au plus chacun),
+    vérifie chaque empreinte, et ne les exécute que si toutes correspondent. Un échec à ce stade
+    s'arrête avec un message explicite (code de sortie non nul), une fois les sources et les
+    dossiers en place. `grafana-setup: done` en dernière ligne est le point de contrôle du
+    déploiement.
+  - Le tag est créé sur le dernier commit de la branche et poussé avec elle : le commit reste
+    accessible quelle que soit la méthode de fusion. Un tag poussé ne bouge jamais ; tout
+    changement de contenu monte son suffixe. `check.py` (contrôle `bundle`) vérifie que le tag
+    existe et contient exactement les fichiers de travail.
+  - `GRAFANA_SETUP_MIRROR_URL` (facultatif) remplace la source (fork, miroir) ; les empreintes
+    restent l'ancre de confiance.
 
 ### 4.4 `config-guard`
 
@@ -637,14 +655,14 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 | Politique de notification | `PUT /policies` (objet unique) |
 | Règles d'alerte | `GET /alert-rules/:uid` → `PUT` si présente, `POST` si le `GET` renvoie 404 |
 
-**Règles de base** (seuils en variables, § 11) :
+**Règles de base** (seuils en variables, § 11 ; construites en code dans `alerting.py`, r7) :
 
 | Règle | Condition | `severity` |
 |---|---|---|
 | Taux d'erreur | > `ALERT_ERROR_RATE` sur 5 min, par service | `critical` |
 | Latence | p95 > `ALERT_P95_MS` sur 10 min | `warning` |
 | Service muet | aucune donnée depuis `ALERT_SILENCE_MIN` min | `critical` |
-| Disque | usage > `ALERT_DISK_PCT` % | `critical` |
+| Disque | usage > `ALERT_DISK_PCT` % | `critical` (label `env` = `HOST_ENV`, r7) |
 | Cardinalité | séries > `CARDINALITY_ALERT_THRESHOLD` | `warning` |
 | Rejets | données rejetées > 0 sur 15 min | `warning` |
 
@@ -686,6 +704,8 @@ le **contenu** (JSON normalisé), pas sur `version`, que Grafana incrémente à 
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_EMAILS` | plan B | — | Notifications |
 | `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT` | non | 0.05 / 1500 / 15 / 80 | Seuils d'alerte |
 | `CARDINALITY_ALERT_THRESHOLD` | non | 200000 | Seuil de séries |
+| `HOST_ENV` | non | prod | Environnement que sert l'hôte (`prod` ou `preprod`, vérifié par `config-guard`) : label `env` des alertes d'hôte (r7) |
+| `GRAFANA_SETUP_MIRROR_URL` | non | vide | Source de remplacement du contenu du plan B (§ 4.3, r7) |
 
 ---
 
@@ -801,7 +821,9 @@ charges Faro envoyées de la même façon. Puis interrogation de Loki, Tempo et 
 
 1. Chaque règle d'alerte se déclenche sur une donnée synthétique.
 2. Routage : `GET /api/v1/provisioning/policies` conforme ; une notification de test arrive sur
-   Telegram (`critical` + `prod`) et par email (le reste).
+   Telegram (`critical` + `prod`) et par email (le reste). Le banc prouve le routage et la
+   délivrance vers un faux SMTP et un faux proxy ; l'arrivée réelle relève du spike **S6**, prérequis
+   bloquant de la mise en production (r7).
 3. Les 6 tableaux de bord se chargent sans erreur de requête sur des données synthétiques.
 
 ---
@@ -819,7 +841,8 @@ grafana-coolify/
 │   ├── loki/loki.yaml
 │   ├── tempo/tempo.yaml
 │   ├── prometheus/prometheus.yml
-│   └── grafana-setup/         # setup.py, dashboards/*.json, alerts/*.json
+│   └── grafana-setup/         # setup.py (dans le compose) ; dashboards.py, alerting.py (règles
+│                              # construites en code, r7), dashboards/*.json : téléchargés (§ 4.3)
 ├── traefik/grafana-coolify.yaml.example   # middlewares @file (modèle, sans secret)
 ├── scripts/                   # render.py, check.py, smoke.py, security.py (Python, stdlib)
 ├── harness/                   # banc natif sans Docker (§ 12)
@@ -896,3 +919,9 @@ messages de commit et branches en **anglais**.
 4. Version de Coolify ; fichiers `content:` écrits octet pour octet sur l'hôte dans une ressource
    Application Git, puis une config modifiée, poussée et redéployée (nouveau fichier à empreinte
    utilisé, sort des stockages périmés) ; affichage des `${…}` dans l'interface (§ 4.2).
+
+### Spike du plan B (r7, bloquant avant la production)
+
+6. **S6** : sur la recette, `grafana-setup` télécharge le contenu au tag épinglé et finit par
+   `grafana-setup: done` ; une notification de test arrive réellement sur Telegram et par email
+   (`scripts/notify_test.py`) ; les tableaux se chargent sans erreur.
