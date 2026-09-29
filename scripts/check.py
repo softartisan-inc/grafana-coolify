@@ -21,6 +21,8 @@ import render  # noqa: E402
 BIN = Path(os.environ.get("GC_BIN_DIR", str(ROOT / ".bin")))
 # Variables documented in .env.example but read by nobody in the compose (spec 11).
 DOC_ONLY_VARS = {"ALLOY_INTERNAL_URL"}
+# check.py size warns when the compose gets this close to its base64 budget.
+SIZE_WARN_MARGIN = 4096
 VAR_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:?+-][^}]*)?\}")
 # `SERVICE_FQDN_ALLOY_12347:` with no value: Coolify magic variable declared in `environment:`.
 NULL_ENV_KEY_RE = re.compile(r"^\s+([A-Z][A-Z0-9_]*):\s*$")
@@ -176,11 +178,15 @@ def check_render():
     return errors
 
 
-def check_size():
-    size = render.base64_size((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+def check_size(size=None):
+    if size is None:
+        size = render.base64_size((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
     if size > render.BUDGET_BYTES:
         return [f"docker-compose.yaml is {size} bytes in base64, budget is {render.BUDGET_BYTES}"]
     print(f"    base64 size {size} / {render.BUDGET_BYTES} bytes")
+    margin = render.BUDGET_BYTES - size
+    if margin < SIZE_WARN_MARGIN:
+        print(f"    WARN: only {margin} bytes of margin left (under {SIZE_WARN_MARGIN})")
     return []
 
 

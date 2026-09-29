@@ -1,3 +1,5 @@
+import contextlib
+import io
 import sys
 import unittest
 
@@ -89,6 +91,15 @@ class TargetsTest(unittest.TestCase):
         mounts = [("alloy", "/etc/alloy/config.1.alloy"), ("alloy-gateway", "/etc/alloy/config.1.alloy"), ("loki", "/etc/loki/loki.2.yaml")]
         self.assertEqual(check.target_collisions(mounts), ["/etc/alloy/config.1.alloy: content target of alloy, alloy-gateway"])
         self.assertEqual(check.target_collisions(mounts[1:]), [])
+
+    def test_size_warns_under_4_kib_of_margin(self):
+        budget = check.render.BUDGET_BYTES
+        cases = ((budget - 4096, False), (budget - 4095, True), (budget, True))
+        for size, warned in cases:
+            with self.subTest(size=size), contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(check.check_size(size), [])
+                self.assertEqual("WARN" in out.getvalue(), warned, out.getvalue())
+        self.assertEqual(check.check_size(budget + 1), [f"docker-compose.yaml is {budget + 1} bytes in base64, budget is {budget}"])
 
 
 class RepositoryCheckTest(unittest.TestCase):

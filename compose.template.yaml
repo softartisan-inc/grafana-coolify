@@ -243,7 +243,10 @@ services:
       TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:?TEMPO_INTERNAL_URL is required}
       PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:?PROMETHEUS_INTERNAL_URL is required}
       PROJECTS: ${PROJECTS:-}
-      # Plan B (dashboards and alerts) reads these; declared now so .env.example stays exhaustive.
+      # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
+      GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/@@GRAFANA_SETUP_TAG@@"
+      GRAFANA_SETUP_FILES: "@@GRAFANA_SETUP_FILES@@"
+      GRAFANA_SETUP_MIRROR_URL: ${GRAFANA_SETUP_MIRROR_URL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       ALERT_EMAILS: ${ALERT_EMAILS:-}

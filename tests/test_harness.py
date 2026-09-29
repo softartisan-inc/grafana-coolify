@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -97,7 +98,10 @@ class ContentFilesTest(unittest.TestCase):
     def test_content_file_gets_its_hashed_name(self):
         written = stack.materialize(self.hashed_loki(), ROOT / "config")
         self.assertRegex(written.name, r"^loki\.[0-9a-f]{8}\.yaml$")
-        self.assertEqual(written.read_bytes(), (ROOT / "config" / "loki" / "loki.yaml").read_bytes())
+        # What Coolify writes: the compose content:, stripped of full-line comments by render.py.
+        stripped = stack.render.strip_comments((ROOT / "config" / "loki" / "loki.yaml").read_text(encoding="utf-8"), "loki.yaml")
+        self.assertEqual(written.read_bytes(), stripped.encode("utf-8"))
+        self.assertIn(hashlib.sha256(written.read_bytes()).hexdigest()[:8], written.name)
 
     def test_directory_and_missing_file_are_reproduced(self):
         with tempfile.TemporaryDirectory() as tmp:

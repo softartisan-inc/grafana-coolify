@@ -3,7 +3,7 @@
 
 Standard library only. Rules (spec 4.1-4.4):
 - every `content: "@@CONTENT@@"` line becomes a YAML literal block holding the bytes of the
-  `source:` file of the same volume item, copied without any transformation;
+  `source:` file of the same volume item, copied byte for byte once strip_comments has run (see budget);
 - content-addressed paths: the first 8 hex digits of the file's SHA-256 are inserted in the
   `source:` and the `target:` of the volume (loki.yaml -> loki.<sha8>.yaml), and every reference
   to the target in the same service (command, environment) is rewritten. Coolify keys a file
@@ -13,7 +13,11 @@ Standard library only. Rules (spec 4.1-4.4):
 - `@@NAME@@` placeholders come from tools/versions.env, plus two computed values:
   CONFIG_GUARD_EXPECTED ("/guard/<hashed path under config/>=sha256;..." for every content file
   of the other services: config-guard mounts ./config at /guard) and GUARD_SHA256 (hash of
-  guard.sh);
+  guard.sh), and GRAFANA_SETUP_FILES ("<file>=sha256;..." for every file setup.py downloads: the
+  .py and .json files of config/grafana-setup/ but setup.py, paths relative to that directory);
+- budget: inlined YAML and Alloy files lose their full-line comments and blank lines
+  (strip_comments); hashes and content-addressed names are computed on the stripped text, which
+  is what Coolify writes; config/ keeps the comments;
 - compose.dev.yaml mounts config/ directly: it keeps the repository names (no hash);
 - the output is deterministic.
 """
@@ -39,6 +43,11 @@ DEV_HEADER = (
 )
 GUARD_SCRIPT = "config/config-guard/guard.sh"
 GUARD_PREFIX = "/guard/"
+GRAFANA_SETUP_DIR = "config/grafana-setup"
+# The only grafana-setup file inlined in the compose; it downloads the others (spec 4.3).
+GRAFANA_SETUP_INLINE = "setup.py"
+# Full-line comment markers of the inlined files that strip_comments shortens.
+COMMENT_PREFIXES = {".alloy": "//", ".yaml": "#", ".yml": "#"}
 HASH_LEN = 8
 CONTENT_RE = re.compile(r'^(?P<indent> *)content: "@@CONTENT@@"$')
 ITEM_KEY_RE = re.compile(r"^(?P<indent> *)(?:- )?(?P<key>source|target): (?P<value>\S+)$")
@@ -166,11 +175,26 @@ def hashed_path(path, digest):
     return head + slash + hashed
 
 
-def content_items(root, template_text):
-    """[ContentItem] of the template, in template order."""
+def strip_comments(text, source):
+    """Drop the full-line comments and blank lines of a YAML or Alloy file; other files unchanged.
+
+    Only lines whose first non-blank characters are the comment marker go: end-of-line comments
+    and markers inside values (https://, #anchor) stay.
+    """
+    prefix = COMMENT_PREFIXES.get(Path(source).suffix)
+    if prefix is None:
+        return text
+    lines = [line for line in text.split("\n") if line.strip() and not line.lstrip().startswith(prefix)]
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+def content_items(root, template_text, stripped=True):
+    """[ContentItem] of the template, in template order; stripped=False keeps the repository text."""
     items = []
     for volume in scan_template(template_text):
         text = read_config(root, volume.source)
+        if stripped:
+            text = strip_comments(text, volume.source)
         digest = sha256_text(text)
         items.append(ContentItem(*volume, text, digest, hashed_path(volume.source, digest), hashed_path(volume.target, digest)))
     return items
@@ -181,15 +205,28 @@ def rewrite_path(line, old, new):
     return re.sub(r"(?<![\w./-])" + re.escape(old) + r"(?![\w./-])", lambda _m: new, line)
 
 
+def grafana_setup_files(root):
+    """[(path relative to config/grafana-setup/, sha256)] of the files setup.py downloads, sorted."""
+    base = Path(root) / GRAFANA_SETUP_DIR
+    files = []
+    for path in sorted(base.rglob("*")):
+        relative = path.relative_to(base).as_posix()
+        if path.is_file() and path.suffix in (".py", ".json") and relative != GRAFANA_SETUP_INLINE and "__pycache__" not in path.parts:
+            files.append((relative, hashlib.sha256(path.read_bytes()).hexdigest()))
+    return files
+
+
 def computed_values(root, template_text, hashed=True):
     expected = set()
-    for item in content_items(root, template_text):
+    # compose.dev.yaml (hashed=False) mounts the repository files, comments included.
+    for item in content_items(root, template_text, stripped=hashed):
         if item.service != "config-guard":
             source = item.hashed_source if hashed else item.source
             expected.add(f"{GUARD_PREFIX}{source[len('./config/'):]}={item.sha256}")
     return {
         "CONFIG_GUARD_EXPECTED": ";".join(sorted(expected)),
         "GUARD_SHA256": sha256_text(read_config(root, "./" + GUARD_SCRIPT)),
+        "GRAFANA_SETUP_FILES": ";".join(f"{path}={digest}" for path, digest in grafana_setup_files(root)),
     }
 
 

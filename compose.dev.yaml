@@ -26,7 +26,7 @@ services:
       - -c
       - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.yaml=e42749aaa3aec89f11e43db5cf94277fa3d5a814ee1809cfd7ce683a25333d43;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.py=86e362a340bc0c5070739d6f7423f5aafef62328bddd27c85cc73afba35165fd;/guard/loki/loki.yaml=e42749aaa3aec89f11e43db5cf94277fa3d5a814ee1809cfd7ce683a25333d43;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -247,7 +247,10 @@ services:
       TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:?TEMPO_INTERNAL_URL is required}
       PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:?PROMETHEUS_INTERNAL_URL is required}
       PROJECTS: ${PROJECTS:-}
-      # Plan B (dashboards and alerts) reads these; declared now so .env.example stays exhaustive.
+      # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
+      GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v1"
+      GRAFANA_SETUP_FILES: "alerting.py=4af825d2d41e3132bc765025e81914ebcb20307969d8f41e6e6da37e8b6866cc;dashboards/gc-cardinality.json=627297b75136a04ecd4aea4d26a3d44d153d536a3f14a82359f51f7424ecb6e2;dashboards/gc-frontend.json=ea341f8609cc46b220d85b903150e7efa5c7af32774c5e2d6f005d994a6cb6ab;dashboards/gc-host.json=90ef9083bfaab82ac57191aa3f00008cbcc545db6c10f112f5352c6561a4bfb0;dashboards/gc-pipeline.json=fb18316522abe4fffee6078142ac5162c48d63670f1ef564c8f1be4900cde0d8;dashboards/gc-project.json=1eb7ec2cc4c944066e69930be9f1afd7bb984897e30361982eeb0a152b5f66fb;dashboards/gc-service.json=c0b95dc9ebebc9a9a18f4cf7a88049a9a788bb9e52b2792aba1e0cc786877c8c;dashboards.py=bf9f2b5bc00dcf1b803eb82fb712985d80c102662bbfcc4a5600eee872f69e19"
+      GRAFANA_SETUP_MIRROR_URL: ${GRAFANA_SETUP_MIRROR_URL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       ALERT_EMAILS: ${ALERT_EMAILS:-}
