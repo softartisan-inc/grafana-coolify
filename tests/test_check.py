@@ -150,6 +150,32 @@ class BundleTest(unittest.TestCase):
             check.git_tag_exists, check.git_is_shallow = saved
 
 
+class StripHazardTest(unittest.TestCase):
+    """strip_comments is line-based: a comment-looking line inside a multi-line value would be cut."""
+
+    def test_yaml_block_scalar_is_flagged(self):
+        for line in ("script: |", "script: >-", "  body: |2", "text:   >+  "):
+            self.assertTrue(check.strip_hazards("config/x.yaml", f"a: 1\n{line}\n  # kept?\n"), line)
+
+    def test_yaml_plain_values_pass(self):
+        text = "a: 1\nexpr: 'x | y'\nurl: https://a/#b\nlist:\n  - '>'\n"
+        self.assertEqual(check.strip_hazards("config/x.yml", text), [])
+
+    def test_alloy_multiline_raw_string_is_flagged(self):
+        errors = check.strip_hazards("config/x.alloy", 'a = `one\n// inside\ntwo`\n')
+        self.assertEqual(len(errors), 2)
+        self.assertIn("config/x.alloy:1", errors[0])
+
+    def test_alloy_paired_backticks_pass(self):
+        self.assertEqual(check.strip_hazards("config/x.alloy", 'a = [`x`, `y` + "z"]\nb = 1\n'), [])
+
+    def test_other_files_are_ignored(self):
+        self.assertEqual(check.strip_hazards("config/setup.py", "x = `\ny: |\n"), [])
+
+    def test_repository_inlined_files_pass(self):
+        self.assertEqual(check.check_render(), [])
+
+
 class RepositoryCheckTest(unittest.TestCase):
     def test_check_py_passes_on_the_repository(self):
         result = run([sys.executable, ROOT / "scripts" / "check.py"], timeout=600)

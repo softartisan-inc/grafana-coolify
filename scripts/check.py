@@ -208,11 +208,33 @@ def compose_json():
         return json.loads(output)
 
 
+YAML_BLOCK_SCALAR_RE = re.compile(r":\s*[|>][-+0-9]*\s*$")
+
+
+def strip_hazards(source, text):
+    """Lines of an inlined file where the line-based strip_comments could cut a multi-line value.
+
+    YAML: a block scalar (key: | or key: >); Alloy: a line with an odd number of backticks
+    (a raw string spanning several lines). Other files are not stripped.
+    """
+    suffix = Path(source).suffix
+    errors = []
+    for number, line in enumerate(text.split("\n"), 1):
+        if suffix in (".yaml", ".yml") and YAML_BLOCK_SCALAR_RE.search(line):
+            errors.append(f"{source}:{number}: YAML block scalar, strip_comments is line-based: use a quoted or flow value")
+        elif suffix == ".alloy" and line.count("`") % 2:
+            errors.append(f"{source}:{number}: multi-line raw string, strip_comments is line-based: keep each raw string on one line")
+    return errors
+
+
 def check_render():
     errors = []
     for path, text in render.outputs(ROOT).items():
         if not path.exists() or path.read_text(encoding="utf-8") != text:
             errors.append(f"{path.name} is stale: run python3 scripts/render.py")
+    template_text = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
+    for item in render.content_items(ROOT, template_text, stripped=False):
+        errors.extend(strip_hazards(item.source, item.text))
     return errors
 
 
