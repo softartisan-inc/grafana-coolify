@@ -365,7 +365,7 @@ par suppression de l'attribut entier.
 >   sous une clé contenant `version` ou `user_agent` n'est pas haché.
 > - **Coût** : chaque carte d'attributs est copiée, aplatie, masquée puis comparée, sur chaque
 >   span, log et point. Mesuré sur le banc (60 000 logs et spans, 1 sur 10 avec une donnée
->   sensible) : ~11,5 s de CPU pour `alloy` avant ce masquage, ~17 s après (+47 %), soit
+>   sensible) : ~11,5 s de CPU pour `alloy` avant ce masquage, ~17 s après (+48 %), soit
 >   ~0,1 ms de CPU de plus par élément ; prévoir environ 0,1 cœur de plus par 1000 éléments/s.
 > - **Octets** : les valeurs binaires (`bytesValue`) ne sont pas examinées.
 
