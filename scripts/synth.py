@@ -64,7 +64,8 @@ def reject(s, run):
 
 def generate(s, run, duration=90, tick=5, quiet_after=40, out=print):
     project = project_of(s)
-    api = {"project": project, "deployment.environment.name": "prod", "service.name": f"synth-api-{run}", "tenant": "acme"}
+    # service.namespace as an OTel SDK sets it: job must still be service.name (dashboards filter on it).
+    api = {"project": project, "deployment.environment.name": "prod", "service.namespace": project, "service.name": f"synth-api-{run}", "tenant": "acme"}
     quiet = {"project": project, "deployment.environment.name": "preprod", "service.name": f"synth-quiet-{run}"}
     session_id = f"synth-{run}"
     started = time.monotonic()

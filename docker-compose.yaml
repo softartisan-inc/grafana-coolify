@@ -18,7 +18,7 @@ services:
       - -c
       - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.fa19fbc1.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.fa19fbc1.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.2ff84a07.alloy=2ff84a07b132f211ed121a290f994b4ac833a29ce34d445fb259051c5b220ce2;/guard/grafana-setup/setup.86e362a3.py=86e362a340bc0c5070739d6f7423f5aafef62328bddd27c85cc73afba35165fd;/guard/loki/loki.b1a0660d.yaml=b1a0660d327b9fe6f4c6dfd543ec80b9ab679fb32507e73eabb582237c681ac7;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/tempo/tempo.46f5a358.yaml=46f5a3584f9906c97da2b080ab22df235e245bf38c80c0a73e2ca38f424a71e1"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.86e362a3.py=86e362a340bc0c5070739d6f7423f5aafef62328bddd27c85cc73afba35165fd;/guard/loki/loki.b1a0660d.yaml=b1a0660d327b9fe6f4c6dfd543ec80b9ab679fb32507e73eabb582237c681ac7;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/tempo/tempo.46f5a358.yaml=46f5a3584f9906c97da2b080ab22df235e245bf38c80c0a73e2ca38f424a71e1"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -429,7 +429,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.2ff84a07.alloy
+      - /etc/alloy/config.eaa44437.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -449,8 +449,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.2ff84a07.alloy
-        target: /etc/alloy/config.2ff84a07.alloy
+        source: ./config/alloy/config.eaa44437.alloy
+        target: /etc/alloy/config.eaa44437.alloy
         content: |2
           logging {
             level  = "info"
@@ -652,6 +652,7 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
+                `delete_key(resource.attributes, "service.namespace")`,
                 `set(cache["flat"], resource.attributes)`,
                 `flatten(cache["flat"])`,
                 `set(cache["orig"], cache["flat"])`,

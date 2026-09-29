@@ -578,8 +578,11 @@ def spanmetrics(c):
 
 @section("otlp-metrics")
 def otlp_metrics(c):
-    """12.3.7: project, env, tenant are labels of the metric (not only target_info); service is job."""
-    resource = c.resource("metrics", tenant="acme")
+    """12.3.7: project, env, tenant are labels of the metric (not only target_info); service is job.
+
+    The resource carries service.namespace like an OTel SDK does: Prometheus would otherwise turn
+    job into "namespace/name" and break the dashboards filtering on job."""
+    resource = c.resource("metrics", tenant="acme", **{"service.namespace": c.project})
     name = f"smoke_{c.run}_orders"
     g.send_otlp(c.s["GC_OTLP_URL"], "metrics", g.otlp_sum(resource, name, 7))
     metric = c.wait_prom(f"{name}_total")[0]["metric"]
