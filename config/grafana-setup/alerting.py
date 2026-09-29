@@ -145,8 +145,9 @@ def ensure_contact_point(api, desired, current):
 
 # ------------------------------------------------------------------ notification policy
 def managed_route(route):
-    matchers = sorted(route.get("object_matchers") or [])
-    return route.get("receiver") == TELEGRAM_UID and matchers == TELEGRAM_MATCHERS
+    """Our route is any route to gc-telegram, whatever its matchers: a stale one (matchers changed)
+    is replaced. Routes added by hand must target their own contact points, not gc-telegram."""
+    return route.get("receiver") == TELEGRAM_UID
 
 
 def desired_policy(current, notify):

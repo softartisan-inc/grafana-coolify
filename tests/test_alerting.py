@@ -66,6 +66,27 @@ class PolicyTest(unittest.TestCase):
         expected = {"receiver": "gc-telegram", "object_matchers": alerting.TELEGRAM_MATCHERS, "continue": True, "group_wait": "10s"}
         self.assertEqual(routes, [expected, self.MANUAL])
 
+    def test_matcher_change_replaces_our_route(self):
+        stale = {"receiver": "gc-telegram", "object_matchers": [["env", "=", "prod"], ["severity", "=", "warning"]], "continue": True}
+        routes = alerting.desired_policy({"receiver": "gc-email", "routes": [stale, self.MANUAL]}, self.TELEGRAM)["routes"]
+        self.assertEqual(routes, [{"receiver": "gc-telegram", "object_matchers": alerting.TELEGRAM_MATCHERS, "continue": True}, self.MANUAL])
+
+    def test_ensure_policy_rewrites_a_stale_route(self):
+        stale = {"receiver": "gc-telegram", "object_matchers": [["env", "=", "prod"], ["severity", "=", "warning"]]}
+        ours = {"receiver": "gc-telegram", "object_matchers": alerting.TELEGRAM_MATCHERS}
+        current = {"receiver": "gc-email", "group_by": alerting.DEFAULT_GROUP_BY, "routes": [stale, ours]}
+        calls = []
+
+        class FakeApi:
+            def expect(self, method, path, body=None, ok=(200,), headers=None):
+                calls.append((method, path, body, headers))
+                return current if method == "GET" else None
+
+        self.assertEqual(alerting.ensure_policy(FakeApi(), self.TELEGRAM), "updated")
+        method, path, body, headers = calls[-1]
+        self.assertEqual((method, path, headers), ("PUT", f"{alerting.PROVISIONING}/policies", alerting.PROVENANCE))
+        self.assertEqual([r for r in body["routes"] if r["receiver"] == "gc-telegram"], [ours])
+
     def test_matchers_sorted_like_grafana(self):
         self.assertEqual(alerting.TELEGRAM_MATCHERS, sorted(alerting.TELEGRAM_MATCHERS))
 
