@@ -502,7 +502,7 @@ log structuré est toujours aplati ; un corps en tableau devient son texte JSON.
 du texte libre au même titre que `exception.message`. `replace_all_patterns` ne lit que les chaînes et parcourir un tableau
 exigerait les lambdas OTTL (alpha, porte `ottl.functions.enableLambda`) : `flatten` est la seule voie
 stable. Contrepartie acceptée : sur un enregistrement **masqué**, un attribut tableau ou carte change de
-forme dans les stockages (`k` → `k.0`, `k.1`) ; coût CPU mesuré sur le banc : +45 % pour `alloy`. Reste hors d'atteinte : le motif de carte bancaire sur les clés de texte libre
+forme dans les stockages (`k` → `k.0`, `k.1`) ; coût CPU mesuré sur le banc : +48 % pour `alloy`. Reste hors d'atteinte : le motif de carte bancaire sur les clés de texte libre
 imbriquées, et les valeurs binaires.
 
 Composants :

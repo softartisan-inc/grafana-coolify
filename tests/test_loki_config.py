@@ -7,6 +7,14 @@ import yaml
 from support import ROOT, binary, run, validator_env
 
 CONFIG = ROOT / "config" / "loki" / "loki.yaml"
+MIB = 2**20
+
+
+def parse_loki_bytes(value):
+    """Size as Loki reads it (flagext.ByteSize, c2h5oh/datasize): "MB" is 2^20; "MiB" is rejected."""
+    if value.endswith("MB") and value.removesuffix("MB").isdigit():
+        return int(value.removesuffix("MB")) * MIB
+    raise ValueError(f"unexpected size unit: {value!r}")
 
 
 class LokiConfigTest(unittest.TestCase):
@@ -60,13 +68,19 @@ class LokiConfigTest(unittest.TestCase):
         limits = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))["limits_config"]
         self.assertEqual(limits.get("per_stream_rate_limit"), "8MB")
         self.assertEqual(limits.get("per_stream_rate_limit_burst"), "24MB")
-        rate, burst = (int(limits[key].removesuffix("MB")) for key in ("per_stream_rate_limit", "per_stream_rate_limit_burst"))
+        rate = int(limits["per_stream_rate_limit"].removesuffix("MB"))
         # Half the tenant rate: one stream (a replayed backlog, a Faro stream) cannot starve the others.
         self.assertEqual(rate * 2, limits["ingestion_rate_mb"])
-        # Records of 1 to 4 KiB: the burst holds 10 concurrent 2 MiB batches and 3 of the largest (8 MiB),
-        # within the tenant burst.
-        self.assertGreaterEqual(burst, max(10 * 2, 3 * 8))
-        self.assertLessEqual(burst, limits["ingestion_burst_size_mb"])
+        # Loki's ByteSize is binary (c2h5oh/datasize): "24MB" is 24 MiB; *_mb are also x 2^20.
+        burst = parse_loki_bytes(limits["per_stream_rate_limit_burst"])
+        # Records of 1 to 4 KiB, 2048 per batch: batches of 2 to 8 MiB. The burst holds three of
+        # the largest (8 MiB) and the 10 concurrent 2 MiB pushes.
+        need = max(3 * 8 * MIB, 10 * 2 * MIB)
+        self.assertGreaterEqual(burst, need)
+        # The check bites: a burst below the stated need (20MB = 20 MiB) fails it.
+        self.assertLess(parse_loki_bytes("20MB"), need)
+        # Within the tenant burst.
+        self.assertLessEqual(burst, limits["ingestion_burst_size_mb"] * MIB)
 
     def test_binds_to_bind_addr_and_ring_is_local(self):
         doc = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
