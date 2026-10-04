@@ -19,8 +19,8 @@ http:
           - "example-project:$apr1$CHANGEME$0000000000000000000000"
     gc-faro-cors:
       headers:
-        # Single quotes: inside double quotes, YAML reads `\.` as an invalid escape and Traefik
-        # rejects the whole file.
+        # Single quotes keep the regex as written. Between double quotes every backslash must be
+        # doubled (`\\.`): a single `\.` is an invalid YAML escape there.
         accessControlAllowOriginListRegex:
           - '^https://([a-z0-9-]+\.)?example\.com$'
         accessControlAllowMethods:
