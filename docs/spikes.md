@@ -61,10 +61,23 @@ de Coolify (`applicationParser`, `bootstrap/helpers/parsers.php`, branche `v4.x`
 `16a8c79`) ajoute, option activée, le réseau de destination à chaque service par
 `$networks_temp->put($network, null)` **après** les réseaux écrits dans le compose : l'entrée
 `coolify: {aliases: [gc-loki]}` est remplacée par `coolify: null` et les alias disparaissent.
-Option désactivée, les entrées du compose sont gardées telles quelles, avec leurs alias, et seuls
-les services qui déclarent `coolify` le rejoignent (un réseau de premier niveau ajouté sans
-configuration n'est pas reporté sur les autres services). Le service « Grafana », lui, est une
-ressource Service : l'option y lance `docker network connect` après le démarrage, sans conflit.
+Option désactivée, les entrées du compose sont gardées telles quelles, avec leurs alias. Le même
+parseur (l. 1543-1560) ajoute bien chaque réseau de premier niveau déclaré (sauf `default`), ici
+`coolify`, aux services qui ne le listent pas, mais avec la valeur `null`, que la boucle suivante
+(l. 1590-1603) écarte : elle ne garde qu'une chaîne ou un tableau. Seul le réseau `<uuid>` de la
+ressource est ajouté à tous les services (l. 1605-1607). Option désactivée, un service n'est donc
+sur `coolify` que s'il le déclare : `grafana-setup` le déclare lui-même, sans alias, pour joindre
+`GRAFANA_URL` (`grafana-<uuid>`) ; `config-guard`, `node-exporter` et `alloy-gateway` n'y sont
+pas (Traefik joint `alloy-gateway` par le réseau `<uuid>`, auquel Coolify connecte
+`coolify-proxy`). Vérifié en exécutant ces lignes sur le compose rendu : option désactivée,
+`grafana-setup` → `{default, coolify, <uuid>}` et un service sans `networks` → `{<uuid>}`. Le
+service « Grafana », lui, est une ressource Service : l'option y lance `docker network connect`
+après le démarrage, sans conflit.
+
+**Alternative écartée : « Consistent Container Names ».** L'option donne aux conteneurs un nom
+stable, `loki-<uuid>`, qui résoudrait sur `coolify`. Les alias `gc-*` lui sont préférés : courts,
+indépendants de l'UUID de la ressource, ils restent identiques d'un serveur à l'autre et après
+une recréation de la ressource.
 
 ## S2 — Portée de `coolify.traefik.middlewares` et références `@file` (spec § 5.4)
 
