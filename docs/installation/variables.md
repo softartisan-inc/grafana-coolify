@@ -57,12 +57,12 @@ Tant que le point Faro est fermé (aucun domaine pour `alloy`), `HOST_MAP`,
 
 Une variable de cette section laissée **vide** prend son défaut : Coolify transmet la valeur vide
 sans appliquer le repli du compose, Tempo, Loki et Prometheus appliquent donc le défaut
-eux-mêmes ([spike S5](../spikes.md#s5--montages-et-droits-propres-au-plan-a)). Une valeur
+eux-mêmes ([spike S5](../spikes.md#variables-vidées-dans-coolify--le-repli-var-défaut-du-compose-ne-sapplique-pas)). Une valeur
 renseignée mais mal formée ou nulle (`0`, `0h`, `0GB`) arrête le déploiement à `config-guard`.
 
 | Variable | Défaut |
 |---|---|
-| `LOKI_RETENTION_PROD` / `LOKI_RETENTION_DEFAULT` | `720h` / `168h` |
+| `LOKI_RETENTION_PROD` / `LOKI_RETENTION_DEFAULT` | `720h` / `168h` (entre `24h` et `292y`, unités dans l'ordre `y w d h m s ms`. Loki refuse au démarrage une rétention de flux (`LOKI_RETENTION_PROD`) sous 24h ; `LOKI_RETENTION_DEFAULT` est aligné sur le même plancher, le minimum documenté par Loki. `config-guard` refuse les deux avant) |
 | `TEMPO_RETENTION` | `168h` |
 | `TEMPO_MAX_ACTIVE_SERIES` | `100000` (vide = `100000` ; `0`, qui voudrait dire « illimité », est refusé par `config-guard`) |
 | `PROM_RETENTION_TIME` / `PROM_RETENTION_SIZE` | `90d` / `100GB` |

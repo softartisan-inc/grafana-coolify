@@ -12,10 +12,12 @@ Préparation commune :
   **désactivé** sur le package (le compose rejoint lui-même le réseau `coolify`, voir S1) et
   **activé** sur le service Coolify « Grafana ».
 - Un accès SSH au serveur, `docker` disponible.
-- Dans les commandes, remplacer `<app>` par l'UUID de la ressource Coolify et `<uuid>` par le
-  suffixe **complet** des conteneurs (`<uuid>-<horodatage>` pour le package, relevé par
-  `docker ps`). `config-guard` et `grafana-setup` sont des tâches ponctuelles : une fois finies
-  (`Exited (0)`), `docker ps` ne les liste plus ; les trouver avec `docker ps -a`
+- Dans les commandes, remplacer `<app>` et `<uuid>` par l'UUID de la ressource Coolify. Les
+  conteneurs du package se nomment `<service>-<uuid>-<horodatage>` (des chiffres, nouveaux à
+  chaque déploiement, par exemple `tempo-<uuid>-210318760218`) : relever le nom complet avec
+  `docker ps --format '{{.Names}}' | grep -E '^tempo-[a-z0-9]+-[0-9]+$'`. `config-guard` et
+  `grafana-setup` sont des tâches ponctuelles : une fois finies (`Exited (0)`), `docker ps` ne
+  les liste plus ; les trouver avec `docker ps -a`
   (`docker ps -a --filter name=config-guard --format '{{.Names}} {{.Status}}'`).
 
 ## S0 — Version de Coolify et limite de la ligne de commande (spec O3, § 4.3)
@@ -87,8 +89,8 @@ une recréation de la ressource.
 2. Lire les labels générés :
 
    ```bash
-   docker inspect alloy-<uuid> --format '{{json .Config.Labels}}' | tr ',' '\n' | grep -i middlewares
-   docker inspect alloy-gateway-<uuid> --format '{{json .Config.Labels}}' | tr ',' '\n' | grep -i middlewares
+   docker inspect alloy-<uuid>-<horodatage> --format '{{json .Config.Labels}}' | tr ',' '\n' | grep -i middlewares
+   docker inspect alloy-gateway-<uuid>-<horodatage> --format '{{json .Config.Labels}}' | tr ',' '\n' | grep -i middlewares
    ```
 
    Attendu : chaque routeur d'`alloy` porte exactement
@@ -133,8 +135,8 @@ Depuis une page instrumentée avec le SDK Faro Web et `@grafana/faro-web-tracing
 `app.namespace`, `app.name`, `app.environment`), déclencher un `fetch`, puis :
 
 ```bash
-docker exec alloy-<uuid> wget -qO- 'http://gc-tempo:3200/api/search?tags=service.name%3D<app.name>&limit=1'
-docker exec alloy-<uuid> wget -qO- 'http://gc-tempo:3200/api/v2/traces/<traceID>'
+docker exec alloy-<uuid>-<horodatage> wget -qO- 'http://gc-tempo:3200/api/search?tags=service.name%3D<app.name>&limit=1'
+docker exec alloy-<uuid>-<horodatage> wget -qO- 'http://gc-tempo:3200/api/v2/traces/<traceID>'
 ```
 
 Attendu, sur la ressource du span stocké : `project` (issu de `service.namespace`), `env` (issu de
@@ -157,7 +159,7 @@ exacts du commit déployé sont dans `docker-compose.yaml`
    find config -type f | sort
    find config -type f -exec sha256sum {} +
    find config -mindepth 2 -type d
-   docker logs config-guard-<uuid>
+   docker logs config-guard-<uuid>-<horodatage>
    ```
 
    Attendu :
@@ -173,8 +175,8 @@ exacts du commit déployé sont dans `docker-compose.yaml`
    ```bash
    grep -E 'loki\.[0-9a-f]{8}\.yaml' /data/coolify/applications/<app>/docker-compose.yaml | head -n 2
    ls -l /data/coolify/applications/<app>/config/loki/
-   docker inspect loki-<uuid> --format '{{json .Mounts}}'
-   docker logs config-guard-<uuid>
+   docker inspect loki-<uuid>-<horodatage> --format '{{json .Mounts}}'
+   docker logs config-guard-<uuid>-<horodatage>
    ```
 
    Attendu : un nouveau fichier `loki.<nouvelle empreinte>.yaml` contenant la ligne ajoutée, monté
@@ -194,17 +196,17 @@ purement visuelle, à noter.
 Ces points découlent de choix du plan A que le banc natif ne peut pas exercer :
 
 ```bash
-docker inspect alloy-<uuid> --format '{{.Config.User}} ro={{.HostConfig.ReadonlyRootfs}} {{json .Mounts}}'
-docker exec alloy-<uuid> sh -c 'ls -ld /var/lib/alloy /var/lib/alloy/queue && touch /var/lib/alloy/queue/.w && echo writable'
-docker exec alloy-gateway-<uuid> sh -c 'touch /var/lib/alloy/.w && echo writable && df -h /var/lib/alloy'
-for c in alloy-<uuid> alloy-gateway-<uuid>; do
+docker inspect alloy-<uuid>-<horodatage> --format '{{.Config.User}} ro={{.HostConfig.ReadonlyRootfs}} {{json .Mounts}}'
+docker exec alloy-<uuid>-<horodatage> sh -c 'ls -ld /var/lib/alloy /var/lib/alloy/queue && touch /var/lib/alloy/queue/.w && echo writable'
+docker exec alloy-gateway-<uuid>-<horodatage> sh -c 'touch /var/lib/alloy/.w && echo writable && df -h /var/lib/alloy'
+for c in alloy-<uuid>-<horodatage> alloy-gateway-<uuid>-<horodatage>; do
   f=$(docker inspect "$c" --format '{{range .Mounts}}{{.Destination}} {{end}}' | tr ' ' '\n' | grep -E '^/etc/alloy/config\.[0-9a-f]{8}\.alloy$')
   docker exec "$c" sh -c 'if (: >> "$1") 2>/dev/null; then echo "WRITABLE $1"; else echo "refused $1"; fi' sh "$f"
 done
 docker ps -a --filter name=config-guard --format '{{.Names}} {{.Status}}'
-docker inspect config-guard-<uuid> --format '{{json .Mounts}}'
-docker inspect node-exporter-<uuid> --format '{{json .Mounts}}'
-docker inspect loki-<uuid> --format '{{json .Mounts}}'
+docker inspect config-guard-<uuid>-<horodatage> --format '{{json .Mounts}}'
+docker inspect node-exporter-<uuid>-<horodatage> --format '{{json .Mounts}}'
+docker inspect loki-<uuid>-<horodatage> --format '{{json .Mounts}}'
 ```
 
 Le test d'écriture passe par un sous-shell `( … )` : dans le `sh` de l'image (dash), une
@@ -228,7 +230,7 @@ Attendu :
 - les trois montages de `node-exporter` (`/proc`, `/sys`, `/`, syntaxe courte `:ro`) sont en
   lecture seule (`"RW":false`) ;
 - `TENANT_HOST_REGEX`, marquée « Is Literal? », arrive intacte :
-  `docker exec alloy-<uuid> printenv TENANT_HOST_REGEX` affiche la regex avec ses `$`.
+  `docker exec alloy-<uuid>-<horodatage> printenv TENANT_HOST_REGEX` affiche la regex avec ses `$`.
 
 ### Variables vidées dans Coolify : le repli `${VAR:-défaut}` du compose ne s'applique pas
 
@@ -257,7 +259,10 @@ appliqué là où la valeur est lue, plus seulement dans le compose :
   les options de rétention et `--enable-feature` seulement si `PROM_ENABLE_FEATURES` est rempli ;
 - `config-guard` reçoit ces variables **sans** repli et refuse le déploiement si une valeur
   **renseignée** est mal formée ou nulle (`0`, `0h`, `0GB`… : rétention nulle ou
-  plafond illimité), `ENABLE_EXEMPLARS` autre que `true`/`false` compris ;
+  plafond illimité), `ENABLE_EXEMPLARS` autre que `true`/`false` compris, ainsi qu'une
+  rétention Loki de moins de `24h` : Loki refuse au démarrage une rétention de flux
+  (`LOKI_RETENTION_PROD`) sous 24h et redémarre en boucle ; `LOKI_RETENTION_DEFAULT` est aligné
+  sur le même plancher, le minimum documenté par Loki ;
 - `tests/test_empty_values.py` vérifie que chaque `${VAR:-défaut}` du compose a son défaut chez
   le consommateur, identique à `.env.example` ; `scripts/check.py` (`validators`) valide les
   configs Loki et Tempo une seconde fois avec toutes ces variables vides ; le banc natif
@@ -270,9 +275,9 @@ Vérification à rejouer après le déploiement du correctif :
    puis :
 
    ```bash
-   docker inspect tempo-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(TEMPO_MAX_ACTIVE_SERIES|TEMPO_RETENTION)='
-   docker exec prometheus-<uuid> wget -qO- http://localhost:9090/api/v1/status/flags | grep -oE '"storage.tsdb.retention.(time|size)":"[^"]*"'
-   docker run --rm --network container:tempo-<uuid> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep -E 'max_active_series|^        block_retention'
+   docker inspect tempo-<uuid>-<horodatage> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(TEMPO_MAX_ACTIVE_SERIES|TEMPO_RETENTION)='
+   docker exec prometheus-<uuid>-<horodatage> wget -qO- http://localhost:9090/api/v1/status/flags | grep -oE '"storage.tsdb.retention.(time|size)":"[^"]*"'
+   docker run --rm --network container:tempo-<uuid>-<horodatage> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep -E 'max_active_series|^        block_retention'
    docker ps -a --filter name=<uuid> --format '{{.Names}} {{.Status}}'
    ```
 
@@ -282,12 +287,43 @@ Vérification à rejouer après le déploiement du correctif :
    les conteneurs sont `Up` (et `config-guard` `Exited (0)`). Tempo est interrogé depuis un
    conteneur jetable qui partage son réseau : l'image Tempo ne fournit pas forcément `wget`.
 2. Vérifier que Coolify a gardé l'`entrypoint` de Prometheus :
-   `docker inspect prometheus-<uuid> --format '{{json .Config.Entrypoint}}'` affiche
+   `docker inspect prometheus-<uuid>-<horodatage> --format '{{json .Config.Entrypoint}}'` affiche
    `["/bin/sh","/etc/prometheus/start.<8 hex>.sh"]`.
 3. Saisir `TEMPO_MAX_ACTIVE_SERIES=0`, **Redeploy** : `config-guard` échoue
-   (`docker logs config-guard-<uuid>` : `TEMPO_MAX_ACTIVE_SERIES must be a positive integer`) et
+   (`docker logs config-guard-<uuid>-<horodatage>` : `TEMPO_MAX_ACTIVE_SERIES must be a positive integer`) et
    aucun service ne démarre.
 4. Remettre les valeurs de `.env.example` (ou laisser vide) et redéployer.
+
+### Résultat du déploiement réel (2026-10-04)
+
+**Partie A (montages et droits) : OK.**
+
+- `alloy` et `alloy-gateway` tournent en `473:473`, `ro=true`, `cap_drop: ALL`,
+  `no-new-privileges` ; `/var/lib/alloy/queue` (volume) et le tmpfs de 64 Mo de la passerelle
+  sont inscriptibles ; l'écriture dans le fichier de config est refusée ;
+- `node-exporter` : `/host/proc`, `/host/root` et `/host/sys` en `"RW":false` ;
+- `config-guard` : `/guard` en `"RW":false` ;
+- limites mémoire appliquées : `config-guard` 32m, `loki`, `tempo` et `prometheus` 1536m chacun,
+  `node-exporter` 64m, `alloy` 768m, `alloy-gateway` 256m.
+
+**Partie B (variables vidées), après la PR #8 : OK.** `TEMPO_MAX_ACTIVE_SERIES` vidée : Tempo
+reçoit la variable vide et sa configuration effective affiche `max_active_series: 100000`.
+`TEMPO_MAX_ACTIVE_SERIES=0` : `config-guard` échoue
+(`TEMPO_MAX_ACTIVE_SERIES must be a positive integer, 0 means no limit (empty: 100000)`) et aucun
+service ne démarre. Le log de déploiement de Coolify n'affiche que
+`service "config-guard" didn't complete successfully: exit 1` : la raison se lit avec
+`docker logs` ([dépannage](depannage/deploiement-coolify.md#service-config-guard-didnt-complete-successfully-exit-1)).
+
+**Lignes `block_retention: 336h0m0s` en plus dans `/status/config` de Tempo** : sans effet. Ce
+sont les défauts de modules qui ne tournent pas (`backend-worker`, `backend-scheduler`) ;
+`/status/config` affiche la configuration de tous les modules. `/status/services` liste
+`compactor` en `Running` et aucun de ces deux modules : la rétention effective des traces est
+celle du compacteur, `168h0m0s`. Pour le vérifier :
+
+```bash
+T=$(docker ps --format '{{.Names}}' | grep -E '^tempo-[a-z0-9]+-[0-9]+$' | head -n 1)
+docker run --rm --network container:"$T" alpine:3.22 wget -qO- http://localhost:3200/status/services
+```
 
 ## S6 — `grafana-setup` du plan B sur la recette (bloquant avant la production)
 
@@ -295,8 +331,8 @@ Tableaux de bord et alertes, avec le vrai Grafana, le vrai SMTP et le vrai bot. 
 bloquant** : pas de mise en production tant que S6 n'est pas OK.
 
 ```bash
-docker logs grafana-setup-<uuid> | grep -E 'datasources and folders: done|content files verified|grafana-setup: done|ERROR'
-docker inspect grafana-setup-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(GRAFANA_SETUP_(PINNED_URL|FILES)|HOST_ENV)=' | cut -c1-120
+docker logs grafana-setup-<uuid>-<horodatage> | grep -E 'datasources and folders: done|content files verified|grafana-setup: done|ERROR'
+docker inspect grafana-setup-<uuid>-<horodatage> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(GRAFANA_SETUP_(PINNED_URL|FILES)|HOST_ENV)=' | cut -c1-120
 grep -n GRAFANA_SETUP_TAG tools/versions.env
 GRAFANA_URL=https://grafana.example.com GRAFANA_SA_TOKEN=glsa_... python3 scripts/notify_test.py
 ```
@@ -325,5 +361,5 @@ Attendu :
 | S2 | | | | |
 | S3 | | | | |
 | S4 | | | | |
-| S5 | | | KO puis corrigé | Variable vidée : Coolify transmet la valeur vide, le repli `:-` du compose ne s'applique pas (Tempo `Up` sans erreur). Défauts appliqués par Tempo, Loki, `start.sh` de Prometheus ; valeurs nulles refusées par `config-guard`. À rejouer après la fusion. |
+| S5 | 2026-10-04 | | KO puis corrigé, OK | Variable vidée : Coolify transmet la valeur vide, le repli `:-` du compose ne s'applique pas (Tempo `Up` sans erreur). Défauts appliqués par Tempo, Loki, `start.sh` de Prometheus ; valeurs nulles refusées par `config-guard`. Rejoué le 2026-10-04 après la PR #8 : montages, droits et limites OK ; vide → `100000`, `0` refusé. |
 | S6 | | | | |

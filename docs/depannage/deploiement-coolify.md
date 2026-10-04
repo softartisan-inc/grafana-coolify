@@ -100,6 +100,35 @@ désactiver puis réactiver). Ne touche pas à la stack.
 **Vérification** : l'état repasse en synchronisé ; `docker ps --filter name=coolify-sentinel`
 le montre `Up`.
 
+## `service "config-guard" didn't complete successfully: exit 1`
+
+**Symptôme** : le log de déploiement de Coolify s'arrête sur
+`service "config-guard" didn't complete successfully: exit 1`. Ce log ne montre que l'état
+renvoyé par `docker compose`, jamais la sortie des conteneurs : la raison n'y figure pas.
+
+**Cause** : `config-guard` a refusé la configuration (voir l'entrée suivante). Tant qu'il échoue,
+**aucun service ne démarre** : l'ingestion des logs, métriques et traces est arrêtée.
+
+**Correctif** : lire la raison dans les logs du conteneur, **sur l'hôte** (le conteneur est
+arrêté, d'où `docker ps -a`) :
+
+```bash
+docker logs $(docker ps -a --format '{{.Names}}' | grep -E '^config-guard-[a-z0-9]+-[0-9]+$' | head -1) 2>&1 | grep ERROR
+```
+
+Exemple réel (`TEMPO_MAX_ACTIVE_SERIES=0` saisi dans Coolify) :
+
+```
+config-guard: ERROR: TEMPO_MAX_ACTIVE_SERIES must be a positive integer, 0 means no limit (empty: 100000)
+```
+
+Remettre une valeur valide (celle de `.env.example`, ou vide pour le défaut) dans l'onglet
+**Environment Variables**, puis **Redeploy** sans attendre : la stack ne collecte rien tant que le
+déploiement échoue.
+
+**Vérification** : le déploiement va au bout ; la même commande `docker logs` affiche
+`config-guard: all checks passed` (sans `grep ERROR`) ; les conteneurs sont `Up`.
+
 ## `config-guard: FAILED - no service will start`
 
 **Symptôme** : aucun service ne démarre ; les logs de `config-guard` contiennent une ou plusieurs
@@ -110,7 +139,10 @@ lignes `config-guard: ERROR: …`.
 variable vérifiée par `config-guard` (`IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`,
 `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX`, `HOST_ENV`, les
 rétentions, `TEMPO_MAX_ACTIVE_SERIES`, `ENABLE_EXEMPLARS`) a un format invalide ou une valeur
-nulle.
+nulle, ou une rétention Loki (`LOKI_RETENTION_PROD`, `LOKI_RETENTION_DEFAULT`) est inférieure à
+`24h`, supérieure à `292y` ou mal ordonnée (`1h1d`). Loki refuse au démarrage une rétention de
+flux (`LOKI_RETENTION_PROD`) sous 24h ; `LOKI_RETENTION_DEFAULT` est aligné sur le même
+plancher, le minimum documenté par Loki.
 
 **Correctif** : lire la ligne `ERROR`, corriger la variable, ou pour un fichier, vérifier que le
 compose déployé est le `docker-compose.yaml` généré à jour (`python3 scripts/check.py`), puis
@@ -122,13 +154,16 @@ compose déployé est le `docker-compose.yaml` généré à jour (`python3 scrip
 
 **Symptôme** : une variable vidée dans l'onglet **Environment Variables** (variable gardée,
 valeur vide) arrive vide dans le conteneur :
-`docker inspect tempo-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}'` affiche
+`docker inspect tempo-<uuid>-<horodatage> --format '{{range .Config.Env}}{{println .}}{{end}}'` affiche
 `ENABLE_EXEMPLARS=` au lieu de `ENABLE_EXEMPLARS=false`. Le conteneur reste `Up`, sans message.
 
 **Cause** : Coolify substitue lui-même les variables et transmet la valeur vide : le repli
 `${VAR:-défaut}` du compose ne s'applique pas (spike S5). Avant le correctif, une rétention Tempo
 vide valait `0s` (traces supprimées aussitôt) et un `TEMPO_MAX_ACTIVE_SERIES` vide valait `0`
-(aucun plafond de séries) ; Loki et Prometheus redémarraient en boucle sur une rétention vide.
+(aucun plafond de séries) ; sur une rétention vide, Loki redémarrait en boucle ; sur le banc,
+Prometheus aussi. Sur Coolify, Prometheus n'était pas touché : ses options de rétention étaient
+dans `command:`, interpolées par Docker Compose depuis le `.env` écrit par Coolify, où
+`${X:-90d}` couvre la valeur vide. Les variables de Loki, elles, passent par `environment:`.
 
 **Correctif** : aucun à faire sur une version à jour : le défaut de `.env.example` est appliqué
 par Tempo et Loki (dans leur configuration), par `config/prometheus/start.sh` pour Prometheus,
@@ -138,6 +173,6 @@ le refuse.
 
 **Vérification** : la variable reste vide dans `docker inspect` (comportement de Coolify), mais
 la configuration effective porte le défaut, par exemple
-`docker run --rm --network container:tempo-<uuid> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep max_active_series`
+`docker run --rm --network container:tempo-<uuid>-<horodatage> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep max_active_series`
 affiche `max_active_series: 100000`. Procédure complète : spike S5 de
 [`docs/spikes.md`](../spikes.md#variables-vidées-dans-coolify--le-repli-var-défaut-du-compose-ne-sapplique-pas).

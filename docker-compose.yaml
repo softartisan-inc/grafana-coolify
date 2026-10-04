@@ -29,7 +29,7 @@ services:
     command:
       - sh
       - -c
-      - "echo '9fa15ea7fa542046d0021b0122e6bbf6ff3307a139006af45da3c8b63ff091e2  /opt/config-guard/guard.9fa15ea7.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.9fa15ea7.sh"
+      - "echo 'e2db77ce96f3c9f841b289c311b07ee5f92fca417fde2e74c22823e005d9336f  /opt/config-guard/guard.e2db77ce.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.e2db77ce.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.4ebe90a7.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.be7203a4.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/tempo/tempo.d08f6ba0.yaml=d08f6ba01f1a2b4f6e33ff6e1748cdce0ac3582fa3ea23690eae6d25d2751d58"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
@@ -52,8 +52,8 @@ services:
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.9fa15ea7.sh
-        target: /opt/config-guard/guard.9fa15ea7.sh
+        source: ./config/config-guard/guard.e2db77ce.sh
+        target: /opt/config-guard/guard.e2db77ce.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -160,8 +160,56 @@ services:
           }
           check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
           check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
-          check_set LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 720h (empty: 720h)"
-          check_set LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 168h (empty: 168h)"
+          # Loki parses its retentions with Prometheus model.ParseDuration: units y w d h m s ms, each at
+          # most once and in that order, total at most 9223372036854ms (int64 nanoseconds, about 292y);
+          # anything else stops Loki at startup. Loki also refuses a stream retention
+          # (LOKI_RETENTION_PROD) below 24h and restarts in a loop; LOKI_RETENTION_DEFAULT is held to the
+          # same floor, the minimum documented by Loki (one index period).
+          LOKI_DURATION='^([0-9]+y)?([0-9]+w)?([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?([0-9]+ms)?$'
+          LOKI_MAX_MS=9223372036854
+          loki_duration_in_range() { # duration already matching LOKI_DURATION; 24h <= total <= LOKI_MAX_MS
+            rest=$1
+            total=0
+            while [ -n "$rest" ]; do
+              num=${rest%%[!0-9]*}
+              rest=${rest#"$num"}
+              case $rest in
+                ms*) unit=ms ;;
+                *) unit=${rest%"${rest#?}"} ;;
+              esac
+              rest=${rest#"$unit"}
+              # Leading zeros would make $(( )) read the number as octal.
+              while :; do
+                case $num in
+                  0?*) num=${num#0} ;;
+                  *) break ;;
+                esac
+              done
+              # Above 13 digits the number alone exceeds LOKI_MAX_MS and would overflow $(( )).
+              [ "${#num}" -le 13 ] || return 1
+              case $unit in
+                y) mult=31536000000 ;;
+                w) mult=604800000 ;;
+                d) mult=86400000 ;;
+                h) mult=3600000 ;;
+                m) mult=60000 ;;
+                s) mult=1000 ;;
+                *) mult=1 ;;
+              esac
+              # Compare before multiplying: num * mult never exceeds LOKI_MAX_MS, total stays below 2^63.
+              [ "$num" -le $((LOKI_MAX_MS / mult)) ] || return 1
+              total=$((total + num * mult))
+              [ "$total" -le "$LOKI_MAX_MS" ] || return 1
+            done
+            [ "$total" -ge 86400000 ]
+          }
+          check_loki_retention() { # name value example
+            if [ -n "$2" ] && { ! matches "$2" "$LOKI_DURATION" || ! loki_duration_in_range "$2"; }; then
+              error "$1 must be a duration between 24h and 292y, units in the order y w d h m s ms, each at most once, such as $3 (empty: $3)"
+            fi
+          }
+          check_loki_retention LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 720h
+          check_loki_retention LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 168h
           check_set PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 90d (empty: 90d)"
           check_set PROM_RETENTION_SIZE "${PROM_RETENTION_SIZE:-}" '^[0-9]+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$' "must be a non-zero size such as 100GB (empty: 100GB)"
           case ${ENABLE_EXEMPLARS:-false} in

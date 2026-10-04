@@ -18,7 +18,8 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | `/etc/fail2ban/jail.d/…: No such file or directory` | hôte | [fail2ban non installé](../serveur/durcissement.md#a-fail2ban) |
 | Domaines `alloy-<uuid>.<wildcard>` remplis sans demande | Coolify | [domaines générés](deploiement-coolify.md#faro-et-otlp-exposés-sans-domaine-demandé) |
 | Sentinel **Out of sync** | Coolify | [Sentinel](deploiement-coolify.md#sentinel-out-of-sync) |
-| `config-guard: FAILED - no service will start` (prévention) | logs `config-guard` | [config-guard](deploiement-coolify.md#config-guard-failed---no-service-will-start) |
+| `service "config-guard" didn't complete successfully: exit 1` | log de déploiement | [lire la raison](deploiement-coolify.md#service-config-guard-didnt-complete-successfully-exit-1) |
+| `config-guard: FAILED - no service will start` | logs `config-guard` | [config-guard](deploiement-coolify.md#config-guard-failed---no-service-will-start) |
 | `ENABLE_EXEMPLARS=` (vide) dans `docker inspect`, conteneur `Up` sans erreur | Coolify | [variable vide](deploiement-coolify.md#variable-vide-transmise-par-coolify-le-défaut-du-compose-est-ignoré) |
 
 ## `grafana-setup`
@@ -60,6 +61,7 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | Terminal muet après `read -rs` | [deux commandes](notifications.md#le-terminal-semble-bloqué-après-read--rs) |
 | `notifications: skipped (ALERT_EMAILS is empty: the rules notify nobody)` | [personne n'est prévenu](notifications.md#les-règles-se-déclenchent-mais-personne-nest-prévenu) |
 | `GF_SMTP_*` présents dans le package | [SMTP](notifications.md#gc-email--le-test-échoue-ou-rien-narrive) |
+| `Down` UptimeRobot : `200 - OK, but keyword is not in…` | [mot-clé de la sonde](notifications.md#faux-down--200---ok-but-keyword-is-not-in) |
 
 ## Sécurité
 

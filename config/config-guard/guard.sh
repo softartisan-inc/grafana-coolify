@@ -103,8 +103,56 @@ check_set() { # name value extended_regex message
 }
 check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
 check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
-check_set LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 720h (empty: 720h)"
-check_set LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 168h (empty: 168h)"
+# Loki parses its retentions with Prometheus model.ParseDuration: units y w d h m s ms, each at
+# most once and in that order, total at most 9223372036854ms (int64 nanoseconds, about 292y);
+# anything else stops Loki at startup. Loki also refuses a stream retention
+# (LOKI_RETENTION_PROD) below 24h and restarts in a loop; LOKI_RETENTION_DEFAULT is held to the
+# same floor, the minimum documented by Loki (one index period).
+LOKI_DURATION='^([0-9]+y)?([0-9]+w)?([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?([0-9]+ms)?$'
+LOKI_MAX_MS=9223372036854
+loki_duration_in_range() { # duration already matching LOKI_DURATION; 24h <= total <= LOKI_MAX_MS
+  rest=$1
+  total=0
+  while [ -n "$rest" ]; do
+    num=${rest%%[!0-9]*}
+    rest=${rest#"$num"}
+    case $rest in
+      ms*) unit=ms ;;
+      *) unit=${rest%"${rest#?}"} ;;
+    esac
+    rest=${rest#"$unit"}
+    # Leading zeros would make $(( )) read the number as octal.
+    while :; do
+      case $num in
+        0?*) num=${num#0} ;;
+        *) break ;;
+      esac
+    done
+    # Above 13 digits the number alone exceeds LOKI_MAX_MS and would overflow $(( )).
+    [ "${#num}" -le 13 ] || return 1
+    case $unit in
+      y) mult=31536000000 ;;
+      w) mult=604800000 ;;
+      d) mult=86400000 ;;
+      h) mult=3600000 ;;
+      m) mult=60000 ;;
+      s) mult=1000 ;;
+      *) mult=1 ;;
+    esac
+    # Compare before multiplying: num * mult never exceeds LOKI_MAX_MS, total stays below 2^63.
+    [ "$num" -le $((LOKI_MAX_MS / mult)) ] || return 1
+    total=$((total + num * mult))
+    [ "$total" -le "$LOKI_MAX_MS" ] || return 1
+  done
+  [ "$total" -ge 86400000 ]
+}
+check_loki_retention() { # name value example
+  if [ -n "$2" ] && { ! matches "$2" "$LOKI_DURATION" || ! loki_duration_in_range "$2"; }; then
+    error "$1 must be a duration between 24h and 292y, units in the order y w d h m s ms, each at most once, such as $3 (empty: $3)"
+  fi
+}
+check_loki_retention LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 720h
+check_loki_retention LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 168h
 check_set PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 90d (empty: 90d)"
 check_set PROM_RETENTION_SIZE "${PROM_RETENTION_SIZE:-}" '^[0-9]+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$' "must be a non-zero size such as 100GB (empty: 100GB)"
 case ${ENABLE_EXEMPLARS:-false} in
