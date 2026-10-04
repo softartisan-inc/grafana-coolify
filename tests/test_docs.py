@@ -91,6 +91,29 @@ class ReadmeTest(unittest.TestCase):
         self.assertIn("## S6 — `grafana-setup` du plan B sur la recette (bloquant avant la production)", spikes)
         self.assertIn("| S6 | | | | |", spikes)
 
+    def test_first_coolify_deployment_findings_are_documented(self):
+        for text in (
+            "${VAR:?message}",  # Coolify sets VAR=message instead of refusing to deploy
+            "1 an",  # Grafana service-account token expiry
+            "rappel d'agenda",
+            "vider le champ Domains",  # auto-generated alloy / alloy-gateway domains
+            "https://faro.example.com:12347",
+            "ne se renseignent pas ici",  # GF_SMTP_* belong to the Grafana service
+            "[CMD] … base64 …",  # deployment logs hold the whole .env
+            "faire tourner tous les secrets",
+            "guillemets simples",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, README)
+
+    def test_origin_regex_examples_are_single_quoted(self):
+        """Inside double quotes, YAML rejects `\\.`: Traefik then drops the whole file."""
+        example = (ROOT / "traefik" / "grafana-coolify.yaml.example").read_text(encoding="utf-8")
+        for name, text in (("README.md", README), ("grafana-coolify.yaml.example", example)):
+            with self.subTest(file=name):
+                self.assertNotRegex(text, r'"\^https://[^"]*\\')
+        self.assertIn("- '^https://([a-z0-9-]+\\.)?example\\.com$'", example)
+
     def test_mandatory_variables_are_explained(self):
         for name in ("IP_HASH_SALT", "FARO_API_KEY", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL", "GRAFANA_URL", "GRAFANA_SA_TOKEN"):
             with self.subTest(name=name):
