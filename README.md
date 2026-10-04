@@ -696,10 +696,13 @@ connue : ailleurs, un numéro de version à quatre nombres (`1.2.3.4`) est pris 
 Désactivés par défaut. Pour les activer : `PROM_ENABLE_FEATURES=exemplar-storage` **et**
 `ENABLE_EXEMPLARS=true`.
 
-`ENABLE_EXEMPLARS` et `TEMPO_MAX_ACTIVE_SERIES` ont une valeur de repli dans le compose
-(`${VAR:-défaut}`). Ne pas les vider dans Coolify : les supprimer, ou remettre la valeur de
-`.env.example`. Que Coolify conserve ces replis est vérifié par le spike S5 de
-[`docs/spikes.md`](docs/spikes.md).
+Une variable vidée dans Coolify vaut une variable absente : elle prend la valeur de
+`.env.example`. Coolify transmet la valeur vide telle quelle et le repli `${VAR:-défaut}` du
+compose ne s'applique pas (spike S5 de [`docs/spikes.md`](docs/spikes.md)) ; le défaut est donc
+appliqué là où la valeur est lue : par Tempo et Loki dans leur configuration, par
+`config/prometheus/start.sh` pour Prometheus, par Alloy et par `grafana-setup`. Une valeur
+renseignée mais invalide ou nulle (`TEMPO_MAX_ACTIVE_SERIES=0` : plafond illimité ;
+`TEMPO_RETENTION=0h` : traces supprimées aussitôt) est refusée par `config-guard`.
 
 ## Développement
 
@@ -720,7 +723,9 @@ Ne jamais modifier `docker-compose.yaml` à la main : modifier `compose.template
 
 Il lance les binaires officiels avec les mêmes commandes, variables et fichiers que le compose,
 chaque service sur sa propre adresse `127.0.10.N`, et ajoute temporairement les noms des services
-dans `/etc/hosts` (`sudo` requis).
+dans `/etc/hosts` (`sudo` requis). Les variables y sont interpolées comme le fait Coolify : une
+variable vide (`--set TEMPO_RETENTION=`) arrive vide, le repli `${VAR:-défaut}` du compose ne
+s'applique pas.
 
 ```bash
 python3 harness/stack.py up                     # config-guard puis la stack

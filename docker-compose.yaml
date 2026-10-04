@@ -5,6 +5,10 @@
 #   render.py adds the content hash to its source and target paths and to the references to them.
 # - Image tags come from tools/versions.env; config-guard gets the SHA-256 of every config file.
 # - `${VAR}` references are interpolated by Compose/Coolify and must all be in .env.example.
+# - Coolify passes a variable emptied in its UI as "" and skips `${VAR:-default}` (spike S5): a
+#   non-empty default below is a Docker Compose fallback only. Its consumer applies it again
+#   (Tempo/Loki `${VAR:-default}`, prometheus/start.sh, Alloy coalesce(), grafana-setup) and
+#   guard.sh rejects a malformed or zero value. tests/test_empty_values.py keeps them in step.
 # - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
@@ -25,9 +29,9 @@ services:
     command:
       - sh
       - -c
-      - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.fa19fbc1.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.fa19fbc1.sh"
+      - "echo '9fa15ea7fa542046d0021b0122e6bbf6ff3307a139006af45da3c8b63ff091e2  /opt/config-guard/guard.9fa15ea7.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.9fa15ea7.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.4ebe90a7.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.b1a0660d.yaml=b1a0660d327b9fe6f4c6dfd543ec80b9ab679fb32507e73eabb582237c681ac7;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/tempo/tempo.46f5a358.yaml=46f5a3584f9906c97da2b080ab22df235e245bf38c80c0a73e2ca38f424a71e1"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.4ebe90a7.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.be7203a4.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/tempo/tempo.d08f6ba0.yaml=d08f6ba01f1a2b4f6e33ff6e1748cdce0ac3582fa3ea23690eae6d25d2751d58"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
       # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
@@ -38,10 +42,18 @@ services:
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
       HOST_ENV: ${HOST_ENV:-prod}
+      # Checked only when set: an empty value takes its default where it is consumed (spike S5).
+      LOKI_RETENTION_PROD: ${LOKI_RETENTION_PROD:-}
+      LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-}
+      TEMPO_RETENTION: ${TEMPO_RETENTION:-}
+      TEMPO_MAX_ACTIVE_SERIES: ${TEMPO_MAX_ACTIVE_SERIES:-}
+      ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-}
+      PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-}
+      PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.fa19fbc1.sh
-        target: /opt/config-guard/guard.fa19fbc1.sh
+        source: ./config/config-guard/guard.9fa15ea7.sh
+        target: /opt/config-guard/guard.9fa15ea7.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -138,6 +150,24 @@ services:
             prod | preprod) ;;
             *) error "HOST_ENV must be prod or preprod" ;;
           esac
+          # Retentions and limits: empty takes the default where the value is consumed (Coolify passes an
+          # emptied variable as "", spike S5); a set value must be well formed and never 0, which Tempo
+          # reads as "delete every block" (retention) or "no limit" (series).
+          check_set() { # name value extended_regex message
+            if [ -n "$2" ] && { ! matches "$2" "$3" || matches "$2" '^(0+[a-zA-Z]*)+$'; }; then
+              error "$1 $4"
+            fi
+          }
+          check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
+          check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
+          check_set LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 720h (empty: 720h)"
+          check_set LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 168h (empty: 168h)"
+          check_set PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 90d (empty: 90d)"
+          check_set PROM_RETENTION_SIZE "${PROM_RETENTION_SIZE:-}" '^[0-9]+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$' "must be a non-zero size such as 100GB (empty: 100GB)"
+          case ${ENABLE_EXEMPLARS:-false} in
+            true | false) ;;
+            *) error "ENABLE_EXEMPLARS must be true or false (empty: false)" ;;
+          esac
           tenant_regex=${TENANT_HOST_REGEX:-}
           if [ -n "$tenant_regex" ]; then
             case $tenant_regex in
@@ -167,7 +197,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - -config.file=/etc/loki/loki.b1a0660d.yaml
+      - -config.file=/etc/loki/loki.a6ca1848.yaml
       - -config.expand-env=true
     environment:
       BIND_ADDR: 0.0.0.0
@@ -176,8 +206,8 @@ services:
       LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-168h}
     volumes:
       - type: bind
-        source: ./config/loki/loki.b1a0660d.yaml
-        target: /etc/loki/loki.b1a0660d.yaml
+        source: ./config/loki/loki.a6ca1848.yaml
+        target: /etc/loki/loki.a6ca1848.yaml
         content: |2
           auth_enabled: false
           server:
@@ -225,11 +255,11 @@ services:
             ingestion_burst_size_mb: 32
             per_stream_rate_limit: 8MB
             per_stream_rate_limit_burst: 24MB
-            retention_period: ${LOKI_RETENTION_DEFAULT}
+            retention_period: ${LOKI_RETENTION_DEFAULT:-168h}
             retention_stream:
               - selector: '{env="prod"}'
                 priority: 1
-                period: ${LOKI_RETENTION_PROD}
+                period: ${LOKI_RETENTION_PROD:-720h}
             otlp_config:
               resource_attributes:
                 ignore_defaults: true
@@ -263,7 +293,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - -config.file=/etc/tempo/tempo.46f5a358.yaml
+      - -config.file=/etc/tempo/tempo.d08f6ba0.yaml
       - -config.expand-env=true
     environment:
       BIND_ADDR: 0.0.0.0
@@ -273,8 +303,8 @@ services:
       ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-false}
     volumes:
       - type: bind
-        source: ./config/tempo/tempo.46f5a358.yaml
-        target: /etc/tempo/tempo.46f5a358.yaml
+        source: ./config/tempo/tempo.d08f6ba0.yaml
+        target: /etc/tempo/tempo.d08f6ba0.yaml
         content: |2
           stream_over_http_enabled: true
           server:
@@ -303,7 +333,7 @@ services:
               frontend_address: 127.0.0.1:9096
           compactor:
             compaction:
-              block_retention: ${TEMPO_RETENTION}
+              block_retention: ${TEMPO_RETENTION:-168h}
           metrics_generator:
             ring:
               kvstore:
@@ -326,7 +356,7 @@ services:
               path: ${TEMPO_DATA_DIR}/generator/wal
               remote_write:
                 - url: http://prometheus:9090/api/v1/write
-                  send_exemplars: ${ENABLE_EXEMPLARS}
+                  send_exemplars: ${ENABLE_EXEMPLARS:-false}
             traces_storage:
               path: ${TEMPO_DATA_DIR}/generator/traces
           storage:
@@ -342,7 +372,7 @@ services:
                 processors:
                   - span-metrics
                   - service-graphs
-                max_active_series: ${TEMPO_MAX_ACTIVE_SERIES}
+                max_active_series: ${TEMPO_MAX_ACTIVE_SERIES:-100000}
           usage_report:
             reporting_enabled: false
         read_only: true
@@ -364,15 +394,20 @@ services:
     depends_on:
       config-guard:
         condition: service_completed_successfully
+    # start.sh adds the retention and feature flags, with their default when the variable is empty.
+    entrypoint:
+      - /bin/sh
+      - /etc/prometheus/start.be7203a4.sh
     command:
       - --config.file=/etc/prometheus/prometheus.8fe5d468.yml
       - --storage.tsdb.path=/prometheus
       - --web.listen-address=0.0.0.0:9090
       - --web.enable-otlp-receiver
       - --web.enable-remote-write-receiver
-      - --storage.tsdb.retention.time=${PROM_RETENTION_TIME:-90d}
-      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-100GB}
-      - --enable-feature=${PROM_ENABLE_FEATURES:-}
+    environment:
+      PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-90d}
+      PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-100GB}
+      PROM_ENABLE_FEATURES: ${PROM_ENABLE_FEATURES:-}
     volumes:
       - type: bind
         source: ./config/prometheus/prometheus.8fe5d468.yml
@@ -408,6 +443,21 @@ services:
             - job_name: node-exporter
               static_configs:
                 - targets: ["node-exporter:9100"]
+        read_only: true
+      - type: bind
+        source: ./config/prometheus/start.be7203a4.sh
+        target: /etc/prometheus/start.be7203a4.sh
+        content: |2
+          #!/bin/sh
+          # Prometheus entrypoint. Coolify passes an emptied variable as "" and skips the compose
+          # ${VAR:-default} (spike S5): empty means default here. Keep the defaults equal to .env.example.
+          set -eu
+          : "${PROM_RETENTION_TIME:=90d}" "${PROM_RETENTION_SIZE:=100GB}"
+          set -- "$@" "--storage.tsdb.retention.time=$PROM_RETENTION_TIME" "--storage.tsdb.retention.size=$PROM_RETENTION_SIZE"
+          if [ -n "${PROM_ENABLE_FEATURES:-}" ]; then
+            set -- "$@" "--enable-feature=$PROM_ENABLE_FEATURES"
+          fi
+          exec prometheus "$@"
         read_only: true
       - prometheus-data:/prometheus
     expose:

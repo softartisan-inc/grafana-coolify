@@ -3,6 +3,10 @@
 #   render.py adds the content hash to its source and target paths and to the references to them.
 # - Image tags come from tools/versions.env; config-guard gets the SHA-256 of every config file.
 # - `${VAR}` references are interpolated by Compose/Coolify and must all be in .env.example.
+# - Coolify passes a variable emptied in its UI as "" and skips `${VAR:-default}` (spike S5): a
+#   non-empty default below is a Docker Compose fallback only. Its consumer applies it again
+#   (Tempo/Loki `${VAR:-default}`, prometheus/start.sh, Alloy coalesce(), grafana-setup) and
+#   guard.sh rejects a malformed or zero value. tests/test_empty_values.py keeps them in step.
 # - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
@@ -36,6 +40,14 @@ services:
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
       HOST_ENV: ${HOST_ENV:-prod}
+      # Checked only when set: an empty value takes its default where it is consumed (spike S5).
+      LOKI_RETENTION_PROD: ${LOKI_RETENTION_PROD:-}
+      LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-}
+      TEMPO_RETENTION: ${TEMPO_RETENTION:-}
+      TEMPO_MAX_ACTIVE_SERIES: ${TEMPO_MAX_ACTIVE_SERIES:-}
+      ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-}
+      PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-}
+      PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh
@@ -119,19 +131,29 @@ services:
     depends_on:
       config-guard:
         condition: service_completed_successfully
+    # start.sh adds the retention and feature flags, with their default when the variable is empty.
+    entrypoint:
+      - /bin/sh
+      - /etc/prometheus/start.sh
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.listen-address=0.0.0.0:9090
       - --web.enable-otlp-receiver
       - --web.enable-remote-write-receiver
-      - --storage.tsdb.retention.time=${PROM_RETENTION_TIME:-90d}
-      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-100GB}
-      - --enable-feature=${PROM_ENABLE_FEATURES:-}
+    environment:
+      PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-90d}
+      PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-100GB}
+      PROM_ENABLE_FEATURES: ${PROM_ENABLE_FEATURES:-}
     volumes:
       - type: bind
         source: ./config/prometheus/prometheus.yml
         target: /etc/prometheus/prometheus.yml
+        content: "@@CONTENT@@"
+        read_only: true
+      - type: bind
+        source: ./config/prometheus/start.sh
+        target: /etc/prometheus/start.sh
         content: "@@CONTENT@@"
         read_only: true
       - prometheus-data:/prometheus

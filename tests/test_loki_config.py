@@ -52,8 +52,8 @@ class LokiConfigTest(unittest.TestCase):
         self.assertIs(doc["compactor"]["retention_enabled"], True)
         self.assertEqual(doc["compactor"]["delete_request_store"], "filesystem")
         limits = doc["limits_config"]
-        self.assertEqual(limits["retention_period"], "${LOKI_RETENTION_DEFAULT}")
-        self.assertEqual(limits["retention_stream"], [{"selector": '{env="prod"}', "priority": 1, "period": "${LOKI_RETENTION_PROD}"}])
+        self.assertEqual(limits["retention_period"], "${LOKI_RETENTION_DEFAULT:-168h}")
+        self.assertEqual(limits["retention_stream"], [{"selector": '{env="prod"}', "priority": 1, "period": "${LOKI_RETENTION_PROD:-720h}"}])
         self.assertIs(limits["allow_structured_metadata"], True)
 
     def test_global_budgets_are_explicit(self):

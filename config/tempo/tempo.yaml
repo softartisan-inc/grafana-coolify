@@ -1,6 +1,11 @@
 # Tempo 2.x monolithic configuration for grafana-coolify.
 # Environment variables are expanded by Tempo itself (-config.expand-env=true); compose.template.yaml
 # sets every one of them (BIND_ADDR, TEMPO_DATA_DIR, TEMPO_RETENTION, TEMPO_MAX_ACTIVE_SERIES, ENABLE_EXEMPLARS).
+# Operator variables carry their default here too: Coolify passes a variable emptied in its UI as
+# an empty string and skips the compose `${VAR:-default}` (spike S5). Tempo's expander
+# (drone/envsubst) applies `${VAR:-default}` to an empty value as to an unset one. Without it, an
+# empty TEMPO_RETENTION is a 0s retention (the compactor deletes every block) and an empty
+# TEMPO_MAX_ACTIVE_SERIES is 0, no limit on span-metrics series. Keep them equal to .env.example.
 stream_over_http_enabled: true
 
 server:
@@ -35,7 +40,7 @@ querier:
 compactor:
   compaction:
     # Tempo 2.x key; re-check before any move to Tempo 3.x (spec 9.1).
-    block_retention: ${TEMPO_RETENTION}
+    block_retention: ${TEMPO_RETENTION:-168h}
 
 # Span-metrics and service graphs replace PHP request counters (spec 7.2).
 metrics_generator:
@@ -61,7 +66,7 @@ metrics_generator:
     remote_write:
       - url: http://prometheus:9090/api/v1/write
         # Exemplars need PROM_ENABLE_FEATURES=exemplar-storage on Prometheus (spec 7.3).
-        send_exemplars: ${ENABLE_EXEMPLARS}
+        send_exemplars: ${ENABLE_EXEMPLARS:-false}
   traces_storage:
     path: ${TEMPO_DATA_DIR}/generator/traces
 
@@ -79,7 +84,7 @@ overrides:
       processors:
         - span-metrics
         - service-graphs
-      max_active_series: ${TEMPO_MAX_ACTIVE_SERIES}
+      max_active_series: ${TEMPO_MAX_ACTIVE_SERIES:-100000}
 
 usage_report:
   reporting_enabled: false

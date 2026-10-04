@@ -5,6 +5,10 @@
 #   render.py adds the content hash to its source and target paths and to the references to them.
 # - Image tags come from tools/versions.env; config-guard gets the SHA-256 of every config file.
 # - `${VAR}` references are interpolated by Compose/Coolify and must all be in .env.example.
+# - Coolify passes a variable emptied in its UI as "" and skips `${VAR:-default}` (spike S5): a
+#   non-empty default below is a Docker Compose fallback only. Its consumer applies it again
+#   (Tempo/Loki `${VAR:-default}`, prometheus/start.sh, Alloy coalesce(), grafana-setup) and
+#   guard.sh rejects a malformed or zero value. tests/test_empty_values.py keeps them in step.
 # - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
@@ -36,9 +40,9 @@ services:
     command:
       - sh
       - -c
-      - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
+      - "echo '9fa15ea7fa542046d0021b0122e6bbf6ff3307a139006af45da3c8b63ff091e2  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=55d0b48e7f05b4b09fd05300a31cbd302fc5e00a46c460e55b1416e8544b7a20;/guard/grafana-setup/setup.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.yaml=f3b7d18c78174732ad73f9b56eecbc7575353a4f968dbeb666dfe31c13fc982d;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=55d0b48e7f05b4b09fd05300a31cbd302fc5e00a46c460e55b1416e8544b7a20;/guard/grafana-setup/setup.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.yaml=03314b1798606e2df34068e561a8d7e338b3e6ab61cc2ab3024b9bd834968fc8;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/prometheus/start.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/tempo/tempo.yaml=216f8641f7da179cfbd6122ae491643652d30177f97232b4be0b58dd254785dd"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
       # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
@@ -49,6 +53,14 @@ services:
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
       HOST_ENV: ${HOST_ENV:-prod}
+      # Checked only when set: an empty value takes its default where it is consumed (spike S5).
+      LOKI_RETENTION_PROD: ${LOKI_RETENTION_PROD:-}
+      LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-}
+      TEMPO_RETENTION: ${TEMPO_RETENTION:-}
+      TEMPO_MAX_ACTIVE_SERIES: ${TEMPO_MAX_ACTIVE_SERIES:-}
+      ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-}
+      PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-}
+      PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh
@@ -129,19 +141,28 @@ services:
     depends_on:
       config-guard:
         condition: service_completed_successfully
+    # start.sh adds the retention and feature flags, with their default when the variable is empty.
+    entrypoint:
+      - /bin/sh
+      - /etc/prometheus/start.sh
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.listen-address=0.0.0.0:9090
       - --web.enable-otlp-receiver
       - --web.enable-remote-write-receiver
-      - --storage.tsdb.retention.time=${PROM_RETENTION_TIME:-90d}
-      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-100GB}
-      - --enable-feature=${PROM_ENABLE_FEATURES:-}
+    environment:
+      PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-90d}
+      PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-100GB}
+      PROM_ENABLE_FEATURES: ${PROM_ENABLE_FEATURES:-}
     volumes:
       - type: bind
         source: ./config/prometheus/prometheus.yml
         target: /etc/prometheus/prometheus.yml
+        read_only: true
+      - type: bind
+        source: ./config/prometheus/start.sh
+        target: /etc/prometheus/start.sh
         read_only: true
       - prometheus-data:/prometheus
     expose:

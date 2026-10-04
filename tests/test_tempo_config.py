@@ -39,16 +39,16 @@ class TempoConfigTest(unittest.TestCase):
         self.assertEqual(self.doc["server"]["http_listen_address"], "${BIND_ADDR}")
 
     def test_retention(self):
-        self.assertEqual(self.doc["compactor"]["compaction"]["block_retention"], "${TEMPO_RETENTION}")
+        self.assertEqual(self.doc["compactor"]["compaction"]["block_retention"], "${TEMPO_RETENTION:-168h}")
 
     def test_metrics_generator(self):
         generator = self.doc["metrics_generator"]
         self.assertEqual(generator["processor"]["span_metrics"]["dimensions"], ["project", "env", "tenant", "http.route"])
         remote_write = generator["storage"]["remote_write"]
-        self.assertEqual(remote_write, [{"url": "http://prometheus:9090/api/v1/write", "send_exemplars": "${ENABLE_EXEMPLARS}"}])
+        self.assertEqual(remote_write, [{"url": "http://prometheus:9090/api/v1/write", "send_exemplars": "${ENABLE_EXEMPLARS:-false}"}])
         defaults = self.doc["overrides"]["defaults"]["metrics_generator"]
         self.assertEqual(defaults["processors"], ["span-metrics", "service-graphs"])
-        self.assertEqual(defaults["max_active_series"], "${TEMPO_MAX_ACTIVE_SERIES}")
+        self.assertEqual(defaults["max_active_series"], "${TEMPO_MAX_ACTIVE_SERIES:-100000}")
 
 
 if __name__ == "__main__":

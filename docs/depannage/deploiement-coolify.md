@@ -108,11 +108,36 @@ lignes `config-guard: ERROR: …`.
 **Cause** : un fichier de config écrit par Coolify manque, est vide, est un **dossier**
 (régression connue de Coolify sur les montages `content:`) ou diffère de sa source ; ou une
 variable vérifiée par `config-guard` (`IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`,
-`FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX`, `HOST_ENV`) a un format
-invalide.
+`FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX`, `HOST_ENV`, les
+rétentions, `TEMPO_MAX_ACTIVE_SERIES`, `ENABLE_EXEMPLARS`) a un format invalide ou une valeur
+nulle.
 
 **Correctif** : lire la ligne `ERROR`, corriger la variable, ou pour un fichier, vérifier que le
 compose déployé est le `docker-compose.yaml` généré à jour (`python3 scripts/check.py`), puis
 **Redeploy**. Spike S4 de [`docs/spikes.md`](../spikes.md) pour le détail des fichiers.
 
 **Vérification** : `config-guard: all checks passed`.
+
+## Variable vide transmise par Coolify (le défaut du compose est ignoré)
+
+**Symptôme** : une variable vidée dans l'onglet **Environment Variables** (variable gardée,
+valeur vide) arrive vide dans le conteneur :
+`docker inspect tempo-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}'` affiche
+`ENABLE_EXEMPLARS=` au lieu de `ENABLE_EXEMPLARS=false`. Le conteneur reste `Up`, sans message.
+
+**Cause** : Coolify substitue lui-même les variables et transmet la valeur vide : le repli
+`${VAR:-défaut}` du compose ne s'applique pas (spike S5). Avant le correctif, une rétention Tempo
+vide valait `0s` (traces supprimées aussitôt) et un `TEMPO_MAX_ACTIVE_SERIES` vide valait `0`
+(aucun plafond de séries) ; Loki et Prometheus redémarraient en boucle sur une rétention vide.
+
+**Correctif** : aucun à faire sur une version à jour : le défaut de `.env.example` est appliqué
+par Tempo et Loki (dans leur configuration), par `config/prometheus/start.sh` pour Prometheus,
+par Alloy et par `grafana-setup`. Sur un déploiement plus ancien, supprimer la variable ou lui
+remettre la valeur de `.env.example`, puis **Redeploy**. Ne jamais saisir `0` : `config-guard`
+le refuse.
+
+**Vérification** : la variable reste vide dans `docker inspect` (comportement de Coolify), mais
+la configuration effective porte le défaut, par exemple
+`docker run --rm --network container:tempo-<uuid> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep max_active_series`
+affiche `max_active_series: 100000`. Procédure complète : spike S5 de
+[`docs/spikes.md`](../spikes.md#variables-vidées-dans-coolify--le-repli-var-défaut-du-compose-ne-sapplique-pas).

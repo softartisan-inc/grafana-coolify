@@ -14,7 +14,9 @@ Préparation commune :
 - Un accès SSH au serveur, `docker` disponible.
 - Dans les commandes, remplacer `<app>` par l'UUID de la ressource Coolify et `<uuid>` par le
   suffixe **complet** des conteneurs (`<uuid>-<horodatage>` pour le package, relevé par
-  `docker ps`).
+  `docker ps`). `config-guard` et `grafana-setup` sont des tâches ponctuelles : une fois finies
+  (`Exited (0)`), `docker ps` ne les liste plus ; les trouver avec `docker ps -a`
+  (`docker ps -a --filter name=config-guard --format '{{.Names}} {{.Status}}'`).
 
 ## S0 — Version de Coolify et limite de la ligne de commande (spec O3, § 4.3)
 
@@ -197,12 +199,18 @@ docker exec alloy-<uuid> sh -c 'ls -ld /var/lib/alloy /var/lib/alloy/queue && to
 docker exec alloy-gateway-<uuid> sh -c 'touch /var/lib/alloy/.w && echo writable && df -h /var/lib/alloy'
 for c in alloy-<uuid> alloy-gateway-<uuid>; do
   f=$(docker inspect "$c" --format '{{range .Mounts}}{{.Destination}} {{end}}' | tr ' ' '\n' | grep -E '^/etc/alloy/config\.[0-9a-f]{8}\.alloy$')
-  docker exec "$c" sh -c ': >> "$1" && echo "WRITABLE $1" || echo "refused $1"' sh "$f"
+  docker exec "$c" sh -c 'if (: >> "$1") 2>/dev/null; then echo "WRITABLE $1"; else echo "refused $1"; fi' sh "$f"
 done
+docker ps -a --filter name=config-guard --format '{{.Names}} {{.Status}}'
 docker inspect config-guard-<uuid> --format '{{json .Mounts}}'
 docker inspect node-exporter-<uuid> --format '{{json .Mounts}}'
 docker inspect loki-<uuid> --format '{{json .Mounts}}'
 ```
+
+Le test d'écriture passe par un sous-shell `( … )` : dans le `sh` de l'image (dash), une
+redirection qui échoue sur la commande spéciale `:` **termine le shell** ; écrit
+`: >> "$1" && echo … || echo refused`, il n'affiche alors que `Permission denied`, sans
+`refused`. Un `Permission denied` seul compte donc aussi comme **refusé**.
 
 Attendu :
 
@@ -211,49 +219,75 @@ Attendu :
 - l'écriture dans le fichier de config est **refusée** (`refused …`) : Coolify reconstruit les
   montages `content:` sans leur `read_only: true` (`"RW":true` attendu, à noter), mais
   l'utilisateur 473 n'a pas le droit d'écrire le fichier que Coolify a créé ;
-- le montage `/guard` de `config-guard` (syntaxe courte `:ro`) est le dossier `config` de
-  l'application, en lecture seule (`"RW":false`), et contient les fichiers écrits par Coolify
-  pour les autres services ;
+- `config-guard` est `Exited (0)` (tâche ponctuelle, visible avec `docker ps -a` seulement). Son
+  montage `/guard` (syntaxe courte `:ro`) est le dossier `config` de l'application, en lecture
+  seule (`"RW":false`), et contient les fichiers écrits par Coolify pour les autres services. Le
+  montage de `guard.sh` lui-même est en `"RW":true` (Coolify retire `read_only` des montages
+  `content:`) : sans conséquence, la commande du conteneur vérifie l'empreinte SHA-256 du script
+  avant de l'exécuter, et le conteneur s'arrête aussitôt après ;
 - les trois montages de `node-exporter` (`/proc`, `/sys`, `/`, syntaxe courte `:ro`) sont en
   lecture seule (`"RW":false`) ;
 - `TENANT_HOST_REGEX`, marquée « Is Literal? », arrive intacte :
   `docker exec alloy-<uuid> printenv TENANT_HOST_REGEX` affiche la regex avec ses `$`.
 
-### Replis `${VAR:-défaut}` conservés par Coolify
+### Variables vidées dans Coolify : le repli `${VAR:-défaut}` du compose ne s'applique pas
 
-Le compose donne une valeur de repli à `TEMPO_MAX_ACTIVE_SERIES` (`${TEMPO_MAX_ACTIVE_SERIES:-100000}`)
-et à `ENABLE_EXEMPLARS` (`${ENABLE_EXEMPLARS:-false}`) : si l'une d'elles arrive vide, Tempo
-pourrait mal lire sa configuration (valeur nulle : exemplars coupés et, pour
-`max_active_series`, `0` signifie **plafond illimité** : plus aucune borne sur les séries des
-span-metrics).
+**Résultat du premier passage (déploiement réel) : KO.** `ENABLE_EXEMPLARS` vidée dans l'onglet
+**Environment Variables** (variable conservée, valeur vide), puis **Redeploy** : Tempo reçoit
+`ENABLE_EXEMPLARS=` (vide). Coolify substitue lui-même les variables et transmet la valeur vide ;
+le repli `:-` du compose ne s'applique pas. Tempo reste `Up` sans aucun message. Par extension,
+**tout** `${VAR:-défaut}` du compose est sans effet quand l'opérateur laisse `VAR` vide. Avant le
+correctif, les conséquences mesurées sur le banc (binaires officiels) étaient :
 
-1. Vérifier que Coolify garde la syntaxe de repli dans le compose qu'il écrit, puis la valeur
-   reçue par Tempo :
+| Variable vide | Effet avant le correctif |
+|---|---|
+| `TEMPO_RETENTION` | rétention Tempo de `0s` : le compacteur supprime chaque bloc dès sa fin (perte silencieuse des traces) |
+| `TEMPO_MAX_ACTIVE_SERIES` | `0` = **aucun plafond** de séries span-metrics (risque mémoire, silencieux) |
+| `ENABLE_EXEMPLARS` | lu comme `false` : sans effet, sauf à vouloir `true` |
+| `LOKI_RETENTION_PROD`, `LOKI_RETENTION_DEFAULT` | Loki refuse de démarrer (`retention period must be >= 24h was 0s`), redémarre en boucle |
+| `PROM_RETENTION_TIME`, `PROM_RETENTION_SIZE` | Prometheus refuse de démarrer (`empty duration string`, `units: invalid`), redémarre en boucle |
+| `FARO_*`, `ALERT_*`, `CARDINALITY_ALERT_THRESHOLD`, `HOST_ENV` | aucun : Alloy (`coalesce`), `grafana-setup` et `config-guard` appliquaient déjà le défaut |
+
+**Protection en place** : une variable vide vaut désormais une variable absente. Le défaut est
+appliqué là où la valeur est lue, plus seulement dans le compose :
+
+- Tempo et Loki : `${VAR:-défaut}` **dans leur fichier de config**, développé par le binaire
+  (`-config.expand-env`, bibliothèque drone/envsubst, qui traite une valeur vide comme absente) ;
+- Prometheus : script d'entrée `config/prometheus/start.sh` (`: "${VAR:=défaut}"`), qui ajoute
+  les options de rétention et `--enable-feature` seulement si `PROM_ENABLE_FEATURES` est rempli ;
+- `config-guard` reçoit ces variables **sans** repli et refuse le déploiement si une valeur
+  **renseignée** est mal formée ou nulle (`0`, `0h`, `0GB`… : rétention nulle ou
+  plafond illimité), `ENABLE_EXEMPLARS` autre que `true`/`false` compris ;
+- `tests/test_empty_values.py` vérifie que chaque `${VAR:-défaut}` du compose a son défaut chez
+  le consommateur, identique à `.env.example` ; `scripts/check.py` (`validators`) valide les
+  configs Loki et Tempo une seconde fois avec toutes ces variables vides ; le banc natif
+  (`harness/stack.py`) interpole désormais comme Coolify (une variable vide reste vide).
+
+Vérification à rejouer après le déploiement du correctif :
+
+1. Dans l'onglet **Environment Variables**, **vider** `TEMPO_MAX_ACTIVE_SERIES`,
+   `TEMPO_RETENTION` et `PROM_RETENTION_TIME` (valeur vide, variable conservée), **Redeploy**,
+   puis :
 
    ```bash
-   grep -nE 'TEMPO_MAX_ACTIVE_SERIES|ENABLE_EXEMPLARS' /data/coolify/applications/<app>/docker-compose.yaml
-   docker inspect tempo-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(TEMPO_MAX_ACTIVE_SERIES|ENABLE_EXEMPLARS)='
+   docker inspect tempo-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(TEMPO_MAX_ACTIVE_SERIES|TEMPO_RETENTION)='
+   docker exec prometheus-<uuid> wget -qO- http://localhost:9090/api/v1/status/flags | grep -oE '"storage.tsdb.retention.(time|size)":"[^"]*"'
+   docker run --rm --network container:tempo-<uuid> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep -E 'max_active_series|^        block_retention'
+   docker ps -a --filter name=<uuid> --format '{{.Names}} {{.Status}}'
    ```
 
-   Attendu : les deux `${VAR:-défaut}` sont présents tels quels (ou remplacés par la valeur de
-   l'onglet **Environment Variables**), et Tempo reçoit `100000` / `false` (ou la valeur
-   saisie), jamais une chaîne vide.
-2. Dans l'onglet **Environment Variables**, **vider** `ENABLE_EXEMPLARS` (valeur vide, variable
-   conservée), **Redeploy**, puis rejouer les deux commandes et :
-
-   ```bash
-   docker ps -a --filter name=tempo-<uuid> --format '{{.Names}} {{.Status}}'
-   docker logs --tail 20 tempo-<uuid>
-   ```
-
-   Attendu : Tempo reçoit `ENABLE_EXEMPLARS=false` (le repli `:-` couvre aussi la valeur vide) et
-   reste `Up`. Si Tempo reçoit une **chaîne vide**, noter KO : la consigne du README devient
-   obligatoire (ne jamais vider ces variables ; les supprimer ou remettre la valeur de
-   `.env.example`). Le symptôme est **silencieux** : Tempo accepte la valeur vide, démarre et
-   reste `Up` sans message d'erreur ; seule la valeur reçue (commande `docker inspect` ci-dessus)
-   révèle le KO. Remettre ensuite `ENABLE_EXEMPLARS=false` et redéployer. Même vérification, si
-   le temps le permet, avec `TEMPO_MAX_ACTIVE_SERIES` : vide, Tempo tourne avec un **plafond
-   illimité** de séries (`0`), sans erreur non plus.
+   Attendu : Tempo reçoit toujours les variables **vides** (comportement de Coolify, inchangé),
+   mais sa configuration effective affiche `max_active_series: 100000` et
+   `block_retention: 168h0m0s` ; Prometheus affiche `"storage.tsdb.retention.time":"90d"` ; tous
+   les conteneurs sont `Up` (et `config-guard` `Exited (0)`). Tempo est interrogé depuis un
+   conteneur jetable qui partage son réseau : l'image Tempo ne fournit pas forcément `wget`.
+2. Vérifier que Coolify a gardé l'`entrypoint` de Prometheus :
+   `docker inspect prometheus-<uuid> --format '{{json .Config.Entrypoint}}'` affiche
+   `["/bin/sh","/etc/prometheus/start.<8 hex>.sh"]`.
+3. Saisir `TEMPO_MAX_ACTIVE_SERIES=0`, **Redeploy** : `config-guard` échoue
+   (`docker logs config-guard-<uuid>` : `TEMPO_MAX_ACTIVE_SERIES must be a positive integer`) et
+   aucun service ne démarre.
+4. Remettre les valeurs de `.env.example` (ou laisser vide) et redéployer.
 
 ## S6 — `grafana-setup` du plan B sur la recette (bloquant avant la production)
 
@@ -291,5 +325,5 @@ Attendu :
 | S2 | | | | |
 | S3 | | | | |
 | S4 | | | | |
-| S5 | | | | |
+| S5 | | | KO puis corrigé | Variable vidée : Coolify transmet la valeur vide, le repli `:-` du compose ne s'applique pas (Tempo `Up` sans erreur). Défauts appliqués par Tempo, Loki, `start.sh` de Prometheus ; valeurs nulles refusées par `config-guard`. À rejouer après la fusion. |
 | S6 | | | | |
