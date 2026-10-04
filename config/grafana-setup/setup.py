@@ -39,8 +39,11 @@ CONTENT_DIR = "config/grafana-setup"
 CONTENT_RE = re.compile(r"^(?:dashboards/)?[a-z0-9_-]+\.(?:py|json)$")
 CONTENT_MODULES = ("alerting.py", "dashboards.py")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-# Same rule as config-guard (guard.sh) for GRAFANA_URL and the *_INTERNAL_URL variables.
+# GRAFANA_URL and the *_INTERNAL_URL variables: checked here, not by config-guard, so that a wrong
+# value stops grafana-setup alone and never the data path (Loki, Tempo, Prometheus, Alloy).
 HTTP_URL_RE = re.compile(r"^https?://\S+$")
+# Credentials of a URL (https://user:password@host), at the start of a value or inside a message.
+USERINFO_RE = re.compile(r"(https?://)[^/@\s'\"]*@")
 URL_VARIABLES = ("GRAFANA_URL", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
 SCHEMES = ("https://", "http://", "file:")
 MAX_CONTENT_BYTES = 2 * 1024 * 1024
@@ -63,7 +66,10 @@ class Grafana:
     def request(self, method, path, body=None, headers=None):
         """Return (status, parsed JSON or None). Never raises on HTTP error statuses."""
         data = None if body is None else json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(self.url + path, data=data, method=method)
+        try:
+            req = urllib.request.Request(self.url + path, data=data, method=method)
+        except ValueError as exc:  # unknown url type
+            raise self.invalid(method, path, exc) from None
         req.add_header("Authorization", "Bearer " + self.token)
         req.add_header("Accept", "application/json")
         if data is not None:
@@ -71,16 +77,24 @@ class Grafana:
         for key, value in (headers or {}).items():
             req.add_header(key, value)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return resp.status, parse_json(resp.read())
+            resp = urllib.request.urlopen(req, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
             return exc.code, parse_json(exc.read())
         except (ValueError, http.client.InvalidURL) as exc:
-            # A malformed URL: urllib raises ValueError (unknown url type), http.client raises
-            # InvalidURL (an HTTPException, hence this clause first). Retrying cannot help.
-            raise InvalidRequest(f"{method} {path}: invalid request to {self.url} ({exc})") from None
+            # Malformed URL (http.client.InvalidURL is an HTTPException, hence this clause first):
+            # retrying cannot help. Only the opening is covered: never a decoding error.
+            raise self.invalid(method, path, exc) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as exc:
             raise SetupError(f"{method} {path}: Grafana unreachable ({reason(exc)})") from None
+        with resp:
+            try:
+                raw = resp.read()
+            except (OSError, http.client.HTTPException) as exc:
+                raise SetupError(f"{method} {path}: Grafana unreachable ({reason(exc)})") from None
+            return resp.status, parse_json(raw)
+
+    def invalid(self, method, path, exc):
+        return InvalidRequest(f"{method} {path}: invalid request to {mask_userinfo(self.url)} ({mask_userinfo(str(exc))})")
 
     def expect(self, method, path, body=None, ok=(200,), headers=None):
         status, payload = self.request(method, path, body, headers)
@@ -266,10 +280,15 @@ def required(env, name):
     return value
 
 
+def mask_userinfo(value):
+    """Hide the credentials of a URL (https://user:password@host) before printing it."""
+    return USERINFO_RE.sub(r"\1***@", value)
+
+
 def required_url(env, name):
     value = required(env, name)
     if not HTTP_URL_RE.match(value) or value.rstrip("/") in ("http:", "https:"):
-        raise SetupError(f"{name} must be an http:// or https:// URL, got {value[:80]!r}")
+        raise SetupError(f"{name} must be an http:// or https:// URL, got {mask_userinfo(value)[:80]!r}")
     return value
 
 

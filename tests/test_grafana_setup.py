@@ -311,6 +311,16 @@ class GrafanaSetupUnitTest(unittest.TestCase):
                 self.assertIn(f"{name} must be an http:// or https:// URL", result.stdout)
                 self.assertNotIn("Traceback", result.stdout)
 
+    def test_rejected_url_never_prints_its_credentials(self):
+        for name in ("GRAFANA_URL", "LOKI_INTERNAL_URL"):
+            with self.subTest(name=name):
+                result = self.setup_run(**{name: "https://user:s3cretPass@host name"})
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(f"{name} must be an http:// or https:// URL", result.stdout)
+                self.assertIn("https://***@host name", result.stdout)
+                self.assertNotIn("s3cretPass", result.stdout)
+                self.assertNotIn("user:", result.stdout)
+
     def test_invalid_url_stops_cleanly_without_retrying(self):
         """http.client raises InvalidURL on a malformed port: a clean stop, at once."""
         result = self.setup_run(GRAFANA_URL="http://127.0.0.1:notaport")
@@ -483,6 +493,57 @@ class GrafanaRequestErrorTest(unittest.TestCase):
                 self.assertIn("Grafana unreachable", str(caught.exception))
         with self.assertRaises(setup.InvalidRequest):
             self.request_raising(http.client.InvalidURL("nonnumeric port: 'x'"))
+
+    def test_invalid_request_masks_url_credentials(self):
+        saved = setup.urllib.request.urlopen
+        setup.urllib.request.urlopen = lambda *_a, **_k: (_ for _ in ()).throw(http.client.InvalidURL("nonnumeric port"))
+        try:
+            with self.assertRaises(setup.InvalidRequest) as caught:
+                setup.Grafana("http://admin:s3cretPass@grafana:3000", TOKEN).request("GET", "/api/health")
+        finally:
+            setup.urllib.request.urlopen = saved
+        self.assertIn("http://***@grafana:3000", str(caught.exception))
+        self.assertNotIn("s3cretPass", str(caught.exception))
+
+    def test_mask_userinfo(self):
+        self.assertEqual(setup.mask_userinfo("https://user:pass@host/x@y"), "https://***@host/x@y")
+        self.assertEqual(setup.mask_userinfo("http://host:3000/a@b"), "http://host:3000/a@b")
+        self.assertEqual(setup.mask_userinfo("GRAFANA_URL is required"), "GRAFANA_URL is required")
+        self.assertEqual(setup.mask_userinfo("unknown url type: 'ftp://u:p@h'; see http://a:b@c/d"), "unknown url type: 'ftp://u:p@h'; see http://***@c/d")
+
+    def test_unreadable_answer_is_not_an_invalid_request(self):
+        """A non-JSON or broken answer from Grafana is not a malformed URL: never InvalidRequest."""
+
+        class Response:
+            status = 200
+
+            def __init__(self, read):
+                self.read = read
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        def raise_decode():
+            raise json.JSONDecodeError("Expecting value", "x", 0)
+
+        saved_open, saved_parse = setup.urllib.request.urlopen, setup.parse_json
+        try:
+            setup.urllib.request.urlopen = lambda *_a, **_k: Response(lambda: b"<html>proxy error</html>")
+            self.assertEqual(setup.Grafana("http://grafana:3000", TOKEN).request("GET", "/api/health"), (200, "<html>proxy error</html>"))
+            setup.parse_json = lambda _raw: raise_decode()
+            with self.assertRaises(Exception) as caught:
+                setup.Grafana("http://grafana:3000", TOKEN).request("GET", "/api/health")
+            self.assertNotIsInstance(caught.exception, setup.InvalidRequest)
+            setup.parse_json = saved_parse
+            setup.urllib.request.urlopen = lambda *_a, **_k: Response(lambda: (_ for _ in ()).throw(http.client.IncompleteRead(b"")))
+            with self.assertRaises(setup.SetupError) as caught:
+                setup.Grafana("http://grafana:3000", TOKEN).request("GET", "/api/health")
+            self.assertNotIsInstance(caught.exception, setup.InvalidRequest)
+        finally:
+            setup.urllib.request.urlopen, setup.parse_json = saved_open, saved_parse
 
     def test_token_redacted_from_an_invalid_request(self):
         def urlopen(*_args, **_kwargs):
