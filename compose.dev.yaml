@@ -24,10 +24,11 @@ services:
     command:
       - sh
       - -c
-      - "echo '893b8f855161ca9ec98c353b90e11cce0477a9068a94e17e52d4ebe5a278ddaa  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
+      - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=55d0b48e7f05b4b09fd05300a31cbd302fc5e00a46c460e55b1416e8544b7a20;/guard/grafana-setup/setup.py=cfed7ab76d3d93de21b30d5a73510c4a471155c9c20b5e7de50a68b788b4cfa7;/guard/loki/loki.yaml=f3b7d18c78174732ad73f9b56eecbc7575353a4f968dbeb666dfe31c13fc982d;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
-      # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh.
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=55d0b48e7f05b4b09fd05300a31cbd302fc5e00a46c460e55b1416e8544b7a20;/guard/grafana-setup/setup.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.yaml=f3b7d18c78174732ad73f9b56eecbc7575353a4f968dbeb666dfe31c13fc982d;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
+      # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
       FARO_API_KEY: ${FARO_API_KEY:-}
       PROJECTS: ${PROJECTS:-}
@@ -36,11 +37,6 @@ services:
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
       HOST_ENV: ${HOST_ENV:-prod}
-      GRAFANA_URL: ${GRAFANA_URL:-}
-      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
-      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
-      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
-      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh

@@ -68,22 +68,6 @@ fi
 if ! matches "${FARO_API_KEY:-}" '^[A-Za-z0-9._~+/=-]{16,}$'; then
   error "FARO_API_KEY must be at least 16 characters from [A-Za-z0-9._~+/=-] (openssl rand -hex 24)"
 fi
-# Coolify turns `${X:?message}` into X=message instead of refusing to deploy: the compose only
-# uses `${X:-}`, and the "required" checks live here. grafana-setup needs these four URLs.
-check_url() { # name value
-  if ! matches "$2" '^https?://[^[:space:]]+$'; then
-    error "$1 must be an http:// or https:// URL (e.g. http://loki:3100), got '$2'"
-  fi
-}
-check_url GRAFANA_URL "${GRAFANA_URL:-}"
-check_url LOKI_INTERNAL_URL "${LOKI_INTERNAL_URL:-}"
-check_url TEMPO_INTERNAL_URL "${TEMPO_INTERNAL_URL:-}"
-check_url PROMETHEUS_INTERNAL_URL "${PROMETHEUS_INTERNAL_URL:-}"
-# The token itself is never printed.
-case ${GRAFANA_SA_TOKEN:-} in
-  *[![:space:]]*) ;;
-  *) error "GRAFANA_SA_TOKEN is required (Grafana service account token, role Admin)" ;;
-esac
 # PROJECTS is split on commas by a Go template (Faro allow-list): no spaces, no empty item.
 # Each item: ^[a-z0-9][a-z0-9-]{0,63}$, the rule of grafana-setup (no leading hyphen).
 projects=${PROJECTS:-}

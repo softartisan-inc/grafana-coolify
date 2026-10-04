@@ -183,6 +183,23 @@ class RobustnessTest(unittest.TestCase):
                     self.assertNotEqual(sock.connect_ex(("127.0.10.5", 12347)), 0, "alloy started without a valid Faro key")
                 run([*STACK, "down"], timeout=120)
 
+    def test_6_empty_grafana_setup_variables_only_stop_grafana_setup(self):
+        """Coolify may leave GRAFANA_URL & co. empty: the data path starts, grafana-setup exits 1 cleanly."""
+        run([*STACK, "down"], timeout=120)
+        names = ("GRAFANA_URL", "GRAFANA_SA_TOKEN", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
+        sets = [arg for name in names for arg in ("--set", f"{name}=")]
+        try:
+            stack("up", *sets)
+            status = stack("status").stdout
+            for name in ("loki", "tempo", "prometheus", "alloy", "alloy-gateway", "node-exporter"):
+                self.assertRegex(status, rf"{name}\s+pid=\d+\s+running ready")
+            result = run([*STACK, "oneshot", "grafana-setup"], timeout=120)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("grafana-setup: ERROR: GRAFANA_URL is required", result.stdout)
+            self.assertNotIn("Traceback", result.stdout)
+        finally:
+            run([*STACK, "down"], timeout=120)
+
 
 if __name__ == "__main__":
     unittest.main()

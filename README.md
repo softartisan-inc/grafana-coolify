@@ -77,12 +77,15 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
   le domaine **avec le port** : `https://faro.example.com:12347` (le `:12347` désigne le port du
   conteneur, pas un port public) ; de même `https://otlp.example.com:4318` pour OTLP.
 - `config-guard` refuse de démarrer la stack si `IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`,
-  `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide,
-  si `GRAFANA_URL`, `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL` ou `PROMETHEUS_INTERNAL_URL` n'est
-  pas une URL `http://` ou `https://`, ou si `GRAFANA_SA_TOKEN` est vide : le message d'erreur est
-  dans les logs de `config-guard`. Ces contrôles ne sont **pas** confiés à la syntaxe
-  `${VAR:?message}` de Compose : Coolify ne refuse pas le déploiement, il donne à la variable le
-  texte du message pour valeur (`GRAFANA_URL=GRAFANA_URL is required`).
+  `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide :
+  le message d'erreur est dans les logs de `config-guard`.
+- `GRAFANA_URL`, `GRAFANA_SA_TOKEN`, `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL` et
+  `PROMETHEUS_INTERNAL_URL` ne servent qu'à `grafana-setup`, qui les vérifie lui-même (URL
+  `http://` ou `https://`, jeton non vide) : vides ou invalides, seul `grafana-setup` s'arrête
+  (code 1, message clair dans ses logs) ; Loki, Tempo, Prometheus et Alloy démarrent quand même.
+- Aucun de ces contrôles n'est confié à la syntaxe `${VAR:?message}` de Compose : Coolify ne
+  refuse pas le déploiement, il donne à la variable le texte du message pour valeur
+  (`GRAFANA_URL=GRAFANA_URL is required`).
 - `GF_SMTP_*` (email des alertes) **ne se renseignent pas ici** : ces variables vont sur le
   **service Grafana** (voir « Prérequis : SMTP de Grafana »).
 
@@ -116,8 +119,9 @@ publié ; rechargement à chaud) :
      - '^https://([a-z0-9-]+\.)?example\.(me|app)$'
    ```
 
-   Entre guillemets doubles, `\.` est une séquence d'échappement YAML invalide et Traefik
-   rejette tout le fichier : toujours des guillemets simples pour une regex.
+   Entre guillemets doubles, chaque barre oblique inverse doit être doublée (`\\.`) : un `\.`
+   seul y est une séquence d'échappement YAML invalide et Traefik rejette tout le fichier. Les
+   guillemets simples gardent la regex telle quelle.
 
 Révoquer un projet : supprimer sa ligne. Traefik recharge le fichier sans redéploiement.
 
@@ -140,9 +144,9 @@ Traefik répond lui-même aux requêtes préalables `OPTIONS`, avant la limite d
 
 1. Onglet de la ressource → activer **Connect To Predefined Network** : le package rejoint le
    réseau `coolify`, partagé avec Grafana et les applications du serveur.
-2. Relever les noms réels des conteneurs : Coolify les suffixe (`loki-<uuid>`). Tant que ces
-   trois URL ne sont pas renseignées, `config-guard` refuse de démarrer la stack ; Coolify crée
-   néanmoins les conteneurs, que `docker ps -a` liste. Sur le serveur :
+2. Après un premier déploiement, relever les noms réels des conteneurs : Coolify les suffixe
+   (`loki-<uuid>`). Tant que les trois URL ci-dessous sont vides, seul `grafana-setup` échoue
+   (`LOKI_INTERNAL_URL is required`) : les autres services tournent. Sur le serveur :
 
    ```bash
    docker ps -a --format '{{.Names}}' | grep -E '^(loki|tempo|prometheus|alloy)-'

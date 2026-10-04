@@ -17,7 +17,8 @@ services:
       - "echo '@@GUARD_SHA256@@  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "@@CONFIG_GUARD_EXPECTED@@"
-      # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh.
+      # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
+      # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
       FARO_API_KEY: ${FARO_API_KEY:-}
       PROJECTS: ${PROJECTS:-}
@@ -26,11 +27,6 @@ services:
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
       HOST_ENV: ${HOST_ENV:-prod}
-      GRAFANA_URL: ${GRAFANA_URL:-}
-      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
-      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
-      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
-      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh
