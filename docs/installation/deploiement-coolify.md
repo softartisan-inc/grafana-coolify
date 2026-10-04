@@ -45,8 +45,9 @@ Copier `.env.example` dans **Environment Variables**, puis remplir d'après le
   change à chaque déploiement. Détails : [sources de données](../depannage/sources-de-donnees.md).
 - `TENANT_HOST_REGEX` contient des `$` : cocher **Is Literal?**.
 - Ne pas ajouter de `GF_SMTP_*` ici (ils vont sur le service Grafana) ni de `SERVICE_FQDN_*`.
-- Ne pas vider `ENABLE_EXEMPLARS` ni `TEMPO_MAX_ACTIVE_SERIES` : les supprimer, ou remettre la
-  valeur de `.env.example`.
+- Une variable de rétention ou de réglage laissée vide (`TEMPO_MAX_ACTIVE_SERIES`,
+  `ENABLE_EXEMPLARS`, `*_RETENTION*`…) prend la valeur de `.env.example` ; ne jamais y saisir `0`
+  (`config-guard` le refuse : plafond illimité ou rétention nulle).
 
 ## 4. Premier déploiement
 
