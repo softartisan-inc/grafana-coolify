@@ -49,8 +49,8 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 | `PROJECTS` | Projets autorisés, séparés par des virgules **sans espace** (`in-immo,autre-projet`) : logs Faro d'un autre projet rejetés, un dossier Grafana `gc-<projet>` par projet. |
 | `FARO_SERVICES` | Services Faro autorisés (`app.name`), mêmes règles d'écriture que `PROJECTS` (`web-app,desktop`). Les services de `HOST_MAP` sont toujours acceptés ; tout autre nom choisi par le client est rejeté. **Fermé par défaut** : vide, seuls les services de `HOST_MAP` passent. |
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | Règles de déduction depuis l'hôte (voir plus bas). |
-| `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Noms réels sur le réseau `coolify` (étape 4). |
-| `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | URL **publique** de Grafana et jeton du compte de service (étape 5). |
+| `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Alias stables sur le réseau `coolify` : `http://gc-loki:3100`, `http://gc-tempo:3200`, `http://gc-prometheus:9090` (étape 4). |
+| `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | Adresse **interne** de Grafana, `http://grafana-<uuid>:3000` (étape 4), et jeton du compte de service (étape 5). |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_EMAILS` | Notifications (voir « Tableaux de bord et alertes ») : bot Telegram pour `critical` + `prod`, email pour le reste. |
 | `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT`, `CARDINALITY_ALERT_THRESHOLD` | Seuils des alertes ; défauts de `.env.example`. |
 | `HOST_ENV` | `prod` (défaut) ou `preprod` : environnement que sert l'hôte, label `env` des alertes d'hôte (« Disque »). Vérifié par `config-guard`. |
@@ -142,20 +142,51 @@ Traefik répond lui-même aux requêtes préalables `OPTIONS`, avant la limite d
 
 ### 4. Réseau et noms internes
 
-1. Onglet de la ressource → activer **Connect To Predefined Network** : le package rejoint le
-   réseau `coolify`, partagé avec Grafana et les applications du serveur.
-2. Après un premier déploiement, relever les noms réels des conteneurs : Coolify les suffixe
-   (`loki-<uuid>`). Tant que les trois URL ci-dessous sont vides, seul `grafana-setup` échoue
-   (`LOKI_INTERNAL_URL is required`) : les autres services tournent. Sur le serveur :
+Coolify suffixe le nom de chaque conteneur à **chaque déploiement** (`loki-<uuid>-<horodatage>`) :
+ce nom change à chaque redéploiement, et `loki-<uuid>` ne résout **pas** sur le réseau `coolify`.
+Le compose donne donc lui-même à `loki`, `tempo`, `prometheus` et `alloy` un **alias stable et
+unique** sur ce réseau : `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-alloy`.
 
-   ```bash
-   docker ps -a --format '{{.Names}}' | grep -E '^(loki|tempo|prometheus|alloy)-'
+1. **Ce package** : laisser **Connect To Predefined Network** **désactivé** sur la ressource. Le
+   compose déclare le réseau externe `coolify` et y rattache les quatre services avec leur alias.
+   Option activée, Coolify remplace l'entrée `coolify` de chaque service par la sienne, sans
+   alias : les noms `gc-*` ne résolvent plus (voir `docs/spikes.md`, S1).
+2. **Le service Coolify « Grafana »** : il n'est que sur son propre réseau. Dans son onglet,
+   activer **Connect To Predefined Network**, puis le redémarrer : sans cela, il ne joint ni Loki,
+   ni Tempo, ni Prometheus.
+3. Renseigner dans ce package :
+
+   ```
+   LOKI_INTERNAL_URL=http://gc-loki:3100
+   TEMPO_INTERNAL_URL=http://gc-tempo:3200
+   PROMETHEUS_INTERNAL_URL=http://gc-prometheus:9090
    ```
 
-3. Renseigner `LOKI_INTERNAL_URL=http://loki-<uuid>:3100`,
-   `TEMPO_INTERNAL_URL=http://tempo-<uuid>:3200`,
-   `PROMETHEUS_INTERNAL_URL=http://prometheus-<uuid>:9090`, et documenter pour les applications
-   du même hôte `ALLOY_INTERNAL_URL=http://alloy-<uuid>:4318`.
+   et documenter pour les applications du même hôte `ALLOY_INTERNAL_URL=http://gc-alloy:4318`.
+   Tant que ces trois URL sont vides, seul `grafana-setup` échoue
+   (`LOKI_INTERNAL_URL is required`) : les autres services tournent.
+4. `GRAFANA_URL` est l'adresse **interne** du conteneur Grafana, `http://grafana-<uuid>:3000` :
+   l'URL publique échoue (`Grafana not healthy after 120s`), car un conteneur du serveur ne
+   rejoint pas sa propre adresse publique à travers le proxy. Relever le nom sur le serveur :
+
+   ```bash
+   docker ps --format '{{.Names}}' | grep -i grafana
+   ```
+
+   Le service Grafana en un clic est une ressource **Service** de Coolify : son conteneur s'appelle
+   `grafana-<uuid>`, sans horodatage, et garde ce nom d'un déploiement à l'autre.
+
+> **Repli : noms nus.** Les noms de service nus (`http://loki:3100`, `http://tempo:3200`,
+> `http://prometheus:9090`, `http://alloy:4318`) résolvent aussi sur le réseau `coolify`, mais
+> toute autre ressource du serveur qui a un service du même nom (un autre `loki`, un autre
+> `prometheus`…) entre en collision : le nom désigne alors plusieurs conteneurs, et Docker répond par l'un ou
+> l'autre. Ne s'en
+> servir qu'en dépannage.
+
+**Migration d'un déploiement existant** (valeurs `loki-<uuid>` ou noms nus) : après la mise à jour
+du dépôt, désactiver **Connect To Predefined Network** sur ce package, remplacer les trois
+variables `*_INTERNAL_URL` par les valeurs `gc-*` ci-dessus, puis **redéployer** ; mettre à jour
+`ALLOY_INTERNAL_URL` dans les applications qui envoient à Alloy.
 
 **Hypothèse de sécurité** : tout conteneur du réseau `coolify` est de confiance (Loki, Tempo,
 Prometheus et les ports internes d'Alloy n'ont pas d'authentification). Aucun service interne ne
@@ -237,7 +268,7 @@ Sur le banc local, les contrôles 1, 7 et 8 sont structurels (« structural on b
 `scripts/smoke.py` interroge Loki, Tempo et Prometheus, qui ne sont joignables que depuis le
 réseau `coolify` : le lancer depuis un conteneur rattaché à ce réseau, avec les variables
 `GC_OTLP_URL`, `GC_FARO_URL`, `GC_LOKI_URL`, `GC_TEMPO_URL`, `GC_PROM_URL`,
-`GC_ALLOY_METRICS_URL` pointant vers les noms réels, `GC_GATEWAY_URL`, `GC_GATEWAY_HOST`,
+`GC_ALLOY_METRICS_URL` pointant vers les alias `gc-*` (`http://gc-loki:3100`, `http://gc-alloy:4318`…), `GC_GATEWAY_URL`, `GC_GATEWAY_HOST`,
 `GC_GATEWAY_USER`, `GC_GATEWAY_PASSWORD` pour la passerelle OTLP (leurs valeurs par défaut
 viennent de `.harness/edge.json`, absent sur un serveur), et, exportées elles aussi, les valeurs
 du déploiement pour `IP_HASH_SALT` (empreintes des IP), `FARO_API_KEY`, `PROJECTS` et

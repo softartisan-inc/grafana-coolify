@@ -9,10 +9,12 @@ Préparation commune :
 
 - Un **déploiement de recette** du package (ressource Application depuis ce dépôt, build pack
   Docker Compose), variables remplies d'après `.env.example`, **Connect To Predefined Network**
-  activé.
+  **désactivé** sur le package (le compose rejoint lui-même le réseau `coolify`, voir S1) et
+  **activé** sur le service Coolify « Grafana ».
 - Un accès SSH au serveur, `docker` disponible.
 - Dans les commandes, remplacer `<app>` par l'UUID de la ressource Coolify et `<uuid>` par le
-  suffixe des conteneurs.
+  suffixe **complet** des conteneurs (`<uuid>-<horodatage>` pour le package, relevé par
+  `docker ps`).
 
 ## S0 — Version de Coolify et limite de la ligne de commande (spec O3, § 4.3)
 
@@ -29,17 +31,40 @@ la règle tant que ce n'est pas démontré autrement.
 ## S1 — Noms internes vus depuis Grafana (spec § 3.3)
 
 ```bash
-docker ps --format '{{.Names}}' | grep -E '^(loki|tempo|prometheus|alloy)-'
-GRAFANA=$(docker ps --format '{{.Names}}' | grep -E '^grafana-' | head -n1)
-for url in http://loki-<uuid>:3100/ready http://tempo-<uuid>:3200/ready http://prometheus-<uuid>:9090/-/ready; do
+GRAFANA=$(docker ps --format '{{.Names}}' | grep -i grafana | head -n1); echo "$GRAFANA"
+docker inspect "$GRAFANA" --format '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'
+for url in http://gc-loki:3100/ready http://gc-tempo:3200/ready http://gc-prometheus:9090/-/ready; do
   docker exec "$GRAFANA" wget -qO- "$url"; echo " <- $url"
 done
-docker exec "$GRAFANA" wget -qO- http://loki:3100/ready || echo "alias nu non résolu (attendu possible)"
+docker inspect "$(docker ps --format '{{.Names}}' | grep -E '^loki-')" \
+  --format '{{json .NetworkSettings.Networks.coolify.Aliases}}'
 ```
 
-Attendu : les trois URL suffixées répondent `ready` / `Prometheus Server is Ready.`. Ces URL
-sont les valeurs de `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL`. Noter si
-l'alias nu `loki` résout (il ne doit pas être utilisé, il peut entrer en collision).
+Attendu : Grafana est sur le réseau `coolify` ; les trois URL `gc-*` répondent `ready` /
+`Prometheus Server is Ready.` ; les alias de `loki` sur `coolify` contiennent `gc-loki`. Ces URL
+sont les valeurs de `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL`.
+
+**Observé au premier déploiement réel** (avant les alias `gc-*`, option activée sur le package) :
+
+- les conteneurs portent un suffixe par déploiement, `loki-<uuid>-<horodatage>` ; `loki-<uuid>`
+  ne résout **pas** sur `coolify` ;
+- le nom de service nu (`loki`, `tempo`, `prometheus`, `alloy`) **résout** sur `coolify` : stable,
+  mais il entre en collision avec tout service du même nom d'une autre ressource ;
+- le service Coolify « Grafana » n'était que sur son propre réseau : il faut y activer **Connect
+  To Predefined Network** ;
+- `GRAFANA_URL` public : `grafana-setup` échoue avec `Grafana not healthy after 120s` (le
+  conteneur ne rejoint pas l'adresse publique du serveur à travers le proxy). L'adresse interne
+  `http://grafana-<uuid>:3000` fonctionne.
+
+**Pourquoi l'option reste désactivée sur le package.** Pour une ressource Application, le parseur
+de Coolify (`applicationParser`, `bootstrap/helpers/parsers.php`, branche `v4.x`, commit
+`16a8c79`) ajoute, option activée, le réseau de destination à chaque service par
+`$networks_temp->put($network, null)` **après** les réseaux écrits dans le compose : l'entrée
+`coolify: {aliases: [gc-loki]}` est remplacée par `coolify: null` et les alias disparaissent.
+Option désactivée, les entrées du compose sont gardées telles quelles, avec leurs alias, et seuls
+les services qui déclarent `coolify` le rejoignent (un réseau de premier niveau ajouté sans
+configuration n'est pas reporté sur les autres services). Le service « Grafana », lui, est une
+ressource Service : l'option y lance `docker network connect` après le démarrage, sans conflit.
 
 ## S2 — Portée de `coolify.traefik.middlewares` et références `@file` (spec § 5.4)
 
@@ -93,8 +118,8 @@ Depuis une page instrumentée avec le SDK Faro Web et `@grafana/faro-web-tracing
 `app.namespace`, `app.name`, `app.environment`), déclencher un `fetch`, puis :
 
 ```bash
-docker exec alloy-<uuid> wget -qO- 'http://tempo-<uuid>:3200/api/search?tags=service.name%3D<app.name>&limit=1'
-docker exec alloy-<uuid> wget -qO- 'http://tempo-<uuid>:3200/api/v2/traces/<traceID>'
+docker exec alloy-<uuid> wget -qO- 'http://gc-tempo:3200/api/search?tags=service.name%3D<app.name>&limit=1'
+docker exec alloy-<uuid> wget -qO- 'http://gc-tempo:3200/api/v2/traces/<traceID>'
 ```
 
 Attendu, sur la ressource du span stocké : `project` (issu de `service.namespace`), `env` (issu de
@@ -249,7 +274,7 @@ Attendu :
 | Spike | Date | Version Coolify | Résultat | Remarque |
 |---|---|---|---|---|
 | S0 | | | | |
-| S1 | | | | |
+| S1 | | | KO puis corrigé | Suffixe par déploiement, `loki-<uuid>` non résolu ; alias `gc-*` ajoutés, Grafana à rattacher, `GRAFANA_URL` interne. À rejouer après la fusion. |
 | S2 | | | | |
 | S3 | | | | |
 | S4 | | | | |

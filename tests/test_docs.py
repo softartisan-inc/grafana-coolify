@@ -106,6 +106,28 @@ class ReadmeTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(text, README)
 
+    def test_coolify_network_aliases_are_documented(self):
+        """Spike S1: gc-* aliases, Grafana on the coolify network, internal GRAFANA_URL."""
+        spikes = (ROOT / "docs" / "spikes.md").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        for text in (
+            "LOKI_INTERNAL_URL=http://gc-loki:3100",
+            "TEMPO_INTERNAL_URL=http://gc-tempo:3200",
+            "PROMETHEUS_INTERNAL_URL=http://gc-prometheus:9090",
+            "ALLOY_INTERNAL_URL=http://gc-alloy:4318",
+            "http://grafana-<uuid>:3000",
+            "docker ps --format '{{.Names}}' | grep -i grafana",
+            "Grafana not healthy after 120s",
+            "Repli : noms nus",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, README)
+        self.assertNotIn("http://loki-<uuid>:3100", README)
+        for text in ("loki-<uuid>-<horodatage>", "applicationParser", "gc-loki"):
+            with self.subTest(text=text):
+                self.assertIn(text, spikes)
+        self.assertIn("http://gc-loki:3100", env_example)
+
     def test_origin_regex_examples_are_single_quoted(self):
         """Inside double quotes, YAML rejects `\\.`: Traefik then drops the whole file."""
         example = (ROOT / "traefik" / "grafana-coolify.yaml.example").read_text(encoding="utf-8")
