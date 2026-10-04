@@ -2,7 +2,8 @@
 """Native test bench without Docker (spec 12): run the stack of compose.template.yaml as processes.
 
 Every service runs the official binary (installed by tools/fetch-binaries.sh) with the SAME
-command arguments and environment as in the compose, on its own loopback IP. Volume targets are
+command arguments and environment as in the compose, on its own loopback IP. ${VAR:-default} is
+interpolated as Coolify does it: a variable set to an empty value (--set KEY=) stays empty. Volume targets are
 mapped to local paths (.harness/data/<volume>, .harness/tmpfs/<service>, and .harness/coolify/
 for ./config), and "0.0.0.0" is replaced by the service IP. /etc/hosts maps the service names to
 those IPs (sudo), so the configs keep their in-stack names (loki:3100, tempo:4317...).
@@ -61,7 +62,8 @@ SERVICE_IPS = {
     "config-guard": "127.0.10.8",
     "grafana-setup": "127.0.10.9",
 }
-# Image repository -> binary in .bin/ (the image ENTRYPOINT). Other images run `command:` as is.
+# Image repository -> binary in .bin/ (the image ENTRYPOINT). Other images run `command:` as is, and
+# a service with its own `entrypoint:` runs it with .bin/ first on PATH.
 BINARIES = {
     "grafana/alloy": "alloy",
     "grafana/loki": "loki",
@@ -158,8 +160,12 @@ def load_env_values(sets):
     return values
 
 
-def interpolate(value, env):
-    """Compose-style interpolation: $$, $VAR, ${VAR}, ${VAR:-default}, ${VAR-default}, ${VAR:?error}."""
+def interpolate(value, env, coolify=False):
+    """Compose-style interpolation: $$, $VAR, ${VAR}, ${VAR:-default}, ${VAR-default}, ${VAR:?error}.
+
+    coolify=True plays Coolify instead: a variable set to an empty value reaches the container
+    empty, `${VAR:-default}` included (spike S5); only an unset variable takes the default.
+    """
 
     def replace(match):
         if match.group(0) == "$$":
@@ -168,7 +174,7 @@ def interpolate(value, env):
         op, arg = match.group(2), match.group(3)
         current = env.get(name)
         if op in (":-", "-"):
-            empty = current is None or (op == ":-" and current == "")
+            empty = current is None or (op == ":-" and current == "" and not coolify)
             return arg if empty else current
         if op in (":?", "?"):
             if current is None or (op == ":?" and current == ""):
@@ -240,19 +246,26 @@ def build(name, service, env_values, config_dir):
     ip = SERVICE_IPS[name]
     rewrite = rewriter(mounts(name, service, config_dir), ip)
     command = service.get("command") or []
-    if isinstance(command, str):
-        raise HarnessError(f"{name}: use the list form of command:")
-    args = [rewrite(interpolate(arg, env_values)) for arg in command]
+    entrypoint = service.get("entrypoint") or []
+    if isinstance(command, str) or isinstance(entrypoint, str):
+        raise HarnessError(f"{name}: use the list form of command: and entrypoint:")
+    # Variables are interpolated the way Coolify does it, not Docker Compose (see interpolate).
+    args = [rewrite(interpolate(arg, env_values, coolify=True)) for arg in [*entrypoint, *command]]
     repository = image_repository(service["image"])
+    path = os.environ.get("PATH", "/usr/bin:/bin")
     if repository in BINARIES:
         binary = BIN / BINARIES[repository]
         if not binary.exists():
             raise HarnessError(f"{binary} missing: run tools/fetch-binaries.sh")
-        args = [str(binary), *args]
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(HARNESS / "work" / name), "LANG": "C.UTF-8"}
+        if entrypoint:
+            # The entrypoint script execs the image binary by name: find it first in .bin/.
+            path = f"{BIN}{os.pathsep}{path}"
+        else:
+            args = [str(binary), *args]
+    env = {"PATH": path, "HOME": str(HARNESS / "work" / name), "LANG": "C.UTF-8"}
     for key, value in (service.get("environment") or {}).items():
         if value is not None:
-            env[key] = rewrite(interpolate(value, env_values))
+            env[key] = rewrite(interpolate(value, env_values, coolify=True))
     if repository in AUTO_GOMEMLIMIT and service.get("mem_limit"):
         env["GOMEMLIMIT"] = env_values.get("GOMEMLIMIT") or str(int(memory_bytes(service["mem_limit"]) * 0.9))
     return {"args": args, "env": env, "ip": ip}

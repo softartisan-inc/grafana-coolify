@@ -13,9 +13,12 @@ from unittest import mock
 from support import ROOT, require_harness, run
 
 sys.path.insert(0, str(ROOT / "harness"))
+sys.path.insert(0, str(ROOT / "scripts"))
+import check  # noqa: E402
 import stack  # noqa: E402
 
 STACK = [sys.executable, str(ROOT / "harness" / "stack.py")]
+TEMPLATE = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
 
 
 class InterpolationTest(unittest.TestCase):
@@ -33,6 +36,26 @@ class InterpolationTest(unittest.TestCase):
         for value, expected in cases.items():
             with self.subTest(value=value):
                 self.assertEqual(stack.interpolate(value, env), expected)
+
+    def test_coolify_rules(self):
+        """Coolify passes an emptied variable as "" and skips the fallback (spike S5)."""
+        env = {"SET": "v", "EMPTY": ""}
+        cases = {"${SET:-d}": "v", "${UNSET:-d}": "d", "${EMPTY:-d}": "", "${EMPTY-d}": "", "$$1": "$1"}
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(stack.interpolate(value, env, coolify=True), expected)
+
+    def test_build_interpolates_as_coolify(self):
+        service = {"image": "alpine:3", "command": ["echo", "${X:-d}"], "environment": {"X": "${X:-d}"}}
+        spec = stack.build("config-guard", service, {"X": ""}, ROOT / "config")
+        self.assertEqual(spec["args"][-1], "")
+        self.assertEqual(spec["env"]["X"], "")
+
+    def test_entrypoint_runs_before_command_with_bin_on_path(self):
+        service = {"image": "prom/prometheus:v3", "entrypoint": ["/bin/sh", "start.sh"], "command": ["--flag"]}
+        spec = stack.build("prometheus", service, {}, ROOT / "config")
+        self.assertEqual(spec["args"], ["/bin/sh", "start.sh", "--flag"])
+        self.assertTrue(spec["env"]["PATH"].startswith(f"{stack.BIN}{os.pathsep}"))
 
     def test_required_variable(self):
         with self.assertRaisesRegex(stack.HarnessError, "IP_HASH_SALT"):
@@ -196,6 +219,34 @@ class StorageTrioTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("127.0.10.2:3100", result.stdout)
         self.assertIn("already in use", result.stdout)
+
+
+class EmptyValuesBenchTest(unittest.TestCase):
+    """The native bench interpolates as Coolify: every fallback variable empty, the trio keeps its defaults."""
+
+    def setUp(self):
+        require_harness(self)
+        run([*STACK, "down"], timeout=120)
+
+    def tearDown(self):
+        run([*STACK, "down"], timeout=120)
+
+    def test_trio_runs_with_defaults(self):
+        sets = [arg for name in check.fallback_defaults(TEMPLATE) for arg in ("--set", f"{name}=")]
+        result = run([*STACK, "up", "--only", "loki,tempo,prometheus", *sets], timeout=400)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        with urllib.request.urlopen("http://tempo:3200/status/config", timeout=5) as resp:
+            tempo = resp.read().decode("utf-8")
+        self.assertRegex(tempo, r"(?m)^ +max_active_series: 100000$")
+        self.assertRegex(tempo, r"(?m)^compactor:\n(?:  .*\n)*?        block_retention: 168h0m0s$")
+        with urllib.request.urlopen("http://loki:3100/config", timeout=5) as resp:
+            loki = resp.read().decode("utf-8")
+        self.assertRegex(loki, r"(?m)^  retention_period: 1w$")
+        self.assertRegex(loki, r"(?m)^  - period: 30d$")
+        with urllib.request.urlopen("http://prometheus:9090/api/v1/status/flags", timeout=5) as resp:
+            flags = json.load(resp)["data"]
+        self.assertEqual(flags["storage.tsdb.retention.time"], "90d")
+        self.assertEqual(flags["storage.tsdb.retention.size"], "100GiB")  # Prometheus prints its binary unit
 
 
 if __name__ == "__main__":
