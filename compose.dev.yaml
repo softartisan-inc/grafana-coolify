@@ -9,6 +9,15 @@
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
 # - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
+# - Network (spike S1): loki, tempo, prometheus and alloy join the external `coolify` network
+#   with a gc-* alias, the stable name Grafana and the applications use (Coolify suffixes the
+#   container names per deployment; the bare service names collide with other resources). The
+#   compose declares the network itself: keep "Connect To Predefined Network" OFF on this resource,
+#   since Coolify then replaces the `coolify` entry of every service and drops the aliases.
+#   Option OFF, Coolify puts on `coolify` only the services that list it: grafana-setup lists it
+#   too (no alias) to reach GRAFANA_URL, http://grafana-<uuid>:3000.
+#   `coolify` is the network of Coolify's default destination: if the resource's destination has
+#   another name, change `networks.coolify.name` below, then re-run scripts/render.py.
 services:
   grafana:
     image: grafana/grafana:13.2.2
@@ -18,6 +27,9 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
     ports:
       - "127.0.0.1:3000:3000"
+    networks:
+      - default
+      - coolify
   config-guard:
     image: alpine:3.22
     restart: "no"
@@ -71,6 +83,11 @@ services:
       - loki-data:/loki
     expose:
       - "3100"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-loki
     mem_limit: 1536m
     cpus: 1.0
 
@@ -98,6 +115,11 @@ services:
     expose:
       - "3200"
       - "4317"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-tempo
     mem_limit: 1536m
     cpus: 1.0
 
@@ -124,6 +146,11 @@ services:
       - prometheus-data:/prometheus
     expose:
       - "9090"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-prometheus
     mem_limit: 1536m
     cpus: 1.0
 
@@ -194,6 +221,11 @@ services:
       - "4318"
       - "12345"
       - "12347"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-alloy
     mem_limit: 768m
     cpus: 1.0
 
@@ -267,6 +299,10 @@ services:
         source: ./config/grafana-setup/setup.py
         target: /opt/grafana-setup/setup.py
         read_only: true
+    networks:
+      default: {}
+      # No alias: grafana-setup only calls GRAFANA_URL (grafana-<uuid>), which is on `coolify`.
+      coolify: {}
     mem_limit: 128m
     cpus: 0.2
 
@@ -275,3 +311,7 @@ volumes:
   tempo-data:
   prometheus-data:
   alloy-data:
+
+networks:
+  coolify:
+    name: gc-dev-coolify

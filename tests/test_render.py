@@ -45,6 +45,10 @@ services:
       - app-data:/data
 volumes:
   app-data:
+networks:
+  coolify:
+    name: coolify
+    external: true
 """
 
 
@@ -110,7 +114,7 @@ class RenderTest(unittest.TestCase):
     def test_same_target_in_two_services_gets_two_names(self):
         (self.root / "config" / "twin").mkdir()
         (self.root / "config" / "twin" / "tricky.txt").write_text("twin\n", encoding="utf-8")
-        twin = TEMPLATE.replace("volumes:\n  app-data:", "").rstrip("\n") + "\n"
+        twin = TEMPLATE.split("volumes:\n  app-data:")[0].rstrip("\n") + "\n"
         twin = twin.replace("      - app-data:/data\n", "") + (
             "  twin:\n    image: example/app:@@APP_VERSION@@\n    command: [\"--config=/etc/app/tricky.txt\"]\n    volumes:\n"
             "      - type: bind\n        source: ./config/twin/tricky.txt\n        target: /etc/app/tricky.txt\n"
@@ -216,6 +220,10 @@ STRIP_TEMPLATE = """services:
         source: ./config/loki/loki.yaml
         target: /etc/loki/loki.yaml
         content: "@@CONTENT@@"
+networks:
+  coolify:
+    name: coolify
+    external: true
 """
 ALLOY = '// Header comment\n\n  // indented comment\nloki.write "x" {\n  url = "https://loki:3100/push" // end-of-line kept\n\n  // inner\n}\n'
 ALLOY_STRIPPED = 'loki.write "x" {\n  url = "https://loki:3100/push" // end-of-line kept\n}\n'
@@ -306,6 +314,55 @@ class RepositoryRenderTest(unittest.TestCase):
 
     def test_header_marks_the_file_as_generated(self):
         self.assertTrue((ROOT / "docker-compose.yaml").read_text(encoding="utf-8").startswith("# GENERATED — DO NOT EDIT"))
+
+
+ALIASED = {"loki": "gc-loki", "tempo": "gc-tempo", "prometheus": "gc-prometheus", "alloy": "gc-alloy"}
+
+
+class CoolifyNetworkTest(unittest.TestCase):
+    """Stable, unique names on the shared `coolify` network (spike S1).
+
+    Coolify suffixes every container name per deployment, and the bare service names (loki,
+    tempo...) collide with other resources of the server: the services Grafana and the
+    applications reach carry a gc-* alias on the `coolify` network, declared by the compose.
+    """
+
+    def test_deployed_compose_joins_the_external_coolify_network(self):
+        doc = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(doc["networks"]["coolify"], {"name": "coolify", "external": True})
+        for service, alias in ALIASED.items():
+            with self.subTest(service=service):
+                networks = doc["services"][service]["networks"]
+                self.assertEqual(networks["coolify"], {"aliases": [alias]})
+                # Plain Docker Compose drops the default network once networks: is set.
+                self.assertIn("default", networks)
+
+    def test_grafana_setup_joins_the_coolify_network_without_alias(self):
+        """GRAFANA_URL is http://grafana-<uuid>:3000, only reachable on `coolify`.
+
+        With "Connect To Predefined Network" off, Coolify's applicationParser adds the top-level
+        `coolify` network to a service that does not list it as a null entry, which the next loop
+        drops (neither string nor array): grafana-setup must declare the network itself.
+        """
+        doc = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+        networks = doc["services"]["grafana-setup"].get("networks", {})
+        self.assertEqual(networks.get("coolify"), {})
+        self.assertIn("default", networks)
+
+    def test_dev_bench_creates_its_own_coolify_network(self):
+        doc = yaml.safe_load((ROOT / "compose.dev.yaml").read_text(encoding="utf-8"))
+        network = doc["networks"]["coolify"]
+        self.assertFalse(network.get("external", False))
+        self.assertNotEqual(network.get("name"), "coolify")
+        # The test Grafana resolves the gc-* aliases like the Coolify Grafana service does.
+        self.assertEqual(set(doc["services"]["grafana"]["networks"]), {"default", "coolify"})
+        for service, alias in ALIASED.items():
+            with self.subTest(service=service):
+                self.assertEqual(doc["services"][service]["networks"]["coolify"], {"aliases": [alias]})
+
+    def test_dev_variant_needs_the_external_declaration(self):
+        with self.assertRaisesRegex(render.RenderError, "coolify"):
+            render.dev_networks("services:\n  a:\n    image: x\n")
 
 
 if __name__ == "__main__":
