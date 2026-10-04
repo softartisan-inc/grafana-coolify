@@ -14,6 +14,10 @@
 #   container names per deployment; the bare service names collide with other resources). The
 #   compose declares the network itself: keep "Connect To Predefined Network" OFF on this resource,
 #   since Coolify then replaces the `coolify` entry of every service and drops the aliases.
+#   Option OFF, Coolify puts on `coolify` only the services that list it: grafana-setup lists it
+#   too (no alias) to reach GRAFANA_URL, http://grafana-<uuid>:3000.
+#   `coolify` is the network of Coolify's default destination: if the resource's destination has
+#   another name, change `networks.coolify.name` below, then re-run scripts/render.py.
 services:
   config-guard:
     image: alpine:3.22
@@ -1549,6 +1553,10 @@ services:
           if __name__ == "__main__":
               sys.exit(main())
         read_only: true
+    networks:
+      default: {}
+      # No alias: grafana-setup only calls GRAFANA_URL (grafana-<uuid>), which is on `coolify`.
+      coolify: {}
     mem_limit: 128m
     cpus: 0.2
 

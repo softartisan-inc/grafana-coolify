@@ -337,6 +337,18 @@ class CoolifyNetworkTest(unittest.TestCase):
                 # Plain Docker Compose drops the default network once networks: is set.
                 self.assertIn("default", networks)
 
+    def test_grafana_setup_joins_the_coolify_network_without_alias(self):
+        """GRAFANA_URL is http://grafana-<uuid>:3000, only reachable on `coolify`.
+
+        With "Connect To Predefined Network" off, Coolify's applicationParser adds the top-level
+        `coolify` network to a service that does not list it as a null entry, which the next loop
+        drops (neither string nor array): grafana-setup must declare the network itself.
+        """
+        doc = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+        networks = doc["services"]["grafana-setup"].get("networks", {})
+        self.assertEqual(networks.get("coolify"), {})
+        self.assertIn("default", networks)
+
     def test_dev_bench_creates_its_own_coolify_network(self):
         doc = yaml.safe_load((ROOT / "compose.dev.yaml").read_text(encoding="utf-8"))
         network = doc["networks"]["coolify"]
