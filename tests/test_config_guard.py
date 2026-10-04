@@ -6,9 +6,10 @@ from pathlib import Path
 
 import yaml
 
-from support import ROOT, binary, run
+from support import BIN, ROOT, binary, run, validator_env
 
 GUARD = ROOT / "config" / "config-guard" / "guard.sh"
+LOKI_CONFIG = ROOT / "config" / "loki" / "loki.yaml"
 VALID_ENV = {
     "IP_HASH_SALT": "harnessNotASecret0000000000",
     "FARO_API_KEY": "harness-not-a-secret-0000000000",
@@ -20,6 +21,20 @@ VALID_ENV = {
 }
 # Checked by grafana-setup only: a wrong value must never stop Loki, Tempo, Prometheus or Alloy.
 SETUP_ONLY_VARIABLES = ("GRAFANA_URL", "GRAFANA_SA_TOKEN", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
+# Loki retentions (Prometheus model.ParseDuration, then Loki's own 24h floor on retention_stream):
+# LokiDurationCrossCheckTest holds both lists against the real binary.
+LOKI_GOOD = (
+    *("24h", "1d", "1w", "2w3d", "1y", "86400s", "1440m", "23h60m", "1d12h", "86400000ms", "1d0ms"),
+    *("0y0w1d", "024h", "00000000000000000000024h", "292y", "292y24w", "9223372036s", "9223372036854ms"),
+)
+LOKI_BAD = (
+    *("1h", "12h", "23h", "23h59m59s", "86399s", "1439m", "0d23h", "0y0w0d23h59m", "86399999ms"),
+    # Repeated or out-of-order units: Loki answers "not a valid duration string".
+    *("023h1h", "0h24h", "1h1d", "1d1d", "12h12h", "1ms1s", "24H"),
+    # Above int64 nanoseconds: Loki answers "duration out of range".
+    *("293y", "292y25w", "9223372037s", "9223372036855ms", "9999999999s", "99999999999s", "999999999y"),
+    *("99999999999999999999y", "1e3d"),
+)
 
 
 class GuardCases:
@@ -156,12 +171,10 @@ class GuardCases:
             "PROM_RETENTION_SIZE": (["100GB", "512MiB"], ["0", "0GB", "100", "100 GB", "100gb", "-1GB"]),
             "ENABLE_EXEMPLARS": (["true", "false"], ["yes", "1", "True", "on", "false\nx"]),
         }
-        # Loki refuses a retention below 24h at startup ("retention period must be >= 24h") and
-        # restarts in a loop: config-guard rejects it first.
         for name in ("LOKI_RETENTION_PROD", "LOKI_RETENTION_DEFAULT"):
             good, bad = rules[name]
-            good.extend(["24h", "1d", "1w", "2w3d", "1y", "86400s", "1440m", "23h60m", "023h1h", "99999999999s"])
-            bad.extend(["1h", "12h", "23h", "23h59m59s", "86399s", "1439m", "0d23h", "0y0w0d23h59m"])
+            good.extend(LOKI_GOOD)
+            bad.extend(LOKI_BAD)
         for name, (good, bad) in rules.items():
             for value in ["", *good]:
                 with self.subTest(name=name, value=value):
@@ -175,6 +188,37 @@ class GuardCases:
         self.assert_fails(self.guard(TENANT_HOST_REGEX=r"^([a-z]+)\.example\.me$"), "TENANT_HOST_REGEX")
         multiline = VALID_ENV["TENANT_HOST_REGEX"] + "\nx"
         self.assert_fails(self.guard(TENANT_HOST_REGEX=multiline), "TENANT_HOST_REGEX")
+
+
+class LokiDurationCrossCheckTest(unittest.TestCase):
+    """LOKI_GOOD and LOKI_BAD as the real Loki reads them, so the guard cannot drift from Loki."""
+
+    def setUp(self):
+        if not (BIN / "loki").exists():
+            self.skipTest(f"{BIN / 'loki'} missing: run tools/fetch-binaries.sh first")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def loki_accepts(self, name, value):
+        env = {**validator_env(self.tmp.name), name: value}
+        cmd = [binary("loki"), f"-config.file={LOKI_CONFIG}", "-config.expand-env=true", "-verify-config"]
+        return run(cmd, env=env).returncode == 0
+
+    def test_stream_retention_matches_loki(self):
+        """retention_stream: Loki refuses what the guard refuses, 24h floor included."""
+        for value in LOKI_GOOD:
+            with self.subTest(value=value):
+                self.assertTrue(self.loki_accepts("LOKI_RETENTION_PROD", value))
+        for value in LOKI_BAD:
+            with self.subTest(value=value):
+                self.assertFalse(self.loki_accepts("LOKI_RETENTION_PROD", value))
+
+    def test_default_retention_accepted_by_loki(self):
+        """retention_period has no 24h floor in Loki: only the guard's accepted values are checked."""
+        for value in LOKI_GOOD:
+            with self.subTest(value=value):
+                self.assertTrue(self.loki_accepts("LOKI_RETENTION_DEFAULT", value))
+        self.assertTrue(self.loki_accepts("LOKI_RETENTION_DEFAULT", "23h"), "Loki now refuses 23h: update the docs")
 
 
 class DashGuardTest(GuardCases, unittest.TestCase):
