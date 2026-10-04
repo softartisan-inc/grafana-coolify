@@ -6,4 +6,4 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP"]
 
 [lint.isort]
-known-first-party = ["support", "render", "check", "gclib", "setup", "stack", "edge"]
+known-first-party = ["support", "render", "check", "gclib", "setup", "stack", "edge", "alerting", "dashboards", "build_dashboards", "sink", "notify_test", "synth"]

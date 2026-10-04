@@ -1,3 +1,6 @@
+import contextlib
+import hashlib
+import io
 import sys
 import unittest
 
@@ -89,6 +92,88 @@ class TargetsTest(unittest.TestCase):
         mounts = [("alloy", "/etc/alloy/config.1.alloy"), ("alloy-gateway", "/etc/alloy/config.1.alloy"), ("loki", "/etc/loki/loki.2.yaml")]
         self.assertEqual(check.target_collisions(mounts), ["/etc/alloy/config.1.alloy: content target of alloy, alloy-gateway"])
         self.assertEqual(check.target_collisions(mounts[1:]), [])
+
+    def test_size_warns_under_4_kib_of_margin(self):
+        budget = check.render.BUDGET_BYTES
+        cases = ((budget - 4096, False), (budget - 4095, True), (budget, True))
+        for size, warned in cases:
+            with self.subTest(size=size), contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(check.check_size(size), [])
+                self.assertEqual("WARN" in out.getvalue(), warned, out.getvalue())
+        self.assertEqual(check.check_size(budget + 1), [f"docker-compose.yaml is {budget + 1} bytes in base64, budget is {budget}"])
+
+
+class BundleTest(unittest.TestCase):
+    """Spec 4.3: GRAFANA_SETUP_TAG must hold exactly the grafana-setup files of the working tree."""
+
+    TAG = "grafana-setup-content-v1"
+    FILES = [("alerting.py", hashlib.sha256(b"new\n").hexdigest())]
+
+    def errors(self, tag=TAG, stored=b"new\n", exists=True):
+        shown = []
+
+        def git_show(tag, path):
+            shown.append(path)
+            return stored
+
+        errors = check.bundle_errors(tag, self.FILES, git_show, lambda _tag: exists)
+        self.assertTrue(all(path == "config/grafana-setup/alerting.py" for path in shown), shown)
+        return errors
+
+    def test_tag_holding_the_files(self):
+        self.assertEqual(self.errors(), [])
+
+    def test_malformed_tag_name(self):
+        for tag in ("main", "", "grafana-setup-content-v0", "grafana-setup-content-1", "v1"):
+            with self.subTest(tag=tag):
+                self.assertIn("must look like grafana-setup-content-v<N>", self.errors(tag=tag)[0])
+
+    def test_absent_tag(self):
+        self.assertIn("tag grafana-setup-content-v1 absent", self.errors(exists=False)[0])
+
+    def test_file_changed_after_the_tag(self):
+        self.assertIn("differs between tag grafana-setup-content-v1", self.errors(stored=b"old\n")[0])
+
+    def test_file_added_after_the_tag(self):
+        self.assertIn("absent from tag grafana-setup-content-v1", self.errors(stored=None)[0])
+
+    def test_shallow_clone_without_the_tag_is_skipped(self):
+        saved = check.git_tag_exists, check.git_is_shallow
+        check.git_tag_exists = lambda _tag: False
+        try:
+            for shallow, expected in ((True, []), (False, 1)):
+                with self.subTest(shallow=shallow):
+                    check.git_is_shallow = lambda shallow=shallow: shallow
+                    errors = check.check_bundle()
+                    self.assertEqual(errors if shallow else len(errors), expected)
+        finally:
+            check.git_tag_exists, check.git_is_shallow = saved
+
+
+class StripHazardTest(unittest.TestCase):
+    """strip_comments is line-based: a comment-looking line inside a multi-line value would be cut."""
+
+    def test_yaml_block_scalar_is_flagged(self):
+        for line in ("script: |", "script: >-", "  body: |2", "text:   >+  "):
+            self.assertTrue(check.strip_hazards("config/x.yaml", f"a: 1\n{line}\n  # kept?\n"), line)
+
+    def test_yaml_plain_values_pass(self):
+        text = "a: 1\nexpr: 'x | y'\nurl: https://a/#b\nlist:\n  - '>'\n"
+        self.assertEqual(check.strip_hazards("config/x.yml", text), [])
+
+    def test_alloy_multiline_raw_string_is_flagged(self):
+        errors = check.strip_hazards("config/x.alloy", 'a = `one\n// inside\ntwo`\n')
+        self.assertEqual(len(errors), 2)
+        self.assertIn("config/x.alloy:1", errors[0])
+
+    def test_alloy_paired_backticks_pass(self):
+        self.assertEqual(check.strip_hazards("config/x.alloy", 'a = [`x`, `y` + "z"]\nb = 1\n'), [])
+
+    def test_other_files_are_ignored(self):
+        self.assertEqual(check.strip_hazards("config/setup.py", "x = `\ny: |\n"), [])
+
+    def test_repository_inlined_files_pass(self):
+        self.assertEqual(check.check_render(), [])
 
 
 class RepositoryCheckTest(unittest.TestCase):

@@ -166,5 +166,21 @@ class MaskingLiteralsTest(unittest.TestCase):
         self.assertTrue(convert and convert[0] < first_string_rule, statements[:first_string_rule])
 
 
+class MetricJobTest(unittest.TestCase):
+    """Prometheus' OTLP translator prefixes job with service.namespace: the metrics path drops it."""
+
+    def metric_resource_statements(self):
+        text = CONFIG.read_text(encoding="utf-8")
+        block = re.search(r'metric_statements \{\s*context\s*= "resource"\s*statements = \[(.*?)\n    \]', text, re.S)
+        self.assertIsNotNone(block, "no resource-context metric_statements block")
+        return block.group(1)
+
+    def test_service_namespace_is_deleted_on_metrics(self):
+        self.assertIn('`delete_key(resource.attributes, "service.namespace")`', self.metric_resource_statements())
+
+    def test_project_is_kept_on_metrics(self):
+        self.assertNotIn('delete_key(resource.attributes, "project")', self.metric_resource_statements())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -248,6 +248,10 @@ otelcol.processor.transform "default" {
       `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
       `delete_key(resource.attributes, "deployment.environment.name")`,
       `delete_key(resource.attributes, "deployment.environment")`,
+      // Prometheus' OTLP translator sets job = "service.namespace/service.name" when the namespace
+      // is present; the dashboards filter on job = service.name (spec 6.2), and project already
+      // carries the namespace. Span-metrics are unaffected (Tempo labels them with service).
+      `delete_key(resource.attributes, "service.namespace")`,
       `set(cache["flat"], resource.attributes)`,
       `flatten(cache["flat"])`,
       `set(cache["orig"], cache["flat"])`,

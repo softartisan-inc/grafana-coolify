@@ -117,6 +117,9 @@ def materialize(source, config_dir):
     written.parent.mkdir(parents=True, exist_ok=True)
     if origin.is_dir():
         written.mkdir()
+    elif origin.is_file() and Path(repository).suffix in render.COMMENT_PREFIXES:
+        # Coolify writes the compose content:, which render.py stripped of full-line comments.
+        written.write_text(render.strip_comments(origin.read_text(encoding="utf-8"), repository), encoding="utf-8")
     elif origin.is_file():
         shutil.copyfile(origin, written)
     return written

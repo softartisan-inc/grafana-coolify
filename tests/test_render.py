@@ -166,6 +166,21 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(render.base64_size("abc"), 4)
         self.assertEqual(render.base64_size("é"), 4)
 
+    def test_grafana_setup_files_are_listed_except_setup(self):
+        base = self.root / "config" / "grafana-setup"
+        (base / "dashboards").mkdir(parents=True)
+        (base / "__pycache__").mkdir()
+        (base / "alerting.py").write_text("print('a')\n", encoding="utf-8")
+        (base / "setup.py").write_text("print('s')\n", encoding="utf-8")
+        (base / "dashboards" / "gc-host.json").write_text("{}\n", encoding="utf-8")
+        (base / "notes.txt").write_text("ignored\n", encoding="utf-8")
+        (base / "__pycache__" / "setup.cpython-312.py").write_text("ignored\n", encoding="utf-8")
+        files = render.grafana_setup_files(self.root)
+        self.assertEqual([path for path, _digest in files], ["alerting.py", "dashboards/gc-host.json"])
+        self.assertEqual(files[0][1], hashlib.sha256(b"print('a')\n").hexdigest())
+        values = render.computed_values(self.root, TEMPLATE)
+        self.assertEqual(values["GRAFANA_SETUP_FILES"], ";".join(f"{path}={digest}" for path, digest in files))
+
     def test_dev_variant_adds_grafana_and_no_content(self):
         dev = render.render_dev(TEMPLATE, self.root, dict(self.versions, GRAFANA_VERSION="13.2.2"))
         self.assertNotIn("content:", dev)
@@ -176,8 +191,100 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(doc["services"]["app"]["command"][0], "--config=/etc/app/tricky.txt")
 
 
+STRIP_TEMPLATE = """services:
+  config-guard:
+    image: alpine
+    environment:
+      CONFIG_GUARD_EXPECTED: "@@CONFIG_GUARD_EXPECTED@@"
+      GUARD: "@@GUARD_SHA256@@"
+    volumes:
+      - type: bind
+        source: ./config/config-guard/guard.sh
+        target: /opt/config-guard/guard.sh
+        content: "@@CONTENT@@"
+  alloy:
+    image: alloy
+    volumes:
+      - type: bind
+        source: ./config/alloy/config.alloy
+        target: /etc/alloy/config.alloy
+        content: "@@CONTENT@@"
+  loki:
+    image: loki
+    volumes:
+      - type: bind
+        source: ./config/loki/loki.yaml
+        target: /etc/loki/loki.yaml
+        content: "@@CONTENT@@"
+"""
+ALLOY = '// Header comment\n\n  // indented comment\nloki.write "x" {\n  url = "https://loki:3100/push" // end-of-line kept\n\n  // inner\n}\n'
+ALLOY_STRIPPED = 'loki.write "x" {\n  url = "https://loki:3100/push" // end-of-line kept\n}\n'
+LOKI = "# Loki\n\nserver:\n  # port\n  http_listen_port: 3100 # kept\n\n  url: https://example.com/#anchor\n"
+LOKI_STRIPPED = "server:\n  http_listen_port: 3100 # kept\n  url: https://example.com/#anchor\n"
+
+
+class CommentStrippingTest(unittest.TestCase):
+    """Inlined YAML and Alloy files lose full-line comments and blank lines; config/ keeps them."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        for path, text in {"config-guard/guard.sh": "#!/bin/sh\n\n# guard\necho guard\n", "alloy/config.alloy": ALLOY, "loki/loki.yaml": LOKI}.items():
+            (self.root / "config" / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / "config" / path).write_text(text, encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_strip_comments_rules(self):
+        self.assertEqual(render.strip_comments(ALLOY, "./config/alloy/config.alloy"), ALLOY_STRIPPED)
+        self.assertEqual(render.strip_comments(LOKI, "./config/loki/loki.yaml"), LOKI_STRIPPED)
+        self.assertEqual(render.strip_comments(LOKI, "./config/prometheus/prometheus.yml"), LOKI_STRIPPED)
+        # Other files (shell, Python) are inlined unchanged: "#!" and "#" lines matter there.
+        self.assertEqual(render.strip_comments("#!/bin/sh\n\n# x\n", "./config/config-guard/guard.sh"), "#!/bin/sh\n\n# x\n")
+        self.assertEqual(render.strip_comments("# x\n\ny = 1\n", "./config/grafana-setup/setup.py"), "# x\n\ny = 1\n")
+
+    def test_compose_carries_stripped_content_and_hashes(self):
+        doc = yaml.safe_load(render.render_text(STRIP_TEMPLATE, self.root, {}))
+        services = doc["services"]
+        alloy, loki = services["alloy"]["volumes"][0], services["loki"]["volumes"][0]
+        self.assertEqual(alloy["content"], ALLOY_STRIPPED)
+        self.assertEqual(loki["content"], LOKI_STRIPPED)
+        self.assertNotIn("Header comment", alloy["content"])
+        self.assertIn("https://loki:3100/push", alloy["content"])
+        self.assertIn("https://example.com/#anchor", loki["content"])
+        self.assertEqual(services["config-guard"]["volumes"][0]["content"], "#!/bin/sh\n\n# guard\necho guard\n")
+        alloy_sha = hashlib.sha256(ALLOY_STRIPPED.encode()).hexdigest()
+        loki_sha = hashlib.sha256(LOKI_STRIPPED.encode()).hexdigest()
+        self.assertEqual(alloy["source"], f"./config/alloy/config.{alloy_sha[:8]}.alloy")
+        expected = services["config-guard"]["environment"]["CONFIG_GUARD_EXPECTED"]
+        self.assertEqual(expected, f"/guard/alloy/config.{alloy_sha[:8]}.alloy={alloy_sha};/guard/loki/loki.{loki_sha[:8]}.yaml={loki_sha}")
+        # The repository keeps its comments.
+        self.assertEqual((self.root / "config/alloy/config.alloy").read_text(encoding="utf-8"), ALLOY)
+
+    def test_dev_variant_expects_the_unstripped_files(self):
+        dev = yaml.safe_load(render.render_dev(STRIP_TEMPLATE, self.root, {"GRAFANA_VERSION": "13.2.2"}))
+        expected = dev["services"]["config-guard"]["environment"]["CONFIG_GUARD_EXPECTED"]
+        alloy_sha = hashlib.sha256(ALLOY.encode()).hexdigest()
+        loki_sha = hashlib.sha256(LOKI.encode()).hexdigest()
+        self.assertEqual(expected, f"/guard/alloy/config.alloy={alloy_sha};/guard/loki/loki.yaml={loki_sha}")
+
+    def test_repository_configs_keep_their_meaning(self):
+        for path in ("loki/loki.yaml", "tempo/tempo.yaml", "prometheus/prometheus.yml"):
+            with self.subTest(path=path):
+                text = (ROOT / "config" / path).read_text(encoding="utf-8")
+                self.assertEqual(yaml.safe_load(render.strip_comments(text, path)), yaml.safe_load(text))
+        for path in ("alloy/config.alloy", "alloy-gateway/config.alloy"):
+            with self.subTest(path=path):
+                text = (ROOT / "config" / path).read_text(encoding="utf-8")
+                stripped = render.strip_comments(text, path)
+                self.assertLess(len(stripped), len(text))
+                kept = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("//")]
+                self.assertEqual(stripped.splitlines(), kept)
+
+
 class RepositoryRenderTest(unittest.TestCase):
-    """The committed docker-compose.yaml carries every config file byte for byte (spec 12.2)."""
+    """The committed docker-compose.yaml carries every config file byte for byte, comments stripped (spec 12.2)."""
 
     def test_every_content_block_matches_its_source(self):
         doc = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
@@ -187,7 +294,8 @@ class RepositoryRenderTest(unittest.TestCase):
         for name, service in doc["services"].items():
             for volume in service.get("volumes", []):
                 if isinstance(volume, dict) and "content" in volume:
-                    data = (ROOT / repository[volume["source"]]).read_bytes()
+                    source = repository[volume["source"]]
+                    data = render.strip_comments((ROOT / source).read_text(encoding="utf-8"), source).encode("utf-8")
                     short = hashlib.sha256(data).hexdigest()[:8]
                     with self.subTest(service=name, source=volume["source"]):
                         self.assertEqual(volume["content"].encode("utf-8"), data)

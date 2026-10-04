@@ -8,6 +8,8 @@
   A router Host(other.gc.test) -> Grafana stands for "another public domain of the server".
 - Grafana OSS (127.0.10.101:3300, admin/admin, anonymous access disabled); a service account
   with the Admin role is created and its token written to .harness/runtime.env and edge.json.
+- A notification sink (harness/sink.py, 127.0.10.102): Grafana's SMTP server and HTTPS proxy, so
+  that email and Telegram notifications are observable without a mail server or a real bot.
 
 Usage: python3 harness/edge.py up | down | revoke USER | restore
 Needs `python3 harness/stack.py up` first (service IPs, /etc/hosts).
@@ -17,6 +19,7 @@ import argparse
 import base64
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -25,6 +28,7 @@ import urllib.request
 
 import yaml
 
+import sink
 import stack
 
 ROOT = stack.ROOT
@@ -32,6 +36,9 @@ EDGE_DIR = stack.HARNESS / "edge"
 DYNAMIC = EDGE_DIR / "dynamic.yml"
 EDGE_JSON = stack.HARNESS / "edge.json"
 RUNTIME_ENV = stack.HARNESS / "runtime.env"
+SINK_LOG = stack.HARNESS / "sink" / "messages.jsonl"
+# Grafana reaches the stack directly (names of /etc/hosts); everything else goes to the sink proxy.
+NO_PROXY = ",".join([*stack.SERVICE_IPS, "localhost", "127.0.0.0/8"])
 TRAEFIK_IP, TRAEFIK_PORT = "127.0.10.100", 8080
 GRAFANA_IP, GRAFANA_PORT = "127.0.10.101", 3300
 DOMAIN = "gc.test"
@@ -39,6 +46,7 @@ USERS = {"proj-a": "harness-pass-a1", "proj-b": "harness-pass-b2"}
 REVOCABLE_USER = "proj-b"
 ORIGIN_REGEX = r"^https://([a-z0-9-]+\.)?example\.(me|app)$"
 LABEL = "coolify.traefik.middlewares="
+GRAFANA_PLUGINS = ("prometheus", "loki", "tempo")
 
 
 def htpasswd_line(user, password):
@@ -118,6 +126,14 @@ def grafana_api(method, path, body=None):
         return json.loads(resp.read() or b"null")
 
 
+def plugin_ready(plugin):
+    try:
+        grafana_api("GET", f"/api/plugins/{plugin}/settings")
+        return True
+    except urllib.error.HTTPError:
+        return False
+
+
 def service_account_token():
     found = grafana_api("GET", "/api/serviceaccounts/search?query=gc-setup")["serviceAccounts"]
     account = found[0] if found else grafana_api("POST", "/api/serviceaccounts", {"name": "gc-setup", "role": "Admin"})
@@ -129,11 +145,17 @@ def cmd_up(_args):
     state = stack.load_state()
     if not any(stack.alive(p) for p in state["processes"].values()):
         raise stack.HarnessError("start the stack first: python3 harness/stack.py up")
-    stack.preflight([(TRAEFIK_IP, TRAEFIK_PORT), (GRAFANA_IP, GRAFANA_PORT)])
+    stack.preflight([(TRAEFIK_IP, TRAEFIK_PORT), (GRAFANA_IP, GRAFANA_PORT), (sink.SINK_IP, sink.SMTP_PORT), (sink.SINK_IP, sink.PROXY_PORT)])
     write_dynamic(list(USERS))
+    SINK_LOG.parent.mkdir(parents=True, exist_ok=True)
+    SINK_LOG.write_text("", encoding="utf-8")
     grafana_home = stack.BIN / "grafana"
     grafana_data = stack.HARNESS / "grafana"
+    # A fresh Grafana on every `up` (its alerting state and notification log included), so that
+    # alerts notify again; the plugins directory is kept (downloaded once from grafana.com).
+    shutil.rmtree(grafana_data / "data", ignore_errors=True)
     specs = {
+        "sink": {"args": [sys.executable, str(ROOT / "harness" / "sink.py"), str(SINK_LOG)], "env": {"PATH": "/usr/bin:/bin"}},
         "traefik": {
             "args": [
                 str(stack.BIN / "traefik"),
@@ -161,15 +183,31 @@ def cmd_up(_args):
                 "GF_AUTH_ANONYMOUS_ENABLED": "false",
                 "GF_ANALYTICS_REPORTING_ENABLED": "false",
                 "GF_ANALYTICS_CHECK_FOR_UPDATES": "false",
+                "GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES": "false",
+                # Bench only: SQLite under test load answers "database is locked" (HTTP 500);
+                # WAL and query retries (conf/defaults.ini, [database]) make that rare.
+                "GF_DATABASE_WAL": "true",
+                "GF_DATABASE_QUERY_RETRIES": "10",
+                "GF_DATABASE_TRANSACTION_RETRIES": "20",
+                "GF_SMTP_ENABLED": "true",
+                "GF_SMTP_HOST": f"{sink.SINK_IP}:{sink.SMTP_PORT}",
+                "GF_SMTP_FROM_ADDRESS": "grafana@gc.test",
+                "GF_SMTP_STARTTLS_POLICY": "NoStartTLS",
+                "HTTPS_PROXY": f"http://{sink.SINK_IP}:{sink.PROXY_PORT}",
+                "NO_PROXY": NO_PROXY,
             },
         },
     }
     for name, spec in specs.items():
-        state["processes"][name] = {**stack.spawn(name, spec), "ip": TRAEFIK_IP if name == "traefik" else GRAFANA_IP}
+        state["processes"][name] = {**stack.spawn(name, spec), "ip": {"sink": sink.SINK_IP, "traefik": TRAEFIK_IP}.get(name, GRAFANA_IP)}
         stack.save_state(state)
     wait(lambda: stack.http_ok(f"http://{TRAEFIK_IP}:{TRAEFIK_PORT}/ping"), "Traefik /ping")
     wait(lambda: gateway_status(REVOCABLE_USER, USERS[REVOCABLE_USER]) == 200, "Traefik routes to alloy-gateway")
     wait(lambda: stack.http_ok(f"http://{GRAFANA_IP}:{GRAFANA_PORT}/api/health"), "Grafana /api/health", timeout=180)
+    # Grafana 13 installs these datasource plugins from grafana.com at its first start (through
+    # the sink proxy, which tunnels every host but Telegram): no query works before they are there.
+    for plugin in GRAFANA_PLUGINS:
+        wait(lambda plugin=plugin: plugin_ready(plugin), f"Grafana plugin {plugin}", timeout=300)
     token = service_account_token()
     grafana_url = f"http://{GRAFANA_IP}:{GRAFANA_PORT}"
     RUNTIME_ENV.write_text(f"GRAFANA_URL={grafana_url}\nGRAFANA_SA_TOKEN={token}\n", encoding="utf-8")
@@ -185,6 +223,7 @@ def cmd_up(_args):
         "origin_ok": "https://acme.example.me",
         "grafana_url": grafana_url,
         "grafana_token": token,
+        "sink_log": str(SINK_LOG),
     }
     EDGE_JSON.write_text(json.dumps(edge, indent=2), encoding="utf-8")
     EDGE_JSON.chmod(0o600)
@@ -194,7 +233,7 @@ def cmd_up(_args):
 
 def cmd_down(_args):
     state = stack.load_state()
-    for name in ("traefik", "grafana"):
+    for name in ("traefik", "grafana", "sink"):
         proc = state["processes"].pop(name, None)
         if proc:
             stack.terminate(proc)

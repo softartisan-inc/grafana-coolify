@@ -16,9 +16,9 @@ services:
     command:
       - sh
       - -c
-      - "echo 'f7d19c390dc0d92af9432e13af41d7c4bbb83bf78f09446b340e9c79d8e56e6f  /opt/config-guard/guard.f7d19c39.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.f7d19c39.sh"
+      - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.fa19fbc1.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.fa19fbc1.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.57c7d4be.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.4db78d01.alloy=4db78d01b5e7219285504282e3256f6799ad055e0909563dbd021e5c9feef204;/guard/grafana-setup/setup.f6429835.py=f642983579de890ae21571cdb487e85b7b2bce721ee0fca5aaffe68bf4d080b5;/guard/loki/loki.f3b7d18c.yaml=f3b7d18c78174732ad73f9b56eecbc7575353a4f968dbeb666dfe31c13fc982d;/guard/prometheus/prometheus.6e92fe28.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/tempo/tempo.806689fa.yaml=806689faf367e49572d69fbcdc6fd386f60566917931571a31300e7600a0182d"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.86e362a3.py=86e362a340bc0c5070739d6f7423f5aafef62328bddd27c85cc73afba35165fd;/guard/loki/loki.b1a0660d.yaml=b1a0660d327b9fe6f4c6dfd543ec80b9ab679fb32507e73eabb582237c681ac7;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/tempo/tempo.46f5a358.yaml=46f5a3584f9906c97da2b080ab22df235e245bf38c80c0a73e2ca38f424a71e1"
       IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
       FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
       PROJECTS: ${PROJECTS:-}
@@ -26,10 +26,11 @@ services:
       HOST_MAP: ${HOST_MAP:-}
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
+      HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.f7d19c39.sh
-        target: /opt/config-guard/guard.f7d19c39.sh
+        source: ./config/config-guard/guard.fa19fbc1.sh
+        target: /opt/config-guard/guard.fa19fbc1.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -121,6 +122,11 @@ services:
           if [ -n "$reserved" ] && ! matches "$reserved" '^[a-z0-9-]+(,[a-z0-9-]+)*$'; then
             error "RESERVED_SUBDOMAINS must look like www,api (lowercase, comma separated)"
           fi
+          # env label of the host-level alerts (grafana-setup): same values as the env of the data.
+          case ${HOST_ENV:-prod} in
+            prod | preprod) ;;
+            *) error "HOST_ENV must be prod or preprod" ;;
+          esac
           tenant_regex=${TENANT_HOST_REGEX:-}
           if [ -n "$tenant_regex" ]; then
             case $tenant_regex in
@@ -150,7 +156,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - -config.file=/etc/loki/loki.f3b7d18c.yaml
+      - -config.file=/etc/loki/loki.b1a0660d.yaml
       - -config.expand-env=true
     environment:
       BIND_ADDR: 0.0.0.0
@@ -159,22 +165,16 @@ services:
       LOKI_RETENTION_DEFAULT: ${LOKI_RETENTION_DEFAULT:-168h}
     volumes:
       - type: bind
-        source: ./config/loki/loki.f3b7d18c.yaml
-        target: /etc/loki/loki.f3b7d18c.yaml
+        source: ./config/loki/loki.b1a0660d.yaml
+        target: /etc/loki/loki.b1a0660d.yaml
         content: |2
-          # Loki single-binary configuration for grafana-coolify.
-          # Environment variables are expanded by Loki itself (-config.expand-env=true); compose.template.yaml
-          # sets every one of them (BIND_ADDR, LOKI_DATA_DIR, LOKI_RETENTION_*).
           auth_enabled: false
-
           server:
             http_listen_address: ${BIND_ADDR}
             http_listen_port: 3100
-            # Internal module-to-module gRPC only (single binary).
             grpc_listen_address: 127.0.0.1
             grpc_listen_port: 9095
             log_level: info
-
           common:
             path_prefix: ${LOKI_DATA_DIR}
             instance_addr: 127.0.0.1
@@ -186,7 +186,6 @@ services:
               filesystem:
                 chunks_directory: ${LOKI_DATA_DIR}/chunks
                 rules_directory: ${LOKI_DATA_DIR}/rules
-
           schema_config:
             configs:
               - from: "2026-01-01"
@@ -196,56 +195,30 @@ services:
                 index:
                   prefix: index_
                   period: 24h
-
           storage_config:
             tsdb_shipper:
               active_index_directory: ${LOKI_DATA_DIR}/tsdb-index
               cache_location: ${LOKI_DATA_DIR}/tsdb-cache
-
           compactor:
             working_directory: ${LOKI_DATA_DIR}/compactor
             compaction_interval: 10m
             retention_enabled: true
             retention_delete_delay: 2h
             delete_request_store: filesystem
-
           limits_config:
             allow_structured_metadata: true
             volume_enabled: true
             discover_log_levels: true
-            # Global budgets of the single tenant, shared by the OTLP and Faro paths, stated explicitly.
-            # Streams: one per (project, env, service_name); Faro names are closed (PROJECTS, FARO_SERVICES,
-            # HOST_MAP), so the cap only guards against a runaway emitter. 10000 = twice Loki's default:
-            # room for tens of projects x 2 envs x services, while every active stream holds ingester
-            # memory (head block, open chunk) inside the 1536m limit.
             max_global_streams_per_user: 10000
-            # Rate: the alloy-data backlog (up to 1000 batches of 2048 records per exporter) is pushed back
-            # by 10 parallel consumers of ~2 MiB each; Loki's default 4 MB/s (burst 6) would answer 429 and
-            # burn the 1 h retry window. 16 MB/s drains ~2 GiB in about two minutes; burst 32 MB covers the
-            # 10 concurrent pushes.
             ingestion_rate_mb: 16
             ingestion_burst_size_mb: 32
-            # Per-stream rate: Loki's default 3 MB/s (burst 15 MB) applies to each (project, env,
-            # service_name) stream, whatever the tenant budget. A backlog is often one stream (the service
-            # that logged during the outage). Record size hypothesis: 1 to 4 KiB per log record, so a batch
-            # of 2048 records weighs 2 to 8 MiB and a full queue (1000 batches) 2 to 8 GiB. At 3 MB/s the
-            # 10 consumers get 429s, back off, and 8 GiB would need ~45 min, too close to the 1 h retry
-            # window. 8 MB/s = half the tenant rate: one stream drains 2 GiB in ~4 min and 8 GiB in
-            # ~17 min, and can never take the whole tenant budget from the others (a replay, a noisy Faro
-            # stream). Burst 24MB (Loki's ByteSize is binary: 24 MiB): three of the largest batches
-            # (3 x 8 MiB at 4 KiB per record; a push above the burst could never succeed), the 10 concurrent
-            # pushes at 1 KiB per record (~20 MiB), and within the tenant burst (32 MiB; *_mb are also 2^20).
             per_stream_rate_limit: 8MB
             per_stream_rate_limit_burst: 24MB
-            # Every env except prod falls back to the short default (spec 9.1).
             retention_period: ${LOKI_RETENTION_DEFAULT}
             retention_stream:
               - selector: '{env="prod"}'
                 priority: 1
                 period: ${LOKI_RETENTION_PROD}
-            # Only project, env and service.name become index labels; ignore_defaults stops Loki from
-            # indexing service.instance.id and friends. trace_id/span_id of OTLP log records are stored as
-            # structured metadata by Loki itself (spec 6.2).
             otlp_config:
               resource_attributes:
                 ignore_defaults: true
@@ -258,7 +231,6 @@ services:
                   - action: structured_metadata
                     attributes:
                       - tenant
-
           analytics:
             reporting_enabled: false
         read_only: true
@@ -275,7 +247,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - -config.file=/etc/tempo/tempo.806689fa.yaml
+      - -config.file=/etc/tempo/tempo.46f5a358.yaml
       - -config.expand-env=true
     environment:
       BIND_ADDR: 0.0.0.0
@@ -285,22 +257,16 @@ services:
       ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-false}
     volumes:
       - type: bind
-        source: ./config/tempo/tempo.806689fa.yaml
-        target: /etc/tempo/tempo.806689fa.yaml
+        source: ./config/tempo/tempo.46f5a358.yaml
+        target: /etc/tempo/tempo.46f5a358.yaml
         content: |2
-          # Tempo 2.x monolithic configuration for grafana-coolify.
-          # Environment variables are expanded by Tempo itself (-config.expand-env=true); compose.template.yaml
-          # sets every one of them (BIND_ADDR, TEMPO_DATA_DIR, TEMPO_RETENTION, TEMPO_MAX_ACTIVE_SERIES, ENABLE_EXEMPLARS).
           stream_over_http_enabled: true
-
           server:
             http_listen_address: ${BIND_ADDR}
             http_listen_port: 3200
-            # Internal module-to-module gRPC only; single-binary Tempo registers its rings on 127.0.0.1.
             grpc_listen_address: 127.0.0.1
             grpc_listen_port: 9096
             log_level: info
-
           distributor:
             receivers:
               otlp:
@@ -309,7 +275,6 @@ services:
                     endpoint: ${BIND_ADDR}:4317
                   http:
                     endpoint: ${BIND_ADDR}:4318
-
           ingester:
             max_block_duration: 5m
             lifecycler:
@@ -317,17 +282,12 @@ services:
                 kvstore:
                   store: inmemory
                 replication_factor: 1
-
           querier:
             frontend_worker:
               frontend_address: 127.0.0.1:9096
-
           compactor:
             compaction:
-              # Tempo 2.x key; re-check before any move to Tempo 3.x (spec 9.1).
               block_retention: ${TEMPO_RETENTION}
-
-          # Span-metrics and service graphs replace PHP request counters (spec 7.2).
           metrics_generator:
             ring:
               kvstore:
@@ -350,11 +310,9 @@ services:
               path: ${TEMPO_DATA_DIR}/generator/wal
               remote_write:
                 - url: http://prometheus:9090/api/v1/write
-                  # Exemplars need PROM_ENABLE_FEATURES=exemplar-storage on Prometheus (spec 7.3).
                   send_exemplars: ${ENABLE_EXEMPLARS}
             traces_storage:
               path: ${TEMPO_DATA_DIR}/generator/traces
-
           storage:
             trace:
               backend: local
@@ -362,7 +320,6 @@ services:
                 path: ${TEMPO_DATA_DIR}/wal
               local:
                 path: ${TEMPO_DATA_DIR}/blocks
-
           overrides:
             defaults:
               metrics_generator:
@@ -370,7 +327,6 @@ services:
                   - span-metrics
                   - service-graphs
                 max_active_series: ${TEMPO_MAX_ACTIVE_SERIES}
-
           usage_report:
             reporting_enabled: false
         read_only: true
@@ -388,7 +344,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - --config.file=/etc/prometheus/prometheus.6e92fe28.yml
+      - --config.file=/etc/prometheus/prometheus.8fe5d468.yml
       - --storage.tsdb.path=/prometheus
       - --web.listen-address=0.0.0.0:9090
       - --web.enable-otlp-receiver
@@ -398,29 +354,20 @@ services:
       - --enable-feature=${PROM_ENABLE_FEATURES:-}
     volumes:
       - type: bind
-        source: ./config/prometheus/prometheus.6e92fe28.yml
-        target: /etc/prometheus/prometheus.6e92fe28.yml
+        source: ./config/prometheus/prometheus.8fe5d468.yml
+        target: /etc/prometheus/prometheus.8fe5d468.yml
         content: |2
-          # Prometheus configuration for grafana-coolify.
-          # Flags (listen address, OTLP and remote-write receivers, retention, feature flags) are in the
-          # `command:` of compose.template.yaml: that is the only place Compose interpolates variables.
           global:
             scrape_interval: 30s
             evaluation_interval: 30s
-
-          # OTLP: project, env and tenant become labels instead of ending in target_info.
-          # service.name is always translated to `job` (spec 6.2).
           otlp:
             promote_resource_attributes:
               - project
               - env
               - tenant
-
           storage:
             tsdb:
               out_of_order_time_window: 30m
-
-          # Internal scrape of the stack (spec 7.4). Names resolve inside the package network.
           scrape_configs:
             - job_name: prometheus
               static_configs:
@@ -482,7 +429,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.4db78d01.alloy
+      - /etc/alloy/config.eaa44437.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -502,91 +449,41 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.4db78d01.alloy
-        target: /etc/alloy/config.4db78d01.alloy
+        source: ./config/alloy/config.eaa44437.alloy
+        target: /etc/alloy/config.eaa44437.alloy
         content: |2
-          // grafana-coolify - main Alloy pipeline (spec 7.1).
-          // In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
-          // Out: traces -> Tempo, logs -> Loki, metrics -> Prometheus.
-          // Every runtime value comes from sys.env(); Coolify writes this file byte for byte.
-
           logging {
             level  = "info"
             format = "logfmt"
           }
-
-          // Persistent sending queue of the three OTLP exporters (spec 9.2).
           otelcol.storage.file "queue" {
             directory = sys.env("ALLOY_QUEUE_DIR")
           }
-
-          // ------------------------------------------------------------------ OTLP path
           otelcol.receiver.otlp "default" {
             grpc {
               endpoint = sys.env("BIND_ADDR") + ":4317"
             }
-
             http {
               endpoint = sys.env("BIND_ADDR") + ":4318"
             }
-
             output {
               logs    = [otelcol.processor.memory_limiter.default.input]
               metrics = [otelcol.processor.memory_limiter.default.input]
               traces  = [otelcol.processor.memory_limiter.default.input]
             }
           }
-
           otelcol.processor.memory_limiter "default" {
             check_interval         = "1s"
             limit_percentage       = 80
             spike_limit_percentage = 20
-
             output {
               logs    = [otelcol.processor.transform.default.input]
               metrics = [otelcol.processor.transform.default.input]
               traces  = [otelcol.processor.transform.default.input]
             }
           }
-
-          // 1. Short env: deployment.environment.name (or legacy deployment.environment) -> env,
-          //    original attribute deleted (spec 6.1).
-          // 2. Masking safety net (spec 8.1), same rule set on every attribute map (resource, scope, span,
-          //    span event, log, data point) and on a map log body:
-          //    - every such map is flattened (flatten, stable): nested maps and arrays become dotted
-          //      leaves (user.profile.email, tags.0), so the rules below reach them; replace_all_patterns
-          //      only rewrites string values, and walking a slice element-wise needs lambdas (alpha,
-          //      ottl.functions.enableLambda gate). Scalar types are kept. No resolveConflicts: it would
-          //      name array elements k, k.0, k.1 instead of k.0, k.1, k.2; a literal dotted key equal to a
-          //      nested path keeps one of the two values (both masked). An attribute map is masked on a
-          //      flattened copy (cache["flat"]) and written back only when a rule changed it
-          //      (pcommon.Map.Equal): clean data keeps its shape (process.command_args, header arrays),
-          //      a masked map is stored flattened. The map log body is flattened in place; a list log
-          //      body becomes its JSON text first;
-          //    - secret keys are deleted, whatever the value type (replace_all_patterns only rewrites
-          //      strings, and http.request.header.* are arrays). A key is secret when one of the words
-          //      authorization, cookie(s), password(s), passwd, token, secret(s), api_key/api-key/apikey
-          //      (any case) ends it, or is followed by . _ - or a capital: http.request.header.authorization,
-          //      access_token, client_secret, x-api-token, accessToken; not gen_ai.usage.input_tokens,
-          //      tokenizer, secretary. Same boundary on the Faro path; tests/test_alloy_masking.py checks
-          //      that every copy of a masking literal is identical;
-          //    - in string values: Bearer tokens and key=value / "key":"value" secrets (same key rule)
-          //      -> [redacted], emails -> [email];
-          //    - card numbers -> [card] in free text only (string body, message, exception.*,
-          //      error.message, span status message), before IP hashing so a digest is never rewritten;
-          //    - IPv4/IPv6 -> SHA256(IP_HASH_SALT + ip), except under keys holding a version or a user
-          //      agent (a browser version 128.0.0.0 is not an address).
-          //    Residual: card numbers are only looked for under the free-text keys above (after
-          //    flattening: message, exception.*, error.message at any depth of that exact dotted name);
-          //    a masked attribute map changes shape (k -> k.0, k.1) in Tempo, Loki and Prometheus.
-          //    Regexes are RE2; backticks are Alloy raw strings.
           otelcol.processor.transform "default" {
-            // Fail-open trade-off: a statement that errors on one item (unexpected type, bad value) is
-            // skipped and the item goes on, possibly unmasked by that statement, instead of being dropped
-            // with its whole batch ("propagate" would return the error and reject the batch).
-            // The statements are written so that they do not error on valid OTLP data.
             error_mode = "ignore"
-
             trace_statements {
               context    = "resource"
               statements = [
@@ -755,6 +652,7 @@ services:
                 `set(resource.attributes["env"], resource.attributes["deployment.environment"]) where resource.attributes["deployment.environment.name"] == nil and resource.attributes["deployment.environment"] != nil`,
                 `delete_key(resource.attributes, "deployment.environment.name")`,
                 `delete_key(resource.attributes, "deployment.environment")`,
+                `delete_key(resource.attributes, "service.namespace")`,
                 `set(cache["flat"], resource.attributes)`,
                 `flatten(cache["flat"])`,
                 `set(cache["orig"], cache["flat"])`,
@@ -803,154 +701,114 @@ services:
                 `set(datapoint.attributes, cache["flat"]) where cache["flat"] != cache["orig"]`,
               ]
             }
-
             output {
               logs    = [otelcol.processor.filter.default.input]
               metrics = [otelcol.processor.filter.default.input]
               traces  = [otelcol.processor.filter.default.input]
             }
           }
-
-          // Drop everything without project, without env, or whose env is neither prod nor preprod; an
-          // empty string counts as missing (spec 6.3). Counters:
-          // otelcol_processor_filter_{spans,logs,datapoints}_filtered_total.
           otelcol.processor.filter "default" {
             error_mode = "ignore"
-
             traces {
               span = [
                 `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
               ]
             }
-
             logs {
               log_record = [
                 `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
               ]
             }
-
             metrics {
               datapoint = [
                 `resource.attributes["project"] == nil or resource.attributes["project"] == "" or resource.attributes["env"] == nil or resource.attributes["env"] == "" or (resource.attributes["env"] != "prod" and resource.attributes["env"] != "preprod")`,
               ]
             }
-
             output {
               logs    = [otelcol.processor.batch.default.input]
               metrics = [otelcol.processor.batch.default.input]
               traces  = [otelcol.processor.batch.default.input]
             }
           }
-
-          // At most 2048 items per batch: with queue_size = 1000 batches, the persistent queue of each
-          // exporter holds at most ~2 million items on the alloy-data volume (spec 9.2).
           otelcol.processor.batch "default" {
             send_batch_size     = 1024
             send_batch_max_size = 2048
-
             output {
               logs    = [otelcol.exporter.otlphttp.loki.input]
               metrics = [otelcol.exporter.otlphttp.prometheus.input]
               traces  = [otelcol.exporter.otlp.tempo.input]
             }
           }
-
           otelcol.exporter.otlp "tempo" {
             client {
               endpoint = "tempo:4317"
-
               tls {
                 insecure = true
               }
             }
-
             sending_queue {
               enabled    = true
               queue_size = 1000
               storage    = otelcol.storage.file.queue.handler
             }
-
             retry_on_failure {
               max_elapsed_time = "1h"
             }
           }
-
           otelcol.exporter.otlphttp "loki" {
             client {
               endpoint = "http://loki:3100/otlp"
             }
-
             sending_queue {
               enabled    = true
               queue_size = 1000
               storage    = otelcol.storage.file.queue.handler
             }
-
             retry_on_failure {
               max_elapsed_time = "1h"
             }
           }
-
           otelcol.exporter.otlphttp "prometheus" {
             client {
               endpoint = "http://prometheus:9090/api/v1/otlp"
             }
-
             sending_queue {
               enabled    = true
               queue_size = 1000
               storage    = otelcol.storage.file.queue.handler
             }
-
             retry_on_failure {
               max_elapsed_time = "1h"
             }
           }
-
-          // ------------------------------------------------------------------ Faro path
           faro.receiver "default" {
             server {
               listen_address = sys.env("BIND_ADDR")
               listen_port    = 12347
-              // Mandatory: config-guard refuses a key shorter than 16 characters (an empty api_key would
-              // disable the check of faro.receiver).
               api_key = sys.env("FARO_API_KEY")
-              // CORS is answered by Traefik (gc-faro-cors@file): a second header would break browsers.
               cors_allowed_origins     = []
               max_allowed_payload_size = coalesce(sys.env("FARO_MAX_PAYLOAD"), "5MiB")
-
               rate_limiting {
                 enabled    = true
                 rate       = coalesce(sys.env("FARO_RATE"), "100")
                 burst_size = coalesce(sys.env("FARO_BURST"), "200")
               }
             }
-
             output {
               logs   = [loki.process.faro.receiver]
               traces = [otelcol.processor.memory_limiter.faro.input]
             }
           }
-
-          // Faro traces carry no page URL: validate instead of deducing (spec 6.5). project comes from
-          // the Faro SDK resource (service.namespace = app.namespace); client tenant/env must match
-          // [a-z0-9-]+ and must not be a reserved subdomain, otherwise they are deleted. The "faro"
-          // filter then drops a trace whose project or service is not allowed; masking and the
-          // project/env filter happen in the shared "default" transform.
-          // Like the OTLP path, the Faro trace path starts with a memory limiter.
           otelcol.processor.memory_limiter "faro" {
             check_interval         = "1s"
             limit_percentage       = 80
             spike_limit_percentage = 20
-
             output {
               traces = [otelcol.processor.transform.faro.input]
             }
           }
-
           otelcol.processor.transform "faro" {
             error_mode = "ignore"
-
             trace_statements {
               context    = "resource"
               statements = [
@@ -964,48 +822,30 @@ services:
                 `delete_key(resource.attributes, "tenant") where resource.attributes["tenant"] != nil and (not IsMatch(resource.attributes["tenant"], "^[a-z0-9-]+$") or IsMatch(resource.attributes["tenant"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
               ]
             }
-
             trace_statements {
               context    = "span"
               statements = [
                 `delete_key(span.attributes, "tenant") where span.attributes["tenant"] != nil and (not IsMatch(span.attributes["tenant"], "^[a-z0-9-]+$") or IsMatch(span.attributes["tenant"], "^(` + string.replace(sys.env("RESERVED_SUBDOMAINS"), ",", "|") + `)$"))`,
               ]
             }
-
             output {
               traces = [otelcol.processor.filter.faro.input]
             }
           }
-
-          // The public Faro endpoint must not mint identities (Loki streams, Tempo series are global
-          // budgets shared with the server-side OTLP path). Drop a Faro trace when:
-          // - PROJECTS is set and its project is not in it (same rule as the Faro logs);
-          // - its service.name is neither in FARO_SERVICES nor a service of HOST_MAP. Closed by default:
-          //   both empty, every Faro trace is dropped. The HOST_MAP pattern turns
-          //   "example.me=guest-front:prod" into ^(?:(?:example\.me=)?guest-front(?::prod)?)$, a finite set.
-          // Counter: otelcol_processor_filter_spans_filtered_total{component_id="otelcol.processor.filter.faro"}.
           otelcol.processor.filter "faro" {
-            // Fail-open like the other processors: a condition error keeps the span (see "default").
             error_mode = "ignore"
-
             traces {
               span = [
                 `not IsMatch("` + sys.env("PROJECTS") + `", "^$") and not IsMatch(resource.attributes["project"], "^(` + string.replace(sys.env("PROJECTS"), ",", "|") + `)$")`,
                 `resource.attributes["service.name"] == nil or resource.attributes["service.name"] == "" or (not IsMatch(resource.attributes["service.name"], "^(` + string.replace(sys.env("FARO_SERVICES"), ",", "|") + `)$") and not IsMatch(resource.attributes["service.name"], "^(?:(?:` + string.replace(string.replace(string.replace(string.replace(sys.env("HOST_MAP"), ".", "\\\\."), "=", "=)?"), ":", "(?::"), ",", ")?|(?:") + `)?)$"))`,
               ]
             }
-
             output {
               traces = [otelcol.processor.transform.default.input]
             }
           }
-
-          // Faro logs (logfmt lines): deduce env/tenant from the page host (normative algorithm,
-          // spec 6.4), map app_* to the contract, emit exactly the Loki names of the OTLP path,
-          // validate project/env/service (drop with a reason) and the client tenant, then mask.
           loki.process "faro" {
             forward_to = [loki.write.loki.receiver]
-
             stage.logfmt {
               mapping = {
                 "gc_page_url"        = "page_url",
@@ -1017,97 +857,70 @@ services:
                 "trace_id"           = "traceID",
               }
             }
-
-            // host := lowercase host of page_url
             stage.regex {
               source     = "gc_page_url"
               expression = `^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]*@)?(?P<gc_host>[^:/?#]+)`
             }
-
             stage.template {
               source   = "gc_host"
               template = "{{ ToLower .Value }}"
             }
-
-            // Rules come from the environment. A leading comma keeps the template non-empty.
             stage.template {
               source   = "gc_host_map"
               template = "," + sys.env("HOST_MAP")
             }
-
             stage.template {
               source   = "gc_reserved"
               template = "," + sys.env("RESERVED_SUBDOMAINS")
             }
-
             stage.template {
               source   = "gc_projects"
               template = "," + sys.env("PROJECTS")
             }
-
             stage.template {
               source   = "gc_services"
               template = "," + sys.env("FARO_SERVICES")
             }
-
-            // HOST_MAP lookup (exact match, has priority): "service:env" or empty.
             stage.template {
               source   = "gc_hm_hit"
               template = `{{ $h := .gc_host }}{{ $r := "" }}{{ if $h }}{{ range $e := splitList "," .gc_host_map }}{{ $kv := splitList "=" $e }}{{ if and (eq (len $kv) 2) (eq (index $kv 0) $h) }}{{ $r = index $kv 1 }}{{ end }}{{ end }}{{ end }}{{ $r }}`
             }
-
             stage.regex {
               source     = "gc_hm_hit"
               expression = `^(?P<gc_hm_service>[^:]+):(?P<gc_hm_env>.+)$`
             }
-
-            // Services of HOST_MAP (",guest-front,..."): allowed Faro service names, like FARO_SERVICES.
             stage.template {
               source   = "gc_hm_services"
               template = `{{ range $e := splitList "," .gc_host_map }}{{ $kv := splitList "=" $e }}{{ if eq (len $kv) 2 }},{{ index (splitList ":" (index $kv 1)) 0 }}{{ end }}{{ end }}`
             }
-
-            // TENANT_HOST_REGEX (named groups sub and dev). Empty variable: a class that never matches.
             stage.regex {
               source     = "gc_host"
               expression = "(?P<gc_host_match>" + coalesce(sys.env("TENANT_HOST_REGEX"), "[^\\s\\S]") + ")"
             }
-
             stage.template {
               source   = "env"
               template = `{{ if .gc_hm_env }}{{ .gc_hm_env }}{{ else if .gc_host_match }}{{ if .dev }}preprod{{ else }}prod{{ end }}{{ else }}{{ with .gc_app_environment }}{{ . }}{{ end }}{{ end }}`
             }
-
-            // A tenant sent by the client (unknown host) is validated like on Faro traces (spec 6.5):
-            // [a-z0-9-]+ and not a reserved subdomain, otherwise it is removed.
             stage.template {
               source   = "tenant"
               template = `{{ if .gc_hm_env }}{{ else if .gc_host_match }}{{ if not (has .sub (splitList "," .gc_reserved)) }}{{ .sub }}{{ end }}{{ else }}{{ with .gc_client_tenant }}{{ if and (regexMatch "^[a-z0-9-]+$" .) (not (has . (splitList "," $.gc_reserved))) }}{{ . }}{{ end }}{{ end }}{{ end }}`
             }
-
             stage.template {
               source   = "service_name"
               template = `{{ if .gc_hm_service }}{{ .gc_hm_service }}{{ else }}{{ with .gc_app_name }}{{ . }}{{ end }}{{ end }}`
             }
-
             stage.template {
               source   = "project"
               template = "{{ with .gc_app_namespace }}{{ . }}{{ end }}"
             }
-
-            // Structured metadata comes from client text: keep a trace_id of 32 lowercase hex digits only,
-            // and a level only from the set Loki itself uses for detected_level (LogLevels of Loki's
-            // pkg/util/constants); otherwise the value is dropped and Loki detects the level.
             stage.template {
               source   = "trace_id"
               template = `{{ with .trace_id }}{{ if regexMatch "^[0-9a-f]{32}$" . }}{{ . }}{{ end }}{{ end }}`
             }
-
             stage.template {
               source   = "detected_level"
               template = `{{ with .gc_level }}{{ if has . (list "unknown" "debug" "info" "warn" "error" "fatal" "critical" "trace") }}{{ . }}{{ end }}{{ end }}`
             }
-
             stage.labels {
               values = {
                 project      = "",
@@ -1115,7 +928,6 @@ services:
                 service_name = "",
               }
             }
-
             stage.structured_metadata {
               values = {
                 tenant         = "",
@@ -1123,106 +935,70 @@ services:
                 detected_level = "",
               }
             }
-
-            // Why the line must be dropped, empty when it is valid: project missing, malformed or absent
-            // from PROJECTS (when PROJECTS is set), env missing or neither prod nor preprod, service name
-            // missing or malformed, or neither in FARO_SERVICES nor a service of HOST_MAP (closed by
-            // default: a client-chosen name must be listed, so the public endpoint cannot mint streams).
-            // Counter: loki_process_dropped_lines_total{reason="<the same word>"}.
             stage.template {
               source   = "gc_reject"
               template = `{{ if not .project }}missing_project{{ else if not (regexMatch "^[a-z0-9][a-z0-9-]{0,63}$" .project) }}invalid_project{{ else if and (ne .gc_projects ",") (not (has .project (splitList "," .gc_projects))) }}unknown_project{{ else if not .env }}missing_env{{ else if not (has .env (list "prod" "preprod")) }}invalid_env{{ else if not .service_name }}invalid_service{{ else if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .service_name) }}invalid_service{{ else if not (or (has .service_name (splitList "," .gc_services)) (has .service_name (splitList "," .gc_hm_services))) }}unknown_service{{ end }}`
             }
-
             stage.drop {
               source              = "gc_reject"
               value               = "missing_project"
               drop_counter_reason = "missing_project"
             }
-
             stage.drop {
               source              = "gc_reject"
               value               = "invalid_project"
               drop_counter_reason = "invalid_project"
             }
-
             stage.drop {
               source              = "gc_reject"
               value               = "unknown_project"
               drop_counter_reason = "unknown_project"
             }
-
             stage.drop {
               source              = "gc_reject"
               value               = "missing_env"
               drop_counter_reason = "missing_env"
             }
-
             stage.drop {
               source              = "gc_reject"
               value               = "invalid_env"
               drop_counter_reason = "invalid_env"
             }
-
             stage.drop {
               source              = "gc_reject"
               value               = "invalid_service"
               drop_counter_reason = "invalid_service"
             }
-
             stage.drop {
               source              = "gc_reject"
               value               = "unknown_service"
               drop_counter_reason = "unknown_service"
             }
-
-            // Masking (spec 8.1), same rules as the OTLP transform. Every key=value pair (logfmt key:
-            // anything but whitespace, = and ", so context_a:b or a non-ASCII key is one pair) is consumed in
-            // turn (a quoted value whole, so text inside a message is never read as a key): a pair whose
-            // key is secret (same word list and boundary as the OTLP key deletion) is dropped with its
-            // leading space, whatever its value (context_*, session_attr_*, event_data_* are
-            // client-controlled).
             stage.replace {
               expression = `((?:^|\s)[^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
               replace    = `{{ if not (regexMatch "^\\s*[^\\s=\"]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][^\\s=\"]*|[A-Z][^\\s=\"]*)?=" .Value) }}{{ .Value }}{{ end }}`
             }
-
-            // Then, on the whole line: Bearer tokens, secrets in free text (key=value, key: value,
-            // "key":"value", logfmt-escaped \"key\":\"value\", with an optional Basic/Digest/Token/ApiKey
-            // scheme, any secret key: access_token, client_secret...), emails.
             stage.replace {
               expression = `(?i)\bbearer\s+([A-Za-z0-9._~+/=-]+)`
               replace    = "[redacted]"
             }
-
             stage.replace {
               expression = `\b[\w-]*(?i:authorization|cookies?|passwords?|passwd|token|secrets?|api[_-]?keys?)(?:[._-][\w-]*|[A-Z][\w-]*)?\\?"?\s*[:=]\s*\\?"?((?:(?i:basic|digest|token|apikey)\s+)?[^\s"\\&,;]+)`
               replace    = "[redacted]"
             }
-
             stage.replace {
               expression = `([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})`
               replace    = "[email]"
             }
-
-            // Card numbers in free text only: message, value, stacktrace (spec 8.1), before IP hashing
-            // so a digest is never rewritten.
             stage.replace {
               expression = `(?:^|\s)(?:message|value|stacktrace)=("(?:[^"\\]|\\.)*"|\S*)`
               replace    = `{{ regexReplaceAll "\\b(?:\\d[ -]?){12,18}\\d\\b" .Value "[card]" }}`
             }
-
-            // Every IPv4/IPv6 of every key=value pair hashed as sha256(salt + ip) - Sha2Hash(salt, input),
-            // salt first, same digest as the OTTL SHA256 - except in technical keys whose dotted numbers
-            // are not addresses: browser_*, sdk_*, app_version, *_id, *_ms, *timestamp*, *version*,
-            // user_agent* (browser_version=128.0.0.0 stays intact).
             stage.replace {
               expression = `(?:^|\s)([^\s="]+=(?:"(?:[^"\\]|\\.)*"|\S*))`
               replace    = `{{ $kv := .Value }}{{ $k := regexFind "^[^\\s=\"]+" $kv }}{{ if not (regexMatch "^(browser_.*|sdk_.*|app_version|.*_id|.*_ms|.*timestamp.*|.*version.*|user_agent.*)$" $k) }}{{ range $ip := regexFindAll "(?:\\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\\b|\\b(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}\\b|\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b)" $kv -1 }}{{ $kv = replace $ip (Sha2Hash "` + sys.env("IP_HASH_SALT") + `" $ip) $kv }}{{ end }}{{ end }}{{ $kv }}`
             }
           }
-
-          // No WAL for Faro logs: loki.write's WAL is experimental; a limited loss is accepted (spec 9.2).
           loki.write "loki" {
             endpoint {
               url = "http://loki:3100/loki/api/v1/push"
@@ -1255,7 +1031,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.57c7d4be.alloy
+      - /etc/alloy/config.4d4ee358.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -1264,42 +1040,33 @@ services:
       BIND_ADDR: 0.0.0.0
     volumes:
       - type: bind
-        source: ./config/alloy-gateway/config.57c7d4be.alloy
-        target: /etc/alloy/config.57c7d4be.alloy
+        source: ./config/alloy-gateway/config.4d4ee358.alloy
+        target: /etc/alloy/config.4d4ee358.alloy
         content: |2
-          // grafana-coolify - alloy-gateway: public OTLP/HTTP relay, no processing (spec 5.2).
-          // Authentication is done by Traefik (gc-otlp-auth@file) before traffic reaches this port.
           logging {
             level  = "info"
             format = "logfmt"
           }
-
           otelcol.receiver.otlp "gateway" {
             http {
               endpoint = sys.env("BIND_ADDR") + ":4318"
             }
-
             output {
               logs    = [otelcol.exporter.otlp.alloy.input]
               metrics = [otelcol.exporter.otlp.alloy.input]
               traces  = [otelcol.exporter.otlp.alloy.input]
             }
           }
-
-          // No queue: when alloy is down the sender gets an error and its SDK retries (spec 9.2).
           otelcol.exporter.otlp "alloy" {
             client {
               endpoint = "alloy:4317"
-
               tls {
                 insecure = true
               }
             }
-
             sending_queue {
               enabled = false
             }
-
             retry_on_failure {
               enabled = false
             }
@@ -1323,7 +1090,7 @@ services:
         condition: service_completed_successfully
     command:
       - python3
-      - /opt/grafana-setup/setup.f6429835.py
+      - /opt/grafana-setup/setup.86e362a3.py
     environment:
       GRAFANA_URL: ${GRAFANA_URL:?GRAFANA_URL is required}
       GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}
@@ -1331,7 +1098,10 @@ services:
       TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:?TEMPO_INTERNAL_URL is required}
       PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:?PROMETHEUS_INTERNAL_URL is required}
       PROJECTS: ${PROJECTS:-}
-      # Plan B (dashboards and alerts) reads these; declared now so .env.example stays exhaustive.
+      # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
+      GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v1"
+      GRAFANA_SETUP_FILES: "alerting.py=5c8cc8130da62873bdf392ec6dd32f9512a25dee7f42d9b0cc0b5ac70611674e;dashboards/gc-cardinality.json=627297b75136a04ecd4aea4d26a3d44d153d536a3f14a82359f51f7424ecb6e2;dashboards/gc-frontend.json=ea341f8609cc46b220d85b903150e7efa5c7af32774c5e2d6f005d994a6cb6ab;dashboards/gc-host.json=90ef9083bfaab82ac57191aa3f00008cbcc545db6c10f112f5352c6561a4bfb0;dashboards/gc-pipeline.json=fb18316522abe4fffee6078142ac5162c48d63670f1ef564c8f1be4900cde0d8;dashboards/gc-project.json=1eb7ec2cc4c944066e69930be9f1afd7bb984897e30361982eeb0a152b5f66fb;dashboards/gc-service.json=c0b95dc9ebebc9a9a18f4cf7a88049a9a788bb9e52b2792aba1e0cc786877c8c;dashboards.py=bf9f2b5bc00dcf1b803eb82fb712985d80c102662bbfcc4a5600eee872f69e19"
+      GRAFANA_SETUP_MIRROR_URL: ${GRAFANA_SETUP_MIRROR_URL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       ALERT_EMAILS: ${ALERT_EMAILS:-}
@@ -1340,29 +1110,32 @@ services:
       ALERT_SILENCE_MIN: ${ALERT_SILENCE_MIN:-15}
       ALERT_DISK_PCT: ${ALERT_DISK_PCT:-80}
       CARDINALITY_ALERT_THRESHOLD: ${CARDINALITY_ALERT_THRESHOLD:-200000}
+      HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
-        source: ./config/grafana-setup/setup.f6429835.py
-        target: /opt/grafana-setup/setup.f6429835.py
+        source: ./config/grafana-setup/setup.86e362a3.py
+        target: /opt/grafana-setup/setup.86e362a3.py
         content: |2
           #!/usr/bin/env python3
-          """grafana-setup (plan A): idempotently provision datasources and project folders in Grafana.
+          """grafana-setup: idempotently provision Grafana (spec 10). Standard library only.
 
-          Standard library only (runs in python:3.13-alpine). Spec 10.1-10.2:
-          - version guard: stop cleanly if Grafana < 12.0 (read from /api/health);
-          - datasources with fixed UIDs: GET /api/datasources/uid/:uid -> PUT when present and different,
-            POST /api/datasources otherwise; correlations of spec 7.3;
-          - folders gc-<project> for every project of PROJECTS;
-          - the service account token is never written to the output.
+          1. Grafana >= 12.0; datasources (fixed UIDs, correlations of 7.3); folders. 2. Plan B content, too
+          big for the compose (spec 4.3): downloaded (mirror, or this repository at a fixed tag), checked
+          against GRAFANA_SETUP_FILES (path=sha256;...), imported only if all match; it provisions dashboards
+          and alerting. Tokens are never written to the output.
           """
 
+          import hashlib
+          import importlib
           import json
           import os
           import re
           import sys
+          import tempfile
           import time
           import urllib.error
           import urllib.request
+          from pathlib import Path
 
           MIN_MAJOR = 12
           LOKI_UID = "gc-loki"
@@ -1375,6 +1148,16 @@ services:
           # Fields compared to decide whether an existing datasource must be updated. isDefault is left to
           # the operator (Grafana makes the first datasource of an organisation the default one).
           COMPARED_FIELDS = ("name", "type", "access", "url", "basicAuth", "jsonData")
+          # Folder of the shared dashboards and of the alert rules.
+          SHARED_FOLDER_UID = "gc-grafana-coolify"
+          SHARED_FOLDER_TITLE = "grafana-coolify"
+          SECRET_VARIABLES = ("GRAFANA_SA_TOKEN", "TELEGRAM_BOT_TOKEN")
+          CONTENT_DIR = "config/grafana-setup"
+          CONTENT_RE = re.compile(r"^(?:dashboards/)?[a-z0-9_-]+\.(?:py|json)$")
+          CONTENT_MODULES = ("alerting.py", "dashboards.py")
+          SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+          SCHEMES = ("https://", "http://", "file:")
+          MAX_CONTENT_BYTES = 2 * 1024 * 1024
 
 
           class SetupError(Exception):
@@ -1387,7 +1170,7 @@ services:
                   self.token = token
                   self.timeout = timeout
 
-              def request(self, method, path, body=None):
+              def request(self, method, path, body=None, headers=None):
                   """Return (status, parsed JSON or None). Never raises on HTTP error statuses."""
                   data = None if body is None else json.dumps(body).encode("utf-8")
                   req = urllib.request.Request(self.url + path, data=data, method=method)
@@ -1395,6 +1178,8 @@ services:
                   req.add_header("Accept", "application/json")
                   if data is not None:
                       req.add_header("Content-Type", "application/json")
+                  for key, value in (headers or {}).items():
+                      req.add_header(key, value)
                   try:
                       with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                           return resp.status, parse_json(resp.read())
@@ -1403,11 +1188,18 @@ services:
                   except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
                       raise SetupError(f"{method} {path}: Grafana unreachable ({reason(exc)})") from None
 
-              def expect(self, method, path, body=None, ok=(200,)):
-                  status, payload = self.request(method, path, body)
+              def expect(self, method, path, body=None, ok=(200,), headers=None):
+                  status, payload = self.request(method, path, body, headers)
                   if status not in ok:
-                      raise SetupError(f"{method} {path}: HTTP {status}: {message_of(payload)}")
+                      raise self.error(method, path, status, payload)
                   return payload
+
+              @staticmethod
+              def error(method, path, status, payload):
+                  hint = ""
+                  if status in (404, 410) and path.startswith("/api/v1/provisioning"):
+                      hint = " (legacy alerting provisioning API unavailable: see README, « Alertes »)"
+                  return SetupError(f"{method} {path}: HTTP {status}: {message_of(payload)}{hint}")
 
 
           def parse_json(raw):
@@ -1552,17 +1344,22 @@ services:
               return "updated"
 
 
-          def ensure_folder(api, project):
-              uid = f"gc-{project}"
+          def folder_uid(project):
+              """gc-<project>, hashed past Grafana's 40-character UID limit."""
+              uid = "gc-" + project
+              return uid if len(uid) <= 40 else f"gc-{project[:28]}-{hashlib.sha256(project.encode()).hexdigest()[:8]}"
+
+
+          def ensure_folder(api, uid, title):
               status, current = api.request("GET", f"/api/folders/{uid}")
               if status == 404:
-                  api.expect("POST", "/api/folders", {"uid": uid, "title": project})
+                  api.expect("POST", "/api/folders", {"uid": uid, "title": title})
                   return "created"
               if status != 200 or not isinstance(current, dict):
                   raise SetupError(f"GET /api/folders/{uid}: HTTP {status}: {message_of(current)}")
-              if current.get("title") == project:
+              if current.get("title") == title:
                   return "unchanged"
-              api.expect("PUT", f"/api/folders/{uid}", {"title": project, "overwrite": True})
+              api.expect("PUT", f"/api/folders/{uid}", {"title": title, "overwrite": True})
               return "updated"
 
 
@@ -1571,6 +1368,78 @@ services:
               if not value:
                   raise SetupError(f"{name} is required")
               return value
+
+
+          def parse_content(value):
+              files = []
+              for item in (value or "").split(";"):
+                  if not item:
+                      continue
+                  path, separator, digest = item.partition("=")
+                  if not separator or not CONTENT_RE.match(path) or not SHA256_RE.match(digest):
+                      raise SetupError(f"malformed GRAFANA_SETUP_FILES entry: {item!r}")
+                  files.append((path, digest))
+              missing = [name for name in CONTENT_MODULES if name not in dict(files)]
+              if missing:
+                  raise SetupError(f"GRAFANA_SETUP_FILES does not list {', '.join(missing)}")
+              return files
+
+
+          def content_url(env):
+              url = (env.get("GRAFANA_SETUP_MIRROR_URL") or "").strip() or (env.get("GRAFANA_SETUP_PINNED_URL") or "").strip()
+              if not url.startswith(SCHEMES):
+                  raise SetupError(f"the source of the plan B content must start with one of {', '.join(SCHEMES)}")
+              return f"{url.rstrip('/')}/{CONTENT_DIR}"
+
+
+          def fetch(url, attempts=3, timeout=30, pause=2, limit=MAX_CONTENT_BYTES):
+              # Network errors and 5xx are retried; 4xx and file: errors are not.
+              for attempt in range(1, attempts + 1):
+                  try:
+                      with urllib.request.urlopen(url, timeout=timeout) as resp:
+                          data = resp.read(limit + 1)
+                      if len(data) > limit:
+                          raise SetupError(f"{url}: larger than {limit} bytes, refused")
+                      return data
+                  except urllib.error.HTTPError as exc:
+                      if exc.code < 500 or attempt == attempts:
+                          raise SetupError(f"{url}: HTTP {exc.code}") from None
+                  except (urllib.error.URLError, OSError) as exc:
+                      if url.startswith("file:") or attempt == attempts:
+                          raise SetupError(f"{url}: {getattr(exc, 'reason', exc)}") from None
+                  time.sleep(pause * attempt)
+              raise SetupError(f"{url}: no attempt made")
+
+
+          def download(base_url, files, target, pause=2):
+              for path, digest in files:
+                  data = fetch(f"{base_url}/{path}", pause=pause)
+                  actual = hashlib.sha256(data).hexdigest()
+                  if actual != digest:
+                      raise SetupError(f"{path}: SHA-256 {actual} differs from the pinned {digest}: nothing was run")
+                  destination = Path(target) / path
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  destination.write_bytes(data)
+
+
+          def provision_content(api, env, projects, out, pause=2):
+              files = parse_content(env.get("GRAFANA_SETUP_FILES"))
+              base_url = content_url(env)
+              with tempfile.TemporaryDirectory(prefix="grafana-setup-") as tmp:
+                  download(base_url, files, tmp, pause)
+                  out(f"grafana-setup: {len(files)} content files verified (SHA-256)")
+                  sys.path.insert(0, tmp)
+                  try:
+                      alerting = importlib.import_module("alerting")
+                      dashboards = importlib.import_module("dashboards")
+                      for module in (alerting, dashboards):
+                          if getattr(module, "__file__", None) is None:
+                              raise SetupError(f"{module.__name__}.py is missing")
+                      prepared = alerting.prepare(env, PROMETHEUS_UID)
+                      dashboards.provision(api, projects, SHARED_FOLDER_UID, folder_uid, out)
+                      alerting.provision(api, prepared, out)
+                  finally:
+                      sys.path.remove(tmp)
 
 
           def run(env, out=print, health_timeout=120):
@@ -1585,20 +1454,30 @@ services:
               out(f"grafana-setup: Grafana {version}")
               for datasource in desired:
                   out(f"grafana-setup: datasource {datasource['uid']}: {ensure_datasource(api, datasource)}")
+              out(f"grafana-setup: folder {SHARED_FOLDER_UID}: {ensure_folder(api, SHARED_FOLDER_UID, SHARED_FOLDER_TITLE)}")
               for project in projects:
-                  out(f"grafana-setup: folder gc-{project}: {ensure_folder(api, project)}")
+                  out(f"grafana-setup: folder {folder_uid(project)}: {ensure_folder(api, folder_uid(project), project)}")
+              out("grafana-setup: datasources and folders: done")
+              try:
+                  provision_content(api, env, projects, out)
+              except (SetupError, ValueError) as exc:
+                  raise SetupError(f"datasources and folders are provisioned, dashboards and alerts are not: {exc}") from None
               out("grafana-setup: done")
 
 
+          def redact(message, env):
+              for name in SECRET_VARIABLES:
+                  secret = (env.get(name) or "").strip()
+                  if secret:
+                      message = message.replace(secret, "***")
+              return message
+
+
           def main():
-              token = os.environ.get("GRAFANA_SA_TOKEN", "")
               try:
                   run(os.environ)
               except SetupError as exc:
-                  message = str(exc)
-                  if token:
-                      message = message.replace(token, "***")
-                  print(f"grafana-setup: ERROR: {message}", file=sys.stderr)
+                  print(f"grafana-setup: ERROR: {redact(str(exc), os.environ)}", file=sys.stderr)
                   return 1
               return 0
 

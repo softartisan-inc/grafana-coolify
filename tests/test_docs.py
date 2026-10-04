@@ -60,6 +60,37 @@ class ReadmeTest(unittest.TestCase):
         self.assertNotIn("plafond de séries à 0", spikes)
         self.assertIn("plafond illimité", spikes)
 
+    def test_plan_b_operations_are_documented(self):
+        for text in (
+            "## Tableaux de bord et alertes",
+            "@BotFather",
+            "getUpdates",
+            "GF_SMTP_HOST",
+            "scripts/notify_test.py",
+            "X-Disable-Provenance",
+            "raw.githubusercontent.com",
+            "GRAFANA_SETUP_MIRROR_URL",
+            "GRAFANA_SETUP_TAG",
+            "grafana-setup-content-v2",
+            "git push origin <branche> grafana-setup-content-v2",
+            "grafana-setup: done",
+            "prérequis bloquant",
+            "notifient personne",
+            "legacy alerting provisioning API unavailable",
+            "`service_name` pour Loki",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, README)
+        variables = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "ALERT_EMAILS", "ALERT_ERROR_RATE", "ALERT_P95_MS", "ALERT_SILENCE_MIN", "ALERT_DISK_PCT")
+        for name in (*variables, "CARDINALITY_ALERT_THRESHOLD", "HOST_ENV"):
+            with self.subTest(name=name):
+                self.assertIn(f"`{name}`", README)
+
+    def test_spikes_cover_plan_b(self):
+        spikes = (ROOT / "docs" / "spikes.md").read_text(encoding="utf-8")
+        self.assertIn("## S6 — `grafana-setup` du plan B sur la recette (bloquant avant la production)", spikes)
+        self.assertIn("| S6 | | | | |", spikes)
+
     def test_mandatory_variables_are_explained(self):
         for name in ("IP_HASH_SALT", "FARO_API_KEY", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL", "GRAFANA_URL", "GRAFANA_SA_TOKEN"):
             with self.subTest(name=name):

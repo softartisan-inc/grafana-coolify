@@ -118,6 +118,14 @@ class GuardCases:
             with self.subTest(value=value):
                 self.assert_fails(self.guard(HOST_MAP=value), "HOST_MAP")
 
+    def test_host_env_rules(self):
+        for value in ("", "prod", "preprod"):
+            with self.subTest(value=value):
+                self.assertEqual(self.guard(HOST_ENV=value).returncode, 0)
+        for value in ("staging", "Prod", "prod ", "prod\nx"):
+            with self.subTest(value=value):
+                self.assert_fails(self.guard(HOST_ENV=value), "HOST_ENV")
+
     def test_reserved_subdomains_rules(self):
         self.assertEqual(self.guard(RESERVED_SUBDOMAINS="").returncode, 0)
         for value in ["www,", "WWW", "www api", "www|api", "www\nx y"]:

@@ -88,6 +88,11 @@ reserved=${RESERVED_SUBDOMAINS:-}
 if [ -n "$reserved" ] && ! matches "$reserved" '^[a-z0-9-]+(,[a-z0-9-]+)*$'; then
   error "RESERVED_SUBDOMAINS must look like www,api (lowercase, comma separated)"
 fi
+# env label of the host-level alerts (grafana-setup): same values as the env of the data.
+case ${HOST_ENV:-prod} in
+  prod | preprod) ;;
+  *) error "HOST_ENV must be prod or preprod" ;;
+esac
 tenant_regex=${TENANT_HOST_REGEX:-}
 if [ -n "$tenant_regex" ]; then
   case $tenant_regex in

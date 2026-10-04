@@ -2,8 +2,11 @@
 
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN = Path(os.environ.get("GC_BIN_DIR", str(ROOT / ".bin")))
@@ -71,3 +74,13 @@ def validator_env(tmpdir):
         }
     )
     return env
+
+
+def promtool_check(exprs):
+    """promtool's verdict on [(name, PromQL)], checked as recording rules: (returncode, output)."""
+    rules = {"groups": [{"name": "parse", "rules": [{"record": f"gc:parse_{n}", "expr": expr} for n, (_name, expr) in enumerate(exprs)]}]}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "rules.yml"
+        path.write_text(yaml.safe_dump(rules), encoding="utf-8")
+        result = run([binary("promtool"), "check", "rules", path])
+    return result.returncode, result.stdout + "\n".join(name for name, _expr in exprs)

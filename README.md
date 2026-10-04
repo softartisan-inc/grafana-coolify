@@ -13,7 +13,7 @@ traces et métriques :
 | `prometheus` | Métriques (90 j), récepteurs OTLP et remote write, scrape de la stack | interne |
 | `node-exporter` | Métriques de l'hôte (montages en lecture seule) | interne |
 | `config-guard` | Ponctuel : vérifie les fichiers de config et les variables avant tout démarrage | — |
-| `grafana-setup` | Ponctuel : crée les sources de données et les dossiers dans Grafana | — |
+| `grafana-setup` | Ponctuel : crée dans Grafana les sources de données, les dossiers, les tableaux de bord et les alertes | — |
 
 Grafana n'est **pas** dans le package : c'est le service Coolify « Grafana » (variante
 PostgreSQL recommandée), inchangé. Toutes les images sont officielles et épinglées
@@ -51,6 +51,10 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | Règles de déduction depuis l'hôte (voir plus bas). |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Noms réels sur le réseau `coolify` (étape 4). |
 | `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | URL **publique** de Grafana et jeton du compte de service (étape 5). |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_EMAILS` | Notifications (voir « Tableaux de bord et alertes ») : bot Telegram pour `critical` + `prod`, email pour le reste. |
+| `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT`, `CARDINALITY_ALERT_THRESHOLD` | Seuils des alertes ; défauts de `.env.example`. |
+| `HOST_ENV` | `prod` (défaut) ou `preprod` : environnement que sert l'hôte, label `env` des alertes d'hôte (« Disque »). Vérifié par `config-guard`. |
+| `GRAFANA_SETUP_MIRROR_URL` | Facultatif : source de remplacement des tableaux et alertes de `grafana-setup` (fork, miroir). |
 
 - **`TENANT_HOST_REGEX` contient des `$`** : cocher **« Is Literal? »** sur cette variable, sinon
   Coolify tente de l'interpréter.
@@ -141,8 +145,13 @@ C'est normal : ce sont des tâches ponctuelles (`restart: "no"`). Un `config-gua
 signale une régression de Coolify sur les fichiers `content:` : aucun service ne démarre.
 
 `grafana-setup` est relançable sans effet de bord : il crée les sources Loki, Tempo et Prometheus
-(UID fixes `gc-loki`, `gc-tempo`, `gc-prometheus`, corrélations log ↔ trace ↔ métriques) et les
-dossiers `gc-<projet>`.
+(UID fixes `gc-loki`, `gc-tempo`, `gc-prometheus`, corrélations log ↔ trace ↔ métriques), les
+dossiers `gc-<projet>`, puis les tableaux de bord et les alertes (voir « Tableaux de bord et
+alertes »). Ces derniers sont téléchargés au tag épinglé et vérifiés par empreinte SHA-256 : pour
+eux seuls, le conteneur doit pouvoir joindre `raw.githubusercontent.com` (ou le miroir). Point de
+contrôle du déploiement : la dernière ligne des logs de `grafana-setup` est
+`grafana-setup: done`. `grafana-setup: datasources and folders: done` suivi d'une erreur signifie
+que les sources et les dossiers sont en place, mais pas les tableaux ni les alertes.
 
 ### 7. Vérifier le déploiement
 
@@ -201,6 +210,9 @@ du déploiement pour `IP_HASH_SALT` (empreintes des IP), `FARO_API_KEY`, `PROJEC
 Rejouer `security.py --remote` (contrôle 7, fuite de middlewares, bug Coolify #9886) **après
 chaque mise à jour de Coolify**.
 
+Enfin, vérifier les notifications avec `scripts/notify_test.py` (voir « Tester les
+notifications »).
+
 ### 8. Sonde externe
 
 Configurer une sonde **hors du serveur** (Uptime Kuma sur une autre machine, service SaaS…) sur
@@ -238,9 +250,9 @@ file de l'ordre de 2 Gio de logs se vide en quelques minutes, bien avant la fin 
 réessai d'une heure.
 
 Le rattrapage tient souvent dans **un seul flux** (le service qui a écrit pendant la panne), or
-Loki limite aussi chaque flux (`project`, `env`, `service_name`), à 3 Mo/s (rafale 15 Mo) par
+Loki limite aussi chaque flux (`project`, `env`, `service_name`), à 3 Mio/s (rafale 15 Mio) par
 défaut. Hypothèse de taille : **1 à 4 Kio par enregistrement de log**, soit des lots de 2 à 8 Mio
-(2048 enregistrements) et une file pleine de 2 à 8 Gio. À 3 Mo/s, 8 Gio mettraient ~45 min à
+(2048 enregistrements) et une file pleine de 2 à 8 Gio. À 3 Mio/s, 8 Gio mettraient ~45 min à
 passer, trop près de la fenêtre d'une heure. `config/loki/loki.yaml` fixe donc
 `per_stream_rate_limit: 8MB` et `per_stream_rate_limit_burst: 24MB` : la **moitié** du débit du
 tenant, soit ~4 min pour 2 Gio et ~17 min pour 8 Gio sur un seul flux, sans qu'un flux (rattrapage,
@@ -251,6 +263,180 @@ binaires (`24MB` = 24 Mio ; les `*_mb` aussi) : la rafale contient trois des plu
 (32 Mio). Au-delà de ces hypothèses (enregistrements plus gros, plus de 8 Gio en attente sur un
 seul flux), des lots peuvent encore être abandonnés : raccourcir la panne ou relever ces
 plafonds ensemble.
+
+## Tableaux de bord et alertes
+
+`grafana-setup` crée, à chaque déploiement et sans effet de bord :
+
+- le dossier **`grafana-coolify`** (UID `gc-grafana-coolify`), qui contient les six tableaux de
+  bord et les règles d'alerte ;
+- les six tableaux de bord (liste fermée) : **Vue projet** (`gc-project` : débit, taux d'erreur
+  et p95 par service, filtres `project`, `env`, `service`, `tenant`), **Erreurs et latence par
+  service** (`gc-service` : détail par route, logs d'erreur liés à leur trace), **Frontend**
+  (`gc-frontend` : erreurs JS, Web Vitals, sessions Faro), **Hôte** (`gc-host` : CPU, mémoire,
+  disque, réseau), **Santé du pipeline** (`gc-pipeline` : ingestion, rejets, file d'envoi, santé
+  de Loki, Tempo et Prometheus) et **Cardinalité** (`gc-cardinality` : séries par projet, service
+  et tenant) ;
+- dans chaque dossier de projet `gc-<projet>`, un tableau **`grafana-coolify — <projet>`** dont
+  les liens ouvrent ces tableaux avec `var-project` déjà réglé ;
+- les points de contact **`gc-telegram`** et **`gc-email`**, la politique de notification et les
+  six règles d'alerte.
+
+La variable « service » des tableaux vise le même nom partout ; seul le label change selon la
+source : `service` pour les span-metrics, `job` pour les métriques OTLP, `service_name` pour Loki.
+
+Les tableaux, les points de contact, la politique et les règles restent **modifiables dans
+Grafana** (`X-Disable-Provenance: true`), mais `grafana-setup` remet leur contenu à l'identique au
+déploiement suivant dès qu'il diffère. Pour garder une modification : la copier dans un autre
+tableau (**Save as**), ou l'apporter au dépôt (voir « Modifier un tableau de bord ou une
+alerte »). Seule exception : les routes ajoutées à la main dans la politique de notification sont
+conservées, après la route Telegram, et les réglages ajoutés à la main à la route Telegram
+elle-même (`continue`, `group_wait`, `mute_time_intervals`…) aussi : seuls son récepteur et ses
+matchers sont gérés. `grafana-setup` reconnaît sa route Telegram à son seul récepteur
+`gc-telegram` : une route ajoutée à la main doit viser **son propre point de contact**, jamais
+`gc-telegram`, sinon elle est remplacée au déploiement suivant.
+
+### Alertes
+
+| Règle | Condition | `severity` | Variable |
+|---|---|---|---|
+| Taux d'erreur | part des requêtes (spans serveur) en erreur sur 5 min, par service, au-dessus du seuil pendant 2 min | `critical` | `ALERT_ERROR_RATE` (0.05 = 5 %) |
+| Latence p95 | p95 sur 10 min au-dessus du seuil pendant 2 min, par service | `warning` | `ALERT_P95_MS` |
+| Service muet | service qui a émis des spans dans la dernière heure (4 × le délai au-delà de 15 min), mais aucun depuis le délai | `critical` | `ALERT_SILENCE_MIN` |
+| Disque | usage d'un système de fichiers de l'hôte au-dessus du seuil pendant 2 min | `critical` (`env` = `HOST_ENV`) | `ALERT_DISK_PCT`, `HOST_ENV` |
+| Cardinalité | séries actives de Prometheus au-dessus du seuil pendant 2 min | `warning` | `CARDINALITY_ALERT_THRESHOLD` |
+| Rejets | au moins une donnée rejetée (§ 6.3 de la spec) sur 15 min | `warning` | — |
+
+**Routage** : `severity=critical` **et** `env=prod` → Telegram ; tout le reste → email. Le disque
+porte `env` = `HOST_ENV` (`prod` par défaut : l'hôte sert la production ; `preprod` sur un serveur
+de recette, dont le disque part alors par email). Une règle dont la requête échoue passe en état
+**Error** (notifiée) ; l'absence de données n'est pas une alerte.
+
+- `ALERT_EMAILS` vide et Telegram vide : les règles sont créées et évaluées, mais **ne
+  notifient personne** : la politique par défaut de Grafana envoie tout au récepteur intégré
+  `empty`, sans intégration (`notifications: skipped (ALERT_EMAILS is empty: the rules notify
+  nobody)` dans les logs). Si un déploiement précédent avait configuré `gc-email`, la politique
+  n'est plus touchée et continue de l'utiliser.
+- Telegram exige `ALERT_EMAILS` : tout ce qui n'est pas `critical` + `prod` part par email.
+- Retirer le token Telegram retire la route Telegram de la politique ; le point de contact
+  `gc-telegram` reste dans Grafana, inutilisé, et peut être supprimé à la main.
+- **API d'alerting** : `grafana-setup` utilise l'API legacy `/api/v1/provisioning/*`, dépréciée
+  mais servie par Grafana 12 et 13 (vérifiée sur Grafana 13.2.2). Si une version future la
+  retire, `grafana-setup` s'arrête avec « legacy alerting provisioning API unavailable » : les
+  sources et les tableaux sont déjà en place, seules les alertes manquent. Le test
+  `test_legacy_provisioning_api_is_served` du banc échoue avant toute montée de version de
+  Grafana qui la retirerait (`GRAFANA_VERSION` de `tools/versions.env`).
+
+### Avant la production : spike S6 (bloquant)
+
+Le banc prouve le routage et la délivrance vers un faux SMTP et un faux proxy, pas l'arrivée d'un
+vrai message. Le spike **S6** de [`docs/spikes.md`](docs/spikes.md) (vrai bot Telegram, vrai SMTP,
+`scripts/notify_test.py` sur la recette) est un **prérequis bloquant** de la mise en production :
+tant qu'il n'est pas OK, aucune alerte n'est réputée arriver.
+
+### Prérequis : bot Telegram
+
+1. Dans Telegram, écrire à **@BotFather** : `/newbot`, choisir un nom, puis copier le token
+   (`123456789:AA…`) dans `TELEGRAM_BOT_TOKEN`.
+2. Créer le groupe des alertes (administratrice et équipe) et y **ajouter le bot**.
+3. Écrire un message dans le groupe, puis lire son identifiant (`read -rs` demande le token sans
+   l'afficher ni l'écrire dans l'historique du shell) :
+
+   ```bash
+   read -rs TELEGRAM_BOT_TOKEN
+   curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates" | python3 -m json.tool | grep -A3 '"chat"'
+   ```
+
+   L'identifiant d'un groupe est négatif (`-100…` pour un supergroupe) : le copier dans
+   `TELEGRAM_CHAT_ID`.
+4. Redéployer, puis lancer `scripts/notify_test.py` (plus bas).
+
+Le token n'est jamais écrit dans les logs de `grafana-setup`. Rotation : `/revoke` auprès de
+@BotFather, nouveau token dans `TELEGRAM_BOT_TOKEN`, redéployer.
+
+### Prérequis : SMTP de Grafana
+
+L'email passe par le SMTP **du service Coolify Grafana** (hors package). Dans ses
+**Environment Variables** :
+
+| Variable | Exemple |
+|---|---|
+| `GF_SMTP_ENABLED` | `true` |
+| `GF_SMTP_HOST` | `smtp.example.com:587` |
+| `GF_SMTP_USER`, `GF_SMTP_PASSWORD` | identifiants du compte d'envoi |
+| `GF_SMTP_FROM_ADDRESS`, `GF_SMTP_FROM_NAME` | `grafana@example.com`, `Grafana` |
+
+Redémarrer Grafana, puis renseigner `ALERT_EMAILS` (adresses séparées par des virgules) dans ce
+package et redéployer.
+
+### Tester les notifications
+
+```bash
+GRAFANA_URL=https://grafana.example.com GRAFANA_SA_TOKEN=glsa_... python3 scripts/notify_test.py
+```
+
+Le script demande à Grafana d'envoyer une notification de test par `gc-telegram` et par
+`gc-email`, avec les réglages enregistrés (le token du bot ne quitte pas Grafana). Attendu :
+`notify-test: gc-telegram: sent` et `notify-test: gc-email: sent`, puis le message dans le groupe
+Telegram et dans les boîtes des destinataires. Grafana 13 a retiré l'ancien point de test
+(`receivers/test`, HTTP 410) : le script utilise l'API `notifications.alerting.grafana.app`
+(v1beta1). Faute de script, le bouton **Test** de chaque point de contact (**Alerting** →
+**Contact points**) fait la même chose.
+
+### Source des tableaux et des alertes
+
+Le compose contient `config/grafana-setup/setup.py` (sources de données et dossiers), mais pas les
+tableaux ni le code des alertes : ils dépasseraient le budget de 120 Kio encodé en base64. Une fois
+les sources et les dossiers en place, `setup.py` télécharge `dashboards.py`, `alerting.py` et
+`dashboards/*.json` depuis **ce dépôt, au tag épinglé** (`GRAFANA_SETUP_TAG` de
+`tools/versions.env`, par exemple `grafana-setup-content-v1`), sur `raw.githubusercontent.com`,
+vérifie l'empreinte SHA-256 de chacun (liste `GRAFANA_SETUP_FILES` du compose, 2 Mio au plus par
+fichier) et ne les exécute que si toutes correspondent.
+
+Le compose ne contient pas non plus les commentaires : `render.py` retire des fichiers YAML et
+Alloy qu'il y insère les lignes de commentaire et les lignes vides (l'empreinte est calculée
+après ce retrait). Les commentaires restent dans `config/`, mais n'apparaissent ni dans le compose
+ni dans les fichiers que Coolify écrit sur le serveur ; `compose.dev.yaml` monte les fichiers du
+dépôt tels quels.
+
+- Le conteneur `grafana-setup` doit pouvoir joindre `https://raw.githubusercontent.com`, pour les
+  tableaux et les alertes seulement : sans accès, les sources et les dossiers sont quand même
+  créés, puis `grafana-setup` s'arrête en erreur avec un message explicite.
+- Un **fork**, ou un serveur sans accès à GitHub, renseigne `GRAFANA_SETUP_MIRROR_URL` : toute
+  URL `https://`, `http://` ou `file:` qui sert les mêmes fichiers sous le même chemin
+  (`<url>/config/grafana-setup/alerting.py`). Les empreintes restent vérifiées : un miroir ne peut
+  pas changer le code exécuté.
+
+### Modifier un tableau de bord ou une alerte
+
+1. Tableaux : modifier `scripts/build_dashboards.py`, puis `python3 scripts/build_dashboards.py`
+   (les JSON de `config/grafana-setup/dashboards/` sont générés : ne jamais les modifier à la
+   main). Alertes : modifier `config/grafana-setup/alerting.py`.
+2. **Monter le suffixe du tag** dans `tools/versions.env` (`GRAFANA_SETUP_TAG=grafana-setup-content-v2`),
+   puis `python3 scripts/render.py` (nouvelles empreintes et nouvelle URL dans le compose). Le
+   suffixe monte à **chaque** modification d'un fichier téléchargé (`dashboards.py`,
+   `alerting.py`, `dashboards/*.json`) ; une modification de `setup.py` seul, inséré dans le
+   compose, n'en demande pas. Tant que le nouveau tag n'est pas poussé, `grafana-setup` échoue
+   (`HTTP 404` au téléchargement) ; un fichier modifié sans monter le suffixe échoue à la
+   vérification SHA-256 (`SHA-256 … differs from the pinned …: nothing was run`). Dans les deux
+   cas, les sources et les dossiers sont en place, pas les tableaux ni les alertes.
+3. Committer, puis créer le tag sur le **dernier commit** de la branche et le pousser avec elle :
+
+   ```bash
+   git tag -a grafana-setup-content-v2 -m "grafana-setup content v2"
+   python3 scripts/check.py --only bundle
+   git push origin <branche> grafana-setup-content-v2
+   ```
+
+   Le contrôle `bundle` vérifie que le tag existe et contient exactement les fichiers de travail
+   (dans un clone superficiel sans le tag, il est sauté avec un message). Tant qu'un tag n'est pas
+   poussé, il peut être déplacé (`git tag -f -a …`) ; une fois poussé, **jamais** : monter le
+   suffixe.
+4. Ouvrir la PR ; n'importe quelle méthode de fusion convient (le tag garde le commit accessible,
+   même après un « squash »). Après la fusion, **Redeploy**.
+
+Alertes : une route ajoutée à la main dans la politique de notification doit viser son propre
+point de contact, pas `gc-telegram` (voir plus haut).
 
 ## Envoyer des données
 
@@ -417,6 +603,7 @@ python3 harness/stack.py up                     # config-guard puis la stack
 python3 harness/edge.py up                      # Traefik (routes Coolify simulées) + Grafana de test
 python3 harness/stack.py oneshot grafana-setup  # provisionne le Grafana de test
 python3 scripts/smoke.py                        # bout en bout (spec § 12.3)
+python3 scripts/synth.py                        # données synthétiques pour tableaux et alertes (§ 12.6)
 python3 scripts/security.py                     # sécurité (spec § 12.4)
 GC_HARNESS=1 python3 -m unittest discover -s tests -v   # + banc, robustesse, Grafana réel
 python3 harness/stack.py down                   # arrête tout, retire le bloc /etc/hosts
@@ -430,13 +617,22 @@ Autres commandes :
   (simulation de panne) ;
 - `python3 harness/stack.py oneshot <service>` : rejouer une tâche ponctuelle (`config-guard`,
   `grafana-setup`) ;
-- `python3 harness/edge.py down` : arrêter seulement Traefik et le Grafana de test ;
+- `python3 harness/edge.py down` : arrêter seulement Traefik, le Grafana de test et le puits de
+  notifications ;
 - `python3 harness/edge.py revoke <utilisateur>` (`proj-a` ou `proj-b`) / `restore` : retirer une
   ligne htpasswd de la configuration dynamique du Traefik de test, puis la remettre (révocation à
   chaud).
 
 Les tests lancés avec `GC_HARNESS=1` **recyclent le banc** : ils arrêtent et relancent la stack
 (et le bord) à leur guise ; ne pas compter sur un banc démarré à la main pendant ces tests.
+
+Le Grafana de test envoie ses emails au puits `harness/sink.py` (faux serveur SMTP) et sa
+sortie HTTPS par son faux proxy, qui enregistre la tentative vers `api.telegram.org` puis la
+refuse, et relaie tout autre hôte (Grafana 13 installe au premier démarrage ses plugins
+Prometheus, Loki et Tempo depuis grafana.com). Tout est consigné dans
+`.harness/sink/messages.jsonl`. `harness/harness.env` pointe `GRAFANA_SETUP_MIRROR_URL` sur
+`file:.` : le banc exécute les fichiers de travail, vérifiés contre les empreintes du compose.
+`tests/test_exploitation.py` (§ 12.6) dure environ huit minutes.
 
 Logs et données du banc : `.harness/` (non versionné). `.harness/coolify/` y joue le dossier où
 Coolify écrit les fichiers `content:`, sous leur nom à empreinte. Faute de cgroup, le banc donne

@@ -161,7 +161,8 @@ class RobustnessTest(unittest.TestCase):
                     target.unlink()
                     target.mkdir()
                 elif breakage == "altered":
-                    target.write_text(target.read_text(encoding="utf-8") + "# tampered\n", encoding="utf-8")
+                    # A comment would be stripped like in the compose: alter a setting.
+                    target.write_text(target.read_text(encoding="utf-8") + "tampered: true\n", encoding="utf-8")
                 else:
                     target.write_text("", encoding="utf-8")
                 result = run([*STACK, "up", "--config-dir", str(config)], timeout=120)

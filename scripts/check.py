@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Static checks of spec 12.1. Standard library only; external tools: docker compose and .bin/.
 
-Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint]
+Usage: python3 scripts/check.py [--only render,size,compose,ports,env,secrets,targets,limits,validators,lint,dashboards,bundle]
 """
 
 import argparse
 import functools
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,8 @@ import render  # noqa: E402
 BIN = Path(os.environ.get("GC_BIN_DIR", str(ROOT / ".bin")))
 # Variables documented in .env.example but read by nobody in the compose (spec 11).
 DOC_ONLY_VARS = {"ALLOY_INTERNAL_URL"}
+# check.py size warns when the compose gets this close to its base64 budget.
+SIZE_WARN_MARGIN = 4096
 VAR_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:?+-][^}]*)?\}")
 # `SERVICE_FQDN_ALLOY_12347:` with no value: Coolify magic variable declared in `environment:`.
 NULL_ENV_KEY_RE = re.compile(r"^\s+([A-Z][A-Z0-9_]*):\s*$")
@@ -32,6 +35,7 @@ SECRET_RE = re.compile(
 BARE_SECRET_RE = re.compile(r"[A-Za-z0-9+/_=.-]+")
 # Bare YAML/dotenv values that are not secrets.
 NOT_SECRETS = {"true", "false", "null", "none", "yes", "no", "~"}
+TAG_RE = re.compile(r"^grafana-setup-content-v[1-9][0-9]*$")
 
 
 def env_example_keys(text):
@@ -128,6 +132,42 @@ def target_collisions(mounts):
     return [f"{target}: content target of {', '.join(names)}" for target, names in sorted(services.items()) if len(names) > 1]
 
 
+def bundle_errors(tag, files, git_show, tag_exists):
+    """Errors of the grafana-setup content tag (spec 4.3): `tag` must be a grafana-setup-content-v<N>
+    tag of this repository holding every file of `files` ([(path under config/grafana-setup/,
+    sha256)]) byte for byte.
+
+    git_show(tag, path) -> bytes or None; tag_exists(tag) -> bool.
+    """
+    if not TAG_RE.match(tag or ""):
+        return [f"GRAFANA_SETUP_TAG={tag!r} must look like grafana-setup-content-v<N>"]
+    if not tag_exists(tag):
+        return [f"tag {tag} absent: create it on the final commit (git tag -a {tag} -m ...) and push it with the branch"]
+    errors = []
+    for path, digest in files:
+        data = git_show(tag, f"{render.GRAFANA_SETUP_DIR}/{path}")
+        if data is None:
+            errors.append(f"{path}: absent from tag {tag}: move the unpushed tag, or bump the tag suffix")
+        elif hashlib.sha256(data).hexdigest() != digest:
+            errors.append(f"{path}: differs between tag {tag} and the working tree: move the unpushed tag, or bump the tag suffix")
+    return errors
+
+
+def git_show(tag, path):
+    result = subprocess.run(["git", "show", f"refs/tags/{tag}:{path}"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    return result.stdout if result.returncode == 0 else None
+
+
+def git_tag_exists(tag):
+    result = subprocess.run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}^{{commit}}"], cwd=ROOT, capture_output=True, check=False)
+    return result.returncode == 0
+
+
+def git_is_shallow():
+    result = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=ROOT, capture_output=True, text=True, check=False)
+    return result.stdout.strip() == "true"
+
+
 def tool(name):
     path = BIN / name
     if not path.exists():
@@ -168,19 +208,45 @@ def compose_json():
         return json.loads(output)
 
 
+YAML_BLOCK_SCALAR_RE = re.compile(r":\s*[|>][-+0-9]*\s*$")
+
+
+def strip_hazards(source, text):
+    """Lines of an inlined file where the line-based strip_comments could cut a multi-line value.
+
+    YAML: a block scalar (key: | or key: >); Alloy: a line with an odd number of backticks
+    (a raw string spanning several lines). Other files are not stripped.
+    """
+    suffix = Path(source).suffix
+    errors = []
+    for number, line in enumerate(text.split("\n"), 1):
+        if suffix in (".yaml", ".yml") and YAML_BLOCK_SCALAR_RE.search(line):
+            errors.append(f"{source}:{number}: YAML block scalar, strip_comments is line-based: use a quoted or flow value")
+        elif suffix == ".alloy" and line.count("`") % 2:
+            errors.append(f"{source}:{number}: multi-line raw string, strip_comments is line-based: keep each raw string on one line")
+    return errors
+
+
 def check_render():
     errors = []
     for path, text in render.outputs(ROOT).items():
         if not path.exists() or path.read_text(encoding="utf-8") != text:
             errors.append(f"{path.name} is stale: run python3 scripts/render.py")
+    template_text = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
+    for item in render.content_items(ROOT, template_text, stripped=False):
+        errors.extend(strip_hazards(item.source, item.text))
     return errors
 
 
-def check_size():
-    size = render.base64_size((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+def check_size(size=None):
+    if size is None:
+        size = render.base64_size((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
     if size > render.BUDGET_BYTES:
         return [f"docker-compose.yaml is {size} bytes in base64, budget is {render.BUDGET_BYTES}"]
     print(f"    base64 size {size} / {render.BUDGET_BYTES} bytes")
+    margin = render.BUDGET_BYTES - size
+    if margin < SIZE_WARN_MARGIN:
+        print(f"    WARN: only {margin} bytes of margin left (under {SIZE_WARN_MARGIN})")
     return []
 
 
@@ -271,6 +337,19 @@ def check_lint():
     return errors
 
 
+def check_dashboards():
+    code, output = run([sys.executable, str(ROOT / "scripts" / "build_dashboards.py"), "--check"])
+    return [] if code == 0 else [output.strip()]
+
+
+def check_bundle():
+    tag = render.load_versions(ROOT / "tools" / "versions.env").get("GRAFANA_SETUP_TAG", "")
+    if not git_tag_exists(tag) and git_is_shallow():
+        print(f"    skipped: tag {tag} absent from this shallow clone (git fetch --unshallow --tags to check it)")
+        return []
+    return bundle_errors(tag, render.grafana_setup_files(ROOT), git_show, git_tag_exists)
+
+
 CHECKS = {
     "render": check_render,
     "size": check_size,
@@ -282,6 +361,8 @@ CHECKS = {
     "limits": check_limits,
     "validators": check_validators,
     "lint": check_lint,
+    "dashboards": check_dashboards,
+    "bundle": check_bundle,
 }
 
 

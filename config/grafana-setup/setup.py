@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""grafana-setup (plan A): idempotently provision datasources and project folders in Grafana.
+"""grafana-setup: idempotently provision Grafana (spec 10). Standard library only.
 
-Standard library only (runs in python:3.13-alpine). Spec 10.1-10.2:
-- version guard: stop cleanly if Grafana < 12.0 (read from /api/health);
-- datasources with fixed UIDs: GET /api/datasources/uid/:uid -> PUT when present and different,
-  POST /api/datasources otherwise; correlations of spec 7.3;
-- folders gc-<project> for every project of PROJECTS;
-- the service account token is never written to the output.
+1. Grafana >= 12.0; datasources (fixed UIDs, correlations of 7.3); folders. 2. Plan B content, too
+big for the compose (spec 4.3): downloaded (mirror, or this repository at a fixed tag), checked
+against GRAFANA_SETUP_FILES (path=sha256;...), imported only if all match; it provisions dashboards
+and alerting. Tokens are never written to the output.
 """
 
+import hashlib
+import importlib
 import json
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 MIN_MAJOR = 12
 LOKI_UID = "gc-loki"
@@ -28,6 +30,16 @@ TRACE_TO_LOGS_QUERY = '{project=~".+"} | trace_id="${__trace.traceId}"'
 # Fields compared to decide whether an existing datasource must be updated. isDefault is left to
 # the operator (Grafana makes the first datasource of an organisation the default one).
 COMPARED_FIELDS = ("name", "type", "access", "url", "basicAuth", "jsonData")
+# Folder of the shared dashboards and of the alert rules.
+SHARED_FOLDER_UID = "gc-grafana-coolify"
+SHARED_FOLDER_TITLE = "grafana-coolify"
+SECRET_VARIABLES = ("GRAFANA_SA_TOKEN", "TELEGRAM_BOT_TOKEN")
+CONTENT_DIR = "config/grafana-setup"
+CONTENT_RE = re.compile(r"^(?:dashboards/)?[a-z0-9_-]+\.(?:py|json)$")
+CONTENT_MODULES = ("alerting.py", "dashboards.py")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SCHEMES = ("https://", "http://", "file:")
+MAX_CONTENT_BYTES = 2 * 1024 * 1024
 
 
 class SetupError(Exception):
@@ -40,7 +52,7 @@ class Grafana:
         self.token = token
         self.timeout = timeout
 
-    def request(self, method, path, body=None):
+    def request(self, method, path, body=None, headers=None):
         """Return (status, parsed JSON or None). Never raises on HTTP error statuses."""
         data = None if body is None else json.dumps(body).encode("utf-8")
         req = urllib.request.Request(self.url + path, data=data, method=method)
@@ -48,6 +60,8 @@ class Grafana:
         req.add_header("Accept", "application/json")
         if data is not None:
             req.add_header("Content-Type", "application/json")
+        for key, value in (headers or {}).items():
+            req.add_header(key, value)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return resp.status, parse_json(resp.read())
@@ -56,11 +70,18 @@ class Grafana:
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             raise SetupError(f"{method} {path}: Grafana unreachable ({reason(exc)})") from None
 
-    def expect(self, method, path, body=None, ok=(200,)):
-        status, payload = self.request(method, path, body)
+    def expect(self, method, path, body=None, ok=(200,), headers=None):
+        status, payload = self.request(method, path, body, headers)
         if status not in ok:
-            raise SetupError(f"{method} {path}: HTTP {status}: {message_of(payload)}")
+            raise self.error(method, path, status, payload)
         return payload
+
+    @staticmethod
+    def error(method, path, status, payload):
+        hint = ""
+        if status in (404, 410) and path.startswith("/api/v1/provisioning"):
+            hint = " (legacy alerting provisioning API unavailable: see README, « Alertes »)"
+        return SetupError(f"{method} {path}: HTTP {status}: {message_of(payload)}{hint}")
 
 
 def parse_json(raw):
@@ -205,17 +226,22 @@ def ensure_datasource(api, desired):
     return "updated"
 
 
-def ensure_folder(api, project):
-    uid = f"gc-{project}"
+def folder_uid(project):
+    """gc-<project>, hashed past Grafana's 40-character UID limit."""
+    uid = "gc-" + project
+    return uid if len(uid) <= 40 else f"gc-{project[:28]}-{hashlib.sha256(project.encode()).hexdigest()[:8]}"
+
+
+def ensure_folder(api, uid, title):
     status, current = api.request("GET", f"/api/folders/{uid}")
     if status == 404:
-        api.expect("POST", "/api/folders", {"uid": uid, "title": project})
+        api.expect("POST", "/api/folders", {"uid": uid, "title": title})
         return "created"
     if status != 200 or not isinstance(current, dict):
         raise SetupError(f"GET /api/folders/{uid}: HTTP {status}: {message_of(current)}")
-    if current.get("title") == project:
+    if current.get("title") == title:
         return "unchanged"
-    api.expect("PUT", f"/api/folders/{uid}", {"title": project, "overwrite": True})
+    api.expect("PUT", f"/api/folders/{uid}", {"title": title, "overwrite": True})
     return "updated"
 
 
@@ -224,6 +250,78 @@ def required(env, name):
     if not value:
         raise SetupError(f"{name} is required")
     return value
+
+
+def parse_content(value):
+    files = []
+    for item in (value or "").split(";"):
+        if not item:
+            continue
+        path, separator, digest = item.partition("=")
+        if not separator or not CONTENT_RE.match(path) or not SHA256_RE.match(digest):
+            raise SetupError(f"malformed GRAFANA_SETUP_FILES entry: {item!r}")
+        files.append((path, digest))
+    missing = [name for name in CONTENT_MODULES if name not in dict(files)]
+    if missing:
+        raise SetupError(f"GRAFANA_SETUP_FILES does not list {', '.join(missing)}")
+    return files
+
+
+def content_url(env):
+    url = (env.get("GRAFANA_SETUP_MIRROR_URL") or "").strip() or (env.get("GRAFANA_SETUP_PINNED_URL") or "").strip()
+    if not url.startswith(SCHEMES):
+        raise SetupError(f"the source of the plan B content must start with one of {', '.join(SCHEMES)}")
+    return f"{url.rstrip('/')}/{CONTENT_DIR}"
+
+
+def fetch(url, attempts=3, timeout=30, pause=2, limit=MAX_CONTENT_BYTES):
+    # Network errors and 5xx are retried; 4xx and file: errors are not.
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                data = resp.read(limit + 1)
+            if len(data) > limit:
+                raise SetupError(f"{url}: larger than {limit} bytes, refused")
+            return data
+        except urllib.error.HTTPError as exc:
+            if exc.code < 500 or attempt == attempts:
+                raise SetupError(f"{url}: HTTP {exc.code}") from None
+        except (urllib.error.URLError, OSError) as exc:
+            if url.startswith("file:") or attempt == attempts:
+                raise SetupError(f"{url}: {getattr(exc, 'reason', exc)}") from None
+        time.sleep(pause * attempt)
+    raise SetupError(f"{url}: no attempt made")
+
+
+def download(base_url, files, target, pause=2):
+    for path, digest in files:
+        data = fetch(f"{base_url}/{path}", pause=pause)
+        actual = hashlib.sha256(data).hexdigest()
+        if actual != digest:
+            raise SetupError(f"{path}: SHA-256 {actual} differs from the pinned {digest}: nothing was run")
+        destination = Path(target) / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+
+
+def provision_content(api, env, projects, out, pause=2):
+    files = parse_content(env.get("GRAFANA_SETUP_FILES"))
+    base_url = content_url(env)
+    with tempfile.TemporaryDirectory(prefix="grafana-setup-") as tmp:
+        download(base_url, files, tmp, pause)
+        out(f"grafana-setup: {len(files)} content files verified (SHA-256)")
+        sys.path.insert(0, tmp)
+        try:
+            alerting = importlib.import_module("alerting")
+            dashboards = importlib.import_module("dashboards")
+            for module in (alerting, dashboards):
+                if getattr(module, "__file__", None) is None:
+                    raise SetupError(f"{module.__name__}.py is missing")
+            prepared = alerting.prepare(env, PROMETHEUS_UID)
+            dashboards.provision(api, projects, SHARED_FOLDER_UID, folder_uid, out)
+            alerting.provision(api, prepared, out)
+        finally:
+            sys.path.remove(tmp)
 
 
 def run(env, out=print, health_timeout=120):
@@ -238,20 +336,30 @@ def run(env, out=print, health_timeout=120):
     out(f"grafana-setup: Grafana {version}")
     for datasource in desired:
         out(f"grafana-setup: datasource {datasource['uid']}: {ensure_datasource(api, datasource)}")
+    out(f"grafana-setup: folder {SHARED_FOLDER_UID}: {ensure_folder(api, SHARED_FOLDER_UID, SHARED_FOLDER_TITLE)}")
     for project in projects:
-        out(f"grafana-setup: folder gc-{project}: {ensure_folder(api, project)}")
+        out(f"grafana-setup: folder {folder_uid(project)}: {ensure_folder(api, folder_uid(project), project)}")
+    out("grafana-setup: datasources and folders: done")
+    try:
+        provision_content(api, env, projects, out)
+    except (SetupError, ValueError) as exc:
+        raise SetupError(f"datasources and folders are provisioned, dashboards and alerts are not: {exc}") from None
     out("grafana-setup: done")
 
 
+def redact(message, env):
+    for name in SECRET_VARIABLES:
+        secret = (env.get(name) or "").strip()
+        if secret:
+            message = message.replace(secret, "***")
+    return message
+
+
 def main():
-    token = os.environ.get("GRAFANA_SA_TOKEN", "")
     try:
         run(os.environ)
     except SetupError as exc:
-        message = str(exc)
-        if token:
-            message = message.replace(token, "***")
-        print(f"grafana-setup: ERROR: {message}", file=sys.stderr)
+        print(f"grafana-setup: ERROR: {redact(str(exc), os.environ)}", file=sys.stderr)
         return 1
     return 0
 
