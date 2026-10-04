@@ -103,14 +103,16 @@ check_set() { # name value extended_regex message
 }
 check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
 check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
-# Loki parses its retentions with Prometheus model.ParseDuration: units y w d h m s ms, each at
-# most once and in that order, total at most 9223372036854ms (int64 nanoseconds, about 292y);
-# anything else stops Loki at startup. Loki also refuses a stream retention
-# (LOKI_RETENTION_PROD) below 24h and restarts in a loop; LOKI_RETENTION_DEFAULT is held to the
-# same floor, the minimum documented by Loki (one index period).
-LOKI_DURATION='^([0-9]+y)?([0-9]+w)?([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?([0-9]+ms)?$'
-LOKI_MAX_MS=9223372036854
-loki_duration_in_range() { # duration already matching LOKI_DURATION; 24h <= total <= LOKI_MAX_MS
+# Loki and Prometheus read retention times with model.ParseDuration: units y w d h m s ms, once
+# each, in that order, at most 9223372036854ms (int64 ns, ~292y). Else they stop at startup.
+DURATION='^([0-9]+y)?([0-9]+w)?([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?([0-9]+ms)?$'
+MAX_MS=9223372036854
+strip_zeros() { # $(( )) reads leading zeros as octal
+  n=$1
+  while [ "${n#0}" != "$n" ] && [ -n "${n#0}" ]; do n=${n#0}; done
+  printf '%s' "$n"
+}
+duration_in_range() { # duration matching DURATION, min_ms; min_ms <= total <= MAX_MS
   rest=$1
   total=0
   while [ -n "$rest" ]; do
@@ -121,14 +123,8 @@ loki_duration_in_range() { # duration already matching LOKI_DURATION; 24h <= tot
       *) unit=${rest%"${rest#?}"} ;;
     esac
     rest=${rest#"$unit"}
-    # Leading zeros would make $(( )) read the number as octal.
-    while :; do
-      case $num in
-        0?*) num=${num#0} ;;
-        *) break ;;
-      esac
-    done
-    # Above 13 digits the number alone exceeds LOKI_MAX_MS and would overflow $(( )).
+    num=$(strip_zeros "$num")
+    # Over 13 digits exceeds MAX_MS (and $(( ))).
     [ "${#num}" -le 13 ] || return 1
     case $unit in
       y) mult=31536000000 ;;
@@ -139,22 +135,47 @@ loki_duration_in_range() { # duration already matching LOKI_DURATION; 24h <= tot
       s) mult=1000 ;;
       *) mult=1 ;;
     esac
-    # Compare before multiplying: num * mult never exceeds LOKI_MAX_MS, total stays below 2^63.
-    [ "$num" -le $((LOKI_MAX_MS / mult)) ] || return 1
+    # Compare before multiplying: no 64-bit overflow.
+    [ "$num" -le $((MAX_MS / mult)) ] || return 1
     total=$((total + num * mult))
-    [ "$total" -le "$LOKI_MAX_MS" ] || return 1
+    [ "$total" -le "$MAX_MS" ] || return 1
   done
-  [ "$total" -ge 86400000 ]
+  [ "$total" -ge "$2" ]
 }
-check_loki_retention() { # name value example
-  if [ -n "$2" ] && { ! matches "$2" "$LOKI_DURATION" || ! loki_duration_in_range "$2"; }; then
-    error "$1 must be a duration between 24h and 292y, units in the order y w d h m s ms, each at most once, such as $3 (empty: $3)"
+check_duration() { # name value min_ms message
+  if [ -n "$2" ] && { ! matches "$2" "$DURATION" || ! duration_in_range "$2" "$3"; }; then
+    error "$1 $4"
   fi
 }
-check_loki_retention LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 720h
-check_loki_retention LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 168h
-check_set PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 90d (empty: 90d)"
-check_set PROM_RETENTION_SIZE "${PROM_RETENTION_SIZE:-}" '^[0-9]+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$' "must be a non-zero size such as 100GB (empty: 100GB)"
+# Loki refuses a stream retention (LOKI_RETENTION_PROD) under 24h and loops; the default
+# retention keeps the same floor, Loki's documented minimum.
+order='up to 292y, units in the order y w d h m s ms, such as'
+check_duration LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 86400000 "must be 24h $order 720h (empty: 720h)"
+check_duration LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
+# Prometheus has no floor; 0 turns time retention off (unbounded).
+check_duration PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" 1 "must be non-zero $order 90d (empty: 90d)"
+# Size: units.ParseBase2Bytes (KB = KiB) also takes -1GB, 1.5GB, 1GB512MB and wraps at 8EB:
+# only a positive integer and one unit, below 2^63 bytes.
+MAX_BYTES=9223372036854775807
+size_in_range() { # size matching the PROM_RETENTION_SIZE regex; 1 <= bytes <= MAX_BYTES
+  num=$(strip_zeros "${1%%[!0-9]*}")
+  # 18 digits stay below 2^63 in $(( )).
+  [ "${#num}" -le 18 ] || return 1
+  case ${1#"${1%%[!0-9]*}"} in
+    B) mult=1 ;;
+    KB | KiB) mult=1024 ;;
+    MB | MiB) mult=1048576 ;;
+    GB | GiB) mult=1073741824 ;;
+    TB | TiB) mult=1099511627776 ;;
+    PB | PiB) mult=1125899906842624 ;;
+    *) mult=1152921504606846976 ;;
+  esac
+  [ "$num" -ge 1 ] && [ "$num" -le $((MAX_BYTES / mult)) ]
+}
+size=${PROM_RETENTION_SIZE:-}
+if [ -n "$size" ] && { ! matches "$size" '^[0-9]+(B|KB|MB|GB|TB|PB|EB|KiB|MiB|GiB|TiB|PiB|EiB)$' || ! size_in_range "$size"; }; then
+  error "PROM_RETENTION_SIZE must be a non-zero integer size below 8EB such as 100GB (empty: 100GB)"
+fi
 case ${ENABLE_EXEMPLARS:-false} in
   true | false) ;;
   *) error "ENABLE_EXEMPLARS must be true or false (empty: false)" ;;

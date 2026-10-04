@@ -1,5 +1,6 @@
 import hashlib
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,15 @@ LOKI_BAD = (
     *("293y", "292y25w", "9223372037s", "9223372036855ms", "9999999999s", "99999999999s", "999999999y"),
     *("99999999999999999999y", "1e3d"),
 )
+# Prometheus retentions: *_BAD are refused by Prometheus too; *_GUARD_ONLY start Prometheus but
+# are refused here (time retention off, negative, decimal or summed size, 8EB wrapping past 2^63).
+# PrometheusRetentionCrossCheckTest holds them against the real binary.
+PROM_TIME_GOOD = ("90d", "1y", "2w3d", "1ms", "1d0ms", "090d", "292y", "9223372036854ms")
+PROM_TIME_BAD = ("90", "90 d", "-90d", "24H", "1e3d", "1h1d", "1d1d", "023h1h", "12h12h", "293y", "9223372036855ms")
+PROM_TIME_GUARD_ONLY = ("0", "0d", "0s", "0h0m")
+PROM_SIZE_GOOD = ("100GB", "512MiB", "1B", "1KB", "1KiB", "100TB", "100PiB", "7EB", "7EiB", "0100GB", "999999999999999999B")
+PROM_SIZE_BAD = ("100", "100 GB", "100gb", "100Gb", "1kB", "1e3GB", "1_000GB", "16EB", "9999999999999999999B")
+PROM_SIZE_GUARD_ONLY = ("0", "0GB", "-1GB", "+1GB", "1.5GB", "1GB512MB", "8EB")
 
 
 class GuardCases:
@@ -167,8 +177,8 @@ class GuardCases:
             "TEMPO_MAX_ACTIVE_SERIES": (["100000", "1"], ["0", "000", "-1", "1e5", "100 000", "unlimited", "10\nx"]),
             "LOKI_RETENTION_PROD": (["720h", "30d", "4w"], ["0", "0d", "30", "30 d", "thirty"]),
             "LOKI_RETENTION_DEFAULT": (["168h", "7d"], ["0s", "7", "7D"]),
-            "PROM_RETENTION_TIME": (["90d", "1y", "2w3d"], ["0", "0d", "90", "90 d", "-90d"]),
-            "PROM_RETENTION_SIZE": (["100GB", "512MiB"], ["0", "0GB", "100", "100 GB", "100gb", "-1GB"]),
+            "PROM_RETENTION_TIME": ([*PROM_TIME_GOOD], [*PROM_TIME_BAD, *PROM_TIME_GUARD_ONLY]),
+            "PROM_RETENTION_SIZE": ([*PROM_SIZE_GOOD], [*PROM_SIZE_BAD, *PROM_SIZE_GUARD_ONLY]),
             "ENABLE_EXEMPLARS": (["true", "false"], ["yes", "1", "True", "on", "false\nx"]),
         }
         for name in ("LOKI_RETENTION_PROD", "LOKI_RETENTION_DEFAULT"):
@@ -219,6 +229,51 @@ class LokiDurationCrossCheckTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertTrue(self.loki_accepts("LOKI_RETENTION_DEFAULT", value))
         self.assertTrue(self.loki_accepts("LOKI_RETENTION_DEFAULT", "23h"), "Loki now refuses 23h: update the docs")
+
+
+class PrometheusRetentionCrossCheckTest(unittest.TestCase):
+    """The PROM_* lists as the real Prometheus reads its retention flags (start.sh passes them)."""
+
+    def setUp(self):
+        if not (BIN / "prometheus").exists():
+            self.skipTest(f"{BIN / 'prometheus'} missing: run tools/fetch-binaries.sh first")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config = Path(self.tmp.name) / "prometheus.yml"
+        self.config.write_text("global: {}\n", encoding="utf-8")
+
+    def prometheus_starts(self, flag, value):
+        """True once Prometheus is ready, False if it exits first (flag refused)."""
+        data = tempfile.mkdtemp(dir=self.tmp.name)
+        cmd = [
+            str(binary("prometheus")),
+            f"--config.file={self.config}",
+            f"--storage.tsdb.path={data}",
+            "--web.listen-address=127.0.0.1:0",
+            f"--{flag}={value}",
+        ]
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
+            try:
+                for line in process.stdout:
+                    if "Server is ready to receive web requests" in line:
+                        return True
+                return False
+            finally:
+                process.kill()
+
+    def check(self, flag, accepted, refused):
+        for value in accepted:
+            with self.subTest(flag=flag, value=value):
+                self.assertTrue(self.prometheus_starts(flag, value))
+        for value in refused:
+            with self.subTest(flag=flag, value=value):
+                self.assertFalse(self.prometheus_starts(flag, value))
+
+    def test_retention_time_matches_prometheus(self):
+        self.check("storage.tsdb.retention.time", (*PROM_TIME_GOOD, *PROM_TIME_GUARD_ONLY), PROM_TIME_BAD)
+
+    def test_retention_size_matches_prometheus(self):
+        self.check("storage.tsdb.retention.size", (*PROM_SIZE_GOOD, *PROM_SIZE_GUARD_ONLY), PROM_SIZE_BAD)
 
 
 class DashGuardTest(GuardCases, unittest.TestCase):
