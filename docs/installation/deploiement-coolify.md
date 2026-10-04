@@ -18,7 +18,7 @@ Prérequis faits : [service Grafana](service-grafana.md) sur le réseau `coolify
 
 | Ressource | **Connect To Predefined Network** |
 |---|---|
-| Ce package (`grafana-coolify`) | **Désactivé** : le compose déclare lui-même le réseau externe `coolify` et y donne à `loki`, `tempo`, `prometheus`, `alloy` les alias `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-alloy`. Activée, l'option efface ces alias. |
+| Ce package (`grafana-coolify`) | **Désactivé** : le compose déclare lui-même le réseau externe `coolify` et y donne à `loki`, `tempo`, `prometheus`, `alloy` les alias `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-alloy`. Option désactivée, Coolify rattache quand même **tous** les services du package au réseau `coolify` (les autres sans alias) ; seule différence avec l'option activée : celle-ci efface les alias `gc-*`. |
 | Service Coolify « Grafana » | **Activé** ([service Grafana](service-grafana.md)). |
 
 Explication et vérification : README, étape 4 « Réseau et noms internes », et spike S1 de
@@ -26,7 +26,10 @@ Explication et vérification : README, étape 4 « Réseau et noms internes », 
 [`gc-*` ne résout pas](../depannage/sources-de-donnees.md#les-alias-gc--ne-résolvent-pas-option-activée-sur-le-package).
 
 > Sur un déploiement antérieur à la PR #6 (compose sans alias `gc-*`), l'option était activée
-> sur le package et seuls les noms nus (`loki`…) résolvaient. Migration : README, étape 4.
+> sur le package et les URL utilisaient les noms nus (`loki`…), qui résolvent dans les deux
+> états de l'option. Migration (en bref : mettre à jour, désactiver l'option, redéployer, puis
+> seulement passer les URL à `gc-*`) : [README, étape 4](../../README.md#4-réseau-et-noms-internes),
+> « Migration d'un déploiement existant ».
 
 ## 3. Variables
 

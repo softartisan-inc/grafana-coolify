@@ -29,8 +29,12 @@ TEMPO_INTERNAL_URL=http://gc-tempo:3200
 PROMETHEUS_INTERNAL_URL=http://gc-prometheus:9090
 ```
 
-Avec un compose antérieur à la PR #6 (sans alias `gc-*`), repli : `http://loki:3100`,
-`http://tempo:3200`, `http://prometheus:9090` (voir la collision plus bas).
+Repli de dépannage : les noms nus `http://loki:3100`, `http://tempo:3200`,
+`http://prometheus:9090`. Ils résolvent que l'option **Connect To Predefined Network** du
+package soit activée ou non, car Compose ajoute toujours le nom du service aux alias du
+conteneur ; ils restent la seule option avec un compose antérieur à la PR #6 (sans alias
+`gc-*`). Risque : la [collision](#la-source-répond-mais-interroge-la-mauvaise-stack-collision)
+plus bas.
 
 **Vérification** : **Save & test** vert sur `gc-loki`, `gc-tempo`, `gc-prometheus`. Sur l'hôte,
 les alias réellement enregistrés :
@@ -46,13 +50,15 @@ for s in loki tempo prometheus alloy; do c=$(docker ps --format '{{.Names}}' | g
 ci-dessus montre des alias sans `gc-*` (seulement le nom du conteneur et le nom nu).
 
 **Cause** : **Connect To Predefined Network** est **activé** sur la ressource `grafana-coolify`.
-Pour une ressource Application, Coolify ajoute alors le réseau `coolify` à chaque service
-**après** les réseaux écrits dans le compose, et remplace l'entrée
-`coolify: {aliases: [gc-loki]}` par `coolify: null` : les alias disparaissent sans aucun message.
+Pour une ressource Application, Coolify rattache **dans les deux cas** chaque service du package
+au réseau `coolify` ; seuls les alias diffèrent. Option activée, il écrit son entrée **après**
+les réseaux du compose et remplace `coolify: {aliases: [gc-loki]}` par `coolify: null` : les
+alias `gc-*` disparaissent sans aucun message, les noms nus (`loki`…) résolvent toujours.
 Détail du code de Coolify en cause : spike S1 de [`docs/spikes.md`](../spikes.md).
 
 **Correctif** : ressource `grafana-coolify` → **désactiver** Connect To Predefined Network →
-**Save** → **Redeploy**. Laisser l'option **activée** sur le service Grafana (ressource Service :
+**Save** → **Redeploy**. Un déploiement existant qui utilise encore des noms nus suit la
+migration du [README, étape 4](../../README.md#4-réseau-et-noms-internes). Laisser l'option **activée** sur le service Grafana (ressource Service :
 elle n'y efface rien).
 
 **Vérification** : la boucle affiche `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-alloy` ; puis
