@@ -16,21 +16,27 @@ services:
     command:
       - sh
       - -c
-      - "echo 'fa19fbc104deefa8d46070f4e7d67bad8dbe562d5ece4d4730708a26ec7c346b  /opt/config-guard/guard.fa19fbc1.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.fa19fbc1.sh"
+      - "echo '893b8f855161ca9ec98c353b90e11cce0477a9068a94e17e52d4ebe5a278ddaa  /opt/config-guard/guard.893b8f85.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.893b8f85.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.86e362a3.py=86e362a340bc0c5070739d6f7423f5aafef62328bddd27c85cc73afba35165fd;/guard/loki/loki.b1a0660d.yaml=b1a0660d327b9fe6f4c6dfd543ec80b9ab679fb32507e73eabb582237c681ac7;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/tempo/tempo.46f5a358.yaml=46f5a3584f9906c97da2b080ab22df235e245bf38c80c0a73e2ca38f424a71e1"
-      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
-      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.cfed7ab7.py=cfed7ab76d3d93de21b30d5a73510c4a471155c9c20b5e7de50a68b788b4cfa7;/guard/loki/loki.b1a0660d.yaml=b1a0660d327b9fe6f4c6dfd543ec80b9ab679fb32507e73eabb582237c681ac7;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/tempo/tempo.46f5a358.yaml=46f5a3584f9906c97da2b080ab22df235e245bf38c80c0a73e2ca38f424a71e1"
+      # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh.
+      IP_HASH_SALT: ${IP_HASH_SALT:-}
+      FARO_API_KEY: ${FARO_API_KEY:-}
       PROJECTS: ${PROJECTS:-}
       FARO_SERVICES: ${FARO_SERVICES:-}
       HOST_MAP: ${HOST_MAP:-}
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
       HOST_ENV: ${HOST_ENV:-prod}
+      GRAFANA_URL: ${GRAFANA_URL:-}
+      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
+      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
+      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
+      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.fa19fbc1.sh
-        target: /opt/config-guard/guard.fa19fbc1.sh
+        source: ./config/config-guard/guard.893b8f85.sh
+        target: /opt/config-guard/guard.893b8f85.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -102,6 +108,22 @@ services:
           if ! matches "${FARO_API_KEY:-}" '^[A-Za-z0-9._~+/=-]{16,}$'; then
             error "FARO_API_KEY must be at least 16 characters from [A-Za-z0-9._~+/=-] (openssl rand -hex 24)"
           fi
+          # Coolify turns `${X:?message}` into X=message instead of refusing to deploy: the compose only
+          # uses `${X:-}`, and the "required" checks live here. grafana-setup needs these four URLs.
+          check_url() { # name value
+            if ! matches "$2" '^https?://[^[:space:]]+$'; then
+              error "$1 must be an http:// or https:// URL (e.g. http://loki:3100), got '$2'"
+            fi
+          }
+          check_url GRAFANA_URL "${GRAFANA_URL:-}"
+          check_url LOKI_INTERNAL_URL "${LOKI_INTERNAL_URL:-}"
+          check_url TEMPO_INTERNAL_URL "${TEMPO_INTERNAL_URL:-}"
+          check_url PROMETHEUS_INTERNAL_URL "${PROMETHEUS_INTERNAL_URL:-}"
+          # The token itself is never printed.
+          case ${GRAFANA_SA_TOKEN:-} in
+            *[![:space:]]*) ;;
+            *) error "GRAFANA_SA_TOKEN is required (Grafana service account token, role Admin)" ;;
+          esac
           # PROJECTS is split on commas by a Go template (Faro allow-list): no spaces, no empty item.
           # Each item: ^[a-z0-9][a-z0-9-]{0,63}$, the rule of grafana-setup (no leading hyphen).
           projects=${PROJECTS:-}
@@ -437,8 +459,8 @@ services:
       SERVICE_FQDN_ALLOY_12347:
       BIND_ADDR: 0.0.0.0
       ALLOY_QUEUE_DIR: /var/lib/alloy/queue
-      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
-      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      IP_HASH_SALT: ${IP_HASH_SALT:-}
+      FARO_API_KEY: ${FARO_API_KEY:-}
       PROJECTS: ${PROJECTS:-}
       FARO_SERVICES: ${FARO_SERVICES:-}
       FARO_RATE: ${FARO_RATE:-100}
@@ -1090,13 +1112,13 @@ services:
         condition: service_completed_successfully
     command:
       - python3
-      - /opt/grafana-setup/setup.86e362a3.py
+      - /opt/grafana-setup/setup.cfed7ab7.py
     environment:
-      GRAFANA_URL: ${GRAFANA_URL:?GRAFANA_URL is required}
-      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}
-      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:?LOKI_INTERNAL_URL is required}
-      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:?TEMPO_INTERNAL_URL is required}
-      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:?PROMETHEUS_INTERNAL_URL is required}
+      GRAFANA_URL: ${GRAFANA_URL:-}
+      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
+      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
+      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
+      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
       PROJECTS: ${PROJECTS:-}
       # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
       GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v1"
@@ -1113,8 +1135,8 @@ services:
       HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
-        source: ./config/grafana-setup/setup.86e362a3.py
-        target: /opt/grafana-setup/setup.86e362a3.py
+        source: ./config/grafana-setup/setup.cfed7ab7.py
+        target: /opt/grafana-setup/setup.cfed7ab7.py
         content: |2
           #!/usr/bin/env python3
           """grafana-setup: idempotently provision Grafana (spec 10). Standard library only.
@@ -1126,6 +1148,7 @@ services:
           """
 
           import hashlib
+          import http.client
           import importlib
           import json
           import os
@@ -1156,12 +1179,19 @@ services:
           CONTENT_RE = re.compile(r"^(?:dashboards/)?[a-z0-9_-]+\.(?:py|json)$")
           CONTENT_MODULES = ("alerting.py", "dashboards.py")
           SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+          # Same rule as config-guard (guard.sh) for GRAFANA_URL and the *_INTERNAL_URL variables.
+          HTTP_URL_RE = re.compile(r"^https?://\S+$")
+          URL_VARIABLES = ("GRAFANA_URL", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
           SCHEMES = ("https://", "http://", "file:")
           MAX_CONTENT_BYTES = 2 * 1024 * 1024
 
 
           class SetupError(Exception):
               """A clean, explained stop (exit code 1)."""
+
+
+          class InvalidRequest(SetupError):
+              """A request urllib refuses to send (malformed URL): retrying cannot help."""
 
 
           class Grafana:
@@ -1185,7 +1215,11 @@ services:
                           return resp.status, parse_json(resp.read())
                   except urllib.error.HTTPError as exc:
                       return exc.code, parse_json(exc.read())
-                  except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                  except (ValueError, http.client.InvalidURL) as exc:
+                      # A malformed URL: urllib raises ValueError (unknown url type), http.client raises
+                      # InvalidURL (an HTTPException, hence this clause first). Retrying cannot help.
+                      raise InvalidRequest(f"{method} {path}: invalid request to {self.url} ({exc})") from None
+                  except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as exc:
                       raise SetupError(f"{method} {path}: Grafana unreachable ({reason(exc)})") from None
 
               def expect(self, method, path, body=None, ok=(200,), headers=None):
@@ -1226,6 +1260,8 @@ services:
                       status, payload = api.request("GET", "/api/health")
                       if status == 200 and isinstance(payload, dict):
                           return payload
+                  except InvalidRequest:
+                      raise
                   except SetupError:
                       if time.monotonic() >= deadline:
                           raise
@@ -1370,6 +1406,13 @@ services:
               return value
 
 
+          def required_url(env, name):
+              value = required(env, name)
+              if not HTTP_URL_RE.match(value) or value.rstrip("/") in ("http:", "https:"):
+                  raise SetupError(f"{name} must be an http:// or https:// URL, got {value[:80]!r}")
+              return value
+
+
           def parse_content(value):
               files = []
               for item in (value or "").split(";"):
@@ -1443,12 +1486,9 @@ services:
 
 
           def run(env, out=print, health_timeout=120):
-              api = Grafana(required(env, "GRAFANA_URL"), required(env, "GRAFANA_SA_TOKEN"))
-              desired = datasources(
-                  required(env, "LOKI_INTERNAL_URL"),
-                  required(env, "TEMPO_INTERNAL_URL"),
-                  required(env, "PROMETHEUS_INTERNAL_URL"),
-              )
+              grafana_url, loki_url, tempo_url, prometheus_url = (required_url(env, name) for name in URL_VARIABLES)
+              api = Grafana(grafana_url, required(env, "GRAFANA_SA_TOKEN"))
+              desired = datasources(loki_url, tempo_url, prometheus_url)
               projects = parse_projects(env.get("PROJECTS", ""))
               version = check_version(wait_healthy(api, timeout=health_timeout))
               out(f"grafana-setup: Grafana {version}")

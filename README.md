@@ -67,9 +67,31 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 - **Point Faro fermé** : `alloy` écoute toujours Faro, la clé reste donc obligatoire. Pour ne
   pas exposer Faro, ne donner **aucun domaine** au service `alloy` dans Coolify : sans domaine,
   Traefik n'a aucun routeur vers le port 12347.
+- **Domaines générés d'office (serveur unique avec domaine wildcard)** : au premier déploiement,
+  Coolify **remplit lui-même** le champ **Domains** de `alloy` et de `alloy-gateway`
+  (`http://alloy-<uuid>.<wildcard>`, `http://alloy-gateway-<uuid>.<wildcard>`), ce qui ouvre
+  Faro et OTLP sur Internet sans que vous l'ayez demandé. Après le premier déploiement, ouvrir
+  chacun de ces deux services dans la ressource, **vider le champ Domains** de `alloy-gateway`
+  (tant qu'aucun serveur distant n'envoie d'OTLP) et de `alloy` (tant qu'aucune application
+  n'est instrumentée avec Faro), enregistrer et redéployer. Pour ouvrir Faro plus tard, saisir
+  le domaine **avec le port** : `https://faro.example.com:12347` (le `:12347` désigne le port du
+  conteneur, pas un port public) ; de même `https://otlp.example.com:4318` pour OTLP.
 - `config-guard` refuse de démarrer la stack si `IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`,
-  `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide : le message
-  d'erreur est dans les logs de `config-guard`.
+  `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide,
+  si `GRAFANA_URL`, `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL` ou `PROMETHEUS_INTERNAL_URL` n'est
+  pas une URL `http://` ou `https://`, ou si `GRAFANA_SA_TOKEN` est vide : le message d'erreur est
+  dans les logs de `config-guard`. Ces contrôles ne sont **pas** confiés à la syntaxe
+  `${VAR:?message}` de Compose : Coolify ne refuse pas le déploiement, il donne à la variable le
+  texte du message pour valeur (`GRAFANA_URL=GRAFANA_URL is required`).
+- `GF_SMTP_*` (email des alertes) **ne se renseignent pas ici** : ces variables vont sur le
+  **service Grafana** (voir « Prérequis : SMTP de Grafana »).
+
+> **Logs de déploiement Coolify = secrets en clair.** Les logs de déploiement contiennent une
+> ligne `[CMD] … base64 …` : c'est le fichier `.env` **complet** de la ressource, encodé en base64
+> (donc lisible par quiconque), avec `GRAFANA_SA_TOKEN`, `FARO_API_KEY`, `IP_HASH_SALT`,
+> `TELEGRAM_BOT_TOKEN`… Ne **jamais** copier ces logs dans un ticket, une discussion ou un
+> assistant. Si c'est arrivé : faire tourner tous les secrets concernés (nouveau jeton Grafana,
+> nouvelle clé Faro, nouveau token Telegram via @BotFather, nouveau sel) puis redéployer.
 
 ### 3. Configurer les middlewares Traefik
 
@@ -87,7 +109,15 @@ publié ; rechargement à chaud) :
 
    Chaque ligne est écrite **entre guillemets doubles**, avec des `$` **non doublés**.
 4. Remplacer la regex d'origines (`accessControlAllowOriginListRegex`) par celle de vos domaines,
-   par exemple `^https://([a-z0-9-]+\.)?example\.(me|app)$`.
+   **entre guillemets simples** :
+
+   ```yaml
+   accessControlAllowOriginListRegex:
+     - '^https://([a-z0-9-]+\.)?example\.(me|app)$'
+   ```
+
+   Entre guillemets doubles, `\.` est une séquence d'échappement YAML invalide et Traefik
+   rejette tout le fichier : toujours des guillemets simples pour une regex.
 
 Révoquer un projet : supprimer sa ligne. Traefik recharge le fichier sans redéploiement.
 
@@ -110,11 +140,12 @@ Traefik répond lui-même aux requêtes préalables `OPTIONS`, avant la limite d
 
 1. Onglet de la ressource → activer **Connect To Predefined Network** : le package rejoint le
    réseau `coolify`, partagé avec Grafana et les applications du serveur.
-2. Après un premier déploiement, relever les noms réels des conteneurs : Coolify les suffixe
-   (`loki-<uuid>`). Sur le serveur :
+2. Relever les noms réels des conteneurs : Coolify les suffixe (`loki-<uuid>`). Tant que ces
+   trois URL ne sont pas renseignées, `config-guard` refuse de démarrer la stack ; Coolify crée
+   néanmoins les conteneurs, que `docker ps -a` liste. Sur le serveur :
 
    ```bash
-   docker ps --format '{{.Names}}' | grep -E '^(loki|tempo|prometheus|alloy)-'
+   docker ps -a --format '{{.Names}}' | grep -E '^(loki|tempo|prometheus|alloy)-'
    ```
 
 3. Renseigner `LOKI_INTERNAL_URL=http://loki-<uuid>:3100`,
@@ -130,7 +161,10 @@ publie de port (`scripts/check.py` le vérifie).
 
 Dans Grafana : **Administration** → **Users and access** → **Service accounts** → créer
 `grafana-coolify` avec le rôle **Admin**, puis **Add service account token** (expiration
-conseillée : **90 jours**). Copier le jeton dans `GRAFANA_SA_TOKEN`.
+conseillée : **1 an**). Copier le jeton dans `GRAFANA_SA_TOKEN`. Le jeton ne sert qu'au
+déploiement (`grafana-setup`) : une expiration courte n'apporte guère de sécurité mais fait
+échouer un redéploiement à l'improviste. **Créer un rappel d'agenda** un mois avant l'échéance
+pour la rotation.
 
 Rotation : créer un nouveau jeton, remplacer `GRAFANA_SA_TOKEN`, redéployer, puis supprimer
 l'ancien jeton. Le jeton n'est jamais écrit dans les logs de `grafana-setup`.

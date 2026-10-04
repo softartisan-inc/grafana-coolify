@@ -172,9 +172,9 @@ class RobustnessTest(unittest.TestCase):
                 with socket.socket() as sock:
                     self.assertNotEqual(sock.connect_ex(("127.0.10.2", 3100)), 0, "loki started despite config-guard")
                 run([*STACK, "down"], timeout=120)
-        # Review focus 2: the public Faro endpoint never runs without a real key. Empty: Compose
-        # refuses the ${FARO_API_KEY:?} reference; too short: config-guard refuses it.
-        for key, message in (("", "FARO_API_KEY is required"), ("short-key-01234", "FARO_API_KEY must be at least 16")):
+        # Review focus 2: the public Faro endpoint never runs without a real key. Empty or too
+        # short: config-guard refuses it (the compose has no ${X:?}: Coolify turns it into X=message).
+        for key, message in (("", "FARO_API_KEY must be at least 16"), ("short-key-01234", "FARO_API_KEY must be at least 16")):
             with self.subTest(faro_api_key=key):
                 result = run([*STACK, "up", "--set", f"FARO_API_KEY={key}"], timeout=120)
                 self.assertEqual(result.returncode, 1, result.stdout)

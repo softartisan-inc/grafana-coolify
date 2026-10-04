@@ -55,7 +55,7 @@ services:
     environment:
       SERVICE_FQDN_A_80:
       X: ${X:-1}
-      Y: ${Y:?required}
+      Y: ${Y:-}
     command: ["--flag=${Z}"]
 """
 
@@ -68,6 +68,18 @@ services:
         self.assertIn("SERVICE_FQDN_A_80: used in compose.template.yaml but missing from .env.example", errors)
         self.assertIn("EXTRA: in .env.example but unused by compose.template.yaml", errors)
         self.assertFalse(any("IGNORED" in e for e in errors))
+
+    def test_required_syntax_is_refused(self):
+        """Coolify turns ${Y:?message} into Y=message instead of refusing to deploy."""
+        env = "SERVICE_FQDN_A_80=\nX=1\nY=\nZ=\n"
+        for reference in ("${Y:?required}", "${Y?required}", "${Y:?}"):
+            with self.subTest(reference=reference):
+                template = self.TEMPLATE.replace("${Y:-}", reference)
+                errors = check.env_var_mismatches(template, env)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("Y: ${Y:?...} becomes the value of Y under Coolify", errors[0])
+        commented = self.TEMPLATE.replace("# comment with ${IGNORED}", "# never ${IGNORED:?x}")
+        self.assertEqual(check.env_var_mismatches(commented, env), [])
 
     def test_comments_in_env_example_are_ignored(self):
         env = "# X=commented\nSERVICE_FQDN_A_80=\nX=1\nY=\nZ=\n"
@@ -138,16 +150,37 @@ class BundleTest(unittest.TestCase):
         self.assertIn("absent from tag grafana-setup-content-v1", self.errors(stored=None)[0])
 
     def test_shallow_clone_without_the_tag_is_skipped(self):
+        """Simulated shallow clone: the skip notice is captured, never printed into the test output."""
         saved = check.git_tag_exists, check.git_is_shallow
         check.git_tag_exists = lambda _tag: False
         try:
             for shallow, expected in ((True, []), (False, 1)):
                 with self.subTest(shallow=shallow):
                     check.git_is_shallow = lambda shallow=shallow: shallow
-                    errors = check.check_bundle()
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        errors = check.check_bundle()
                     self.assertEqual(errors if shallow else len(errors), expected)
+                    if shallow:
+                        self.assertIn("skipped: tag grafana-setup-content-v1 not found locally and this clone is shallow", out.getvalue())
+                    else:
+                        self.assertEqual(out.getvalue(), "")
         finally:
             check.git_tag_exists, check.git_is_shallow = saved
+
+    def test_repository_tag_is_checked_not_skipped(self):
+        """With the tag present locally (any clone depth), the bundle is checked, silently."""
+        if not check.git_tag_exists(check.render.load_versions(ROOT / "tools" / "versions.env")["GRAFANA_SETUP_TAG"]):
+            self.skipTest("the grafana-setup content tag is not fetched in this clone (git fetch --tags)")
+        saved = check.git_is_shallow
+        check.git_is_shallow = lambda: True
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(check.check_bundle(), [])
+        finally:
+            check.git_is_shallow = saved
+        self.assertEqual(out.getvalue(), "")
 
 
 class StripHazardTest(unittest.TestCase):

@@ -8,6 +8,7 @@ and alerting. Tokens are never written to the output.
 """
 
 import hashlib
+import http.client
 import importlib
 import json
 import os
@@ -38,12 +39,19 @@ CONTENT_DIR = "config/grafana-setup"
 CONTENT_RE = re.compile(r"^(?:dashboards/)?[a-z0-9_-]+\.(?:py|json)$")
 CONTENT_MODULES = ("alerting.py", "dashboards.py")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+# Same rule as config-guard (guard.sh) for GRAFANA_URL and the *_INTERNAL_URL variables.
+HTTP_URL_RE = re.compile(r"^https?://\S+$")
+URL_VARIABLES = ("GRAFANA_URL", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
 SCHEMES = ("https://", "http://", "file:")
 MAX_CONTENT_BYTES = 2 * 1024 * 1024
 
 
 class SetupError(Exception):
     """A clean, explained stop (exit code 1)."""
+
+
+class InvalidRequest(SetupError):
+    """A request urllib refuses to send (malformed URL): retrying cannot help."""
 
 
 class Grafana:
@@ -67,7 +75,11 @@ class Grafana:
                 return resp.status, parse_json(resp.read())
         except urllib.error.HTTPError as exc:
             return exc.code, parse_json(exc.read())
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        except (ValueError, http.client.InvalidURL) as exc:
+            # A malformed URL: urllib raises ValueError (unknown url type), http.client raises
+            # InvalidURL (an HTTPException, hence this clause first). Retrying cannot help.
+            raise InvalidRequest(f"{method} {path}: invalid request to {self.url} ({exc})") from None
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as exc:
             raise SetupError(f"{method} {path}: Grafana unreachable ({reason(exc)})") from None
 
     def expect(self, method, path, body=None, ok=(200,), headers=None):
@@ -108,6 +120,8 @@ def wait_healthy(api, timeout=120, interval=3):
             status, payload = api.request("GET", "/api/health")
             if status == 200 and isinstance(payload, dict):
                 return payload
+        except InvalidRequest:
+            raise
         except SetupError:
             if time.monotonic() >= deadline:
                 raise
@@ -252,6 +266,13 @@ def required(env, name):
     return value
 
 
+def required_url(env, name):
+    value = required(env, name)
+    if not HTTP_URL_RE.match(value) or value.rstrip("/") in ("http:", "https:"):
+        raise SetupError(f"{name} must be an http:// or https:// URL, got {value[:80]!r}")
+    return value
+
+
 def parse_content(value):
     files = []
     for item in (value or "").split(";"):
@@ -325,12 +346,9 @@ def provision_content(api, env, projects, out, pause=2):
 
 
 def run(env, out=print, health_timeout=120):
-    api = Grafana(required(env, "GRAFANA_URL"), required(env, "GRAFANA_SA_TOKEN"))
-    desired = datasources(
-        required(env, "LOKI_INTERNAL_URL"),
-        required(env, "TEMPO_INTERNAL_URL"),
-        required(env, "PROMETHEUS_INTERNAL_URL"),
-    )
+    grafana_url, loki_url, tempo_url, prometheus_url = (required_url(env, name) for name in URL_VARIABLES)
+    api = Grafana(grafana_url, required(env, "GRAFANA_SA_TOKEN"))
+    desired = datasources(loki_url, tempo_url, prometheus_url)
     projects = parse_projects(env.get("PROJECTS", ""))
     version = check_version(wait_healthy(api, timeout=health_timeout))
     out(f"grafana-setup: Grafana {version}")

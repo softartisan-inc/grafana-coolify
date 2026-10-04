@@ -1,11 +1,15 @@
 import ast
+import contextlib
 import copy
+import http.client
+import io
 import json
 import os
 import sys
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 from support import ROOT, require_harness, run
 
@@ -289,6 +293,31 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("TEMPO_INTERNAL_URL is required", result.stdout)
 
+    def test_grafana_url_must_be_http(self):
+        """Coolify turned `${GRAFANA_URL:?GRAFANA_URL is required}` into the value of the variable."""
+        for value in ("GRAFANA_URL is required", "grafana:3000", "ftp://grafana:3000", "http://", "http://a b"):
+            with self.subTest(value=value):
+                result = self.setup_run(GRAFANA_URL=value)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("GRAFANA_URL must be an http:// or https:// URL", result.stdout)
+                self.assertNotIn("Traceback", result.stdout)
+        self.assertEqual(self.state["requests"], [])
+
+    def test_internal_urls_must_be_http(self):
+        for name in ("LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL"):
+            with self.subTest(name=name):
+                result = self.setup_run(**{name: f"{name} is required"})
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(f"{name} must be an http:// or https:// URL", result.stdout)
+                self.assertNotIn("Traceback", result.stdout)
+
+    def test_invalid_url_stops_cleanly_without_retrying(self):
+        """http.client raises InvalidURL on a malformed port: a clean stop, at once."""
+        result = self.setup_run(GRAFANA_URL="http://127.0.0.1:notaport")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("grafana-setup: ERROR: GET /api/health: invalid request", result.stdout)
+        self.assertNotIn("Traceback", result.stdout)
+
     def test_parse_projects(self):
         self.assertEqual(setup.parse_projects(" a, b ,a,,"), ["a", "b"])
         self.assertEqual(setup.parse_projects(""), [])
@@ -423,6 +452,56 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         self.assertEqual(links["Vue projet"], "/d/gc-project?var-project=in-immo")
         self.assertEqual(links["Hôte"], "/d/gc-host")
         self.assertEqual(len(links), 6)
+
+
+class GrafanaRequestErrorTest(unittest.TestCase):
+    """Grafana.request turns every transport failure into a SetupError: no raw traceback."""
+
+    def request_raising(self, exc):
+        def urlopen(*_args, **_kwargs):
+            raise exc
+
+        saved = setup.urllib.request.urlopen
+        setup.urllib.request.urlopen = urlopen
+        try:
+            return setup.Grafana("http://grafana:3000", TOKEN).request("GET", "/api/health")
+        finally:
+            setup.urllib.request.urlopen = saved
+
+    def test_value_error_is_a_non_retryable_setup_error(self):
+        with self.assertRaises(setup.InvalidRequest) as caught:
+            self.request_raising(ValueError(f"unknown url type: {TOKEN}"))
+        self.assertIsInstance(caught.exception, setup.SetupError)
+        self.assertIn("GET /api/health: invalid request", str(caught.exception))
+
+    def test_http_exception_is_a_setup_error(self):
+        for exc in (http.client.BadStatusLine("garbage"), http.client.IncompleteRead(b"x"), http.client.RemoteDisconnected("closed")):
+            with self.subTest(exc=type(exc).__name__):
+                with self.assertRaises(setup.SetupError) as caught:
+                    self.request_raising(exc)
+                self.assertNotIsInstance(caught.exception, setup.InvalidRequest)
+                self.assertIn("Grafana unreachable", str(caught.exception))
+        with self.assertRaises(setup.InvalidRequest):
+            self.request_raising(http.client.InvalidURL("nonnumeric port: 'x'"))
+
+    def test_token_redacted_from_an_invalid_request(self):
+        def urlopen(*_args, **_kwargs):
+            raise ValueError(f"unknown url type: {TOKEN}")
+
+        env = {"GRAFANA_URL": "http://grafana:3000", "GRAFANA_SA_TOKEN": TOKEN, "LOKI_INTERNAL_URL": "http://loki:3100",
+               "TEMPO_INTERNAL_URL": "http://tempo:3200", "PROMETHEUS_INTERNAL_URL": "http://prometheus:9090"}
+        saved = setup.urllib.request.urlopen
+        setup.urllib.request.urlopen = urlopen
+        stderr = io.StringIO()
+        try:
+            with mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(stderr):
+                code = setup.main()
+        finally:
+            setup.urllib.request.urlopen = saved
+        self.assertEqual(code, 1)
+        self.assertIn("invalid request", stderr.getvalue())
+        self.assertNotIn(TOKEN, stderr.getvalue())
+        self.assertIn("***", stderr.getvalue())
 
 
 class PythonTargetTest(unittest.TestCase):
