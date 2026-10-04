@@ -54,14 +54,25 @@ Se débannir : attendre une heure, ou depuis la console de l'hébergeur (ou une 
 ## B. Limites de sshd
 
 ```bash
-printf '%s\n' 'MaxStartups 100:30:300' 'MaxSessions 50' > /etc/ssh/sshd_config.d/99-coolify-limits.conf
-sshd -t && systemctl reload ssh
+printf '%s\n' 'MaxStartups 100:30:300' 'MaxSessions 50' > /etc/ssh/sshd_config.d/00-coolify-limits.conf
+sshd -t && { systemctl reload ssh 2>/dev/null || systemctl reload sshd; }
 sshd -T | grep -Ei 'maxstartups|maxsessions'
 ```
 
 `sshd -t` valide la configuration **avant** le rechargement : en cas d'erreur, sshd n'est pas
-rechargé. Attendu : `maxsessions 50` et `maxstartups 100:30:300`. Puis ouvrir une deuxième
-session SSH pour vérifier l'accès avant de fermer la première.
+rechargé. `reload ssh` sert sous Debian/Ubuntu, `reload sshd` sur les autres distributions.
+Attendu : `maxsessions 50` et `maxstartups 100:30:300`. Puis ouvrir une deuxième session SSH pour
+vérifier l'accès avant de fermer la première.
+
+Pourquoi `00-` : pour chaque option, sshd garde la **première** valeur lue, et les fichiers de
+`/etc/ssh/sshd_config.d/` sont lus par ordre alphabétique, avant la suite de `sshd_config`. Le
+préfixe `00-` fait passer ces valeurs avant celles d'un autre fichier du dossier.
+
+> **Serveur déjà réglé avec `99-coolify-limits.conf`** (ancienne version de cette page) : il
+> fonctionne encore tant qu'aucun fichier lu avant lui ne fixe `MaxStartups` ou `MaxSessions`,
+> ce que confirme l'attendu de `sshd -T` ci-dessus. Pour l'aligner sans fenêtre sans réglage :
+> `mv /etc/ssh/sshd_config.d/99-coolify-limits.conf /etc/ssh/sshd_config.d/00-coolify-limits.conf`,
+> puis la ligne `sshd -t && …` et la vérification `sshd -T` ci-dessus.
 
 ## C. Revalider Coolify
 
@@ -77,9 +88,22 @@ en place) : à faire à tête reposée.
 
 1. Depuis votre poste : `ssh-keygen -t ed25519`, puis `ssh-copy-id root@<IP_PUBLIQUE>`.
 2. Vérifier dans une **nouvelle** session que la connexion par clé passe sans mot de passe.
-3. `printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' > /etc/ssh/sshd_config.d/98-keys-only.conf`
-4. `sshd -t && systemctl reload ssh`, puis nouvelle session de test **avant** de fermer
-   l'ancienne.
+3. `printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' > /etc/ssh/sshd_config.d/00-keys-only.conf`
+4. `sshd -t && { systemctl reload ssh 2>/dev/null || systemctl reload sshd; }`
+5. Vérifier les valeurs **effectives**, en gardant la session actuelle **ouverte** :
+
+   ```bash
+   sshd -T | grep -Ei 'passwordauthentication|kbdinteractiveauthentication|permitrootlogin'
+   ```
+
+   Attendu : `passwordauthentication no`, `kbdinteractiveauthentication no`,
+   `permitrootlogin prohibit-password` (ou `without-password`, ancien nom de la même valeur).
+   Si `passwordauthentication yes` s'affiche, un fichier lu **avant** `00-keys-only.conf` fixe
+   déjà la valeur (sshd garde la première) : `grep -ri passwordauthentication /etc/ssh/sshd_config.d/`.
+   Les images cloud d'Ubuntu livrent `50-cloud-init.conf` avec `PasswordAuthentication yes` :
+   c'est pourquoi le fichier commence par `00-` (avec un préfixe `98-` ou `99-`,
+   `PasswordAuthentication no` serait ignoré).
+6. Nouvelle session de test **avant** de fermer l'ancienne.
 
 Vérifier que la clé de Coolify (**Keys & Tokens** → **Private Keys**) est bien celle qu'il utilise
 pour ce serveur : elle est déjà une clé, elle n'est pas touchée par ce réglage.
