@@ -25,6 +25,8 @@ DOC_ONLY_VARS = {"ALLOY_INTERNAL_URL"}
 # check.py size warns when the compose gets this close to its base64 budget.
 SIZE_WARN_MARGIN = 4096
 VAR_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:?+-][^}]*)?\}")
+# ${VAR:?message} / ${VAR?message}: Coolify does not refuse to deploy, it sets VAR=message.
+REQUIRED_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?\?")
 # `SERVICE_FQDN_ALLOY_12347:` with no value: Coolify magic variable declared in `environment:`.
 NULL_ENV_KEY_RE = re.compile(r"^\s+([A-Z][A-Z0-9_]*):\s*$")
 # Spec 12.1.6: token|password|secret|salt|key. "key" alone is a common data field name
@@ -66,6 +68,8 @@ def env_var_mismatches(template_text, env_example_text, doc_only=frozenset(DOC_O
     errors = [f"{name}: used in compose.template.yaml but missing from .env.example" for name in sorted(used - documented)]
     errors += [f"{name}: in .env.example but unused by compose.template.yaml" for name in sorted(documented - used - set(doc_only))]
     errors += [f"{name}: declared documentary but used by the template" for name in sorted(set(doc_only) & used)]
+    required = sorted({name for line in template_text.splitlines() if not line.lstrip().startswith("#") for name in REQUIRED_REF_RE.findall(line)})
+    errors += [f"{name}: ${{{name}:?...}} becomes the value of {name} under Coolify: use ${{{name}:-}} and check it in guard.sh" for name in required]
     return errors
 
 

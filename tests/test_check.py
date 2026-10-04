@@ -55,7 +55,7 @@ services:
     environment:
       SERVICE_FQDN_A_80:
       X: ${X:-1}
-      Y: ${Y:?required}
+      Y: ${Y:-}
     command: ["--flag=${Z}"]
 """
 
@@ -68,6 +68,18 @@ services:
         self.assertIn("SERVICE_FQDN_A_80: used in compose.template.yaml but missing from .env.example", errors)
         self.assertIn("EXTRA: in .env.example but unused by compose.template.yaml", errors)
         self.assertFalse(any("IGNORED" in e for e in errors))
+
+    def test_required_syntax_is_refused(self):
+        """Coolify turns ${Y:?message} into Y=message instead of refusing to deploy."""
+        env = "SERVICE_FQDN_A_80=\nX=1\nY=\nZ=\n"
+        for reference in ("${Y:?required}", "${Y?required}", "${Y:?}"):
+            with self.subTest(reference=reference):
+                template = self.TEMPLATE.replace("${Y:-}", reference)
+                errors = check.env_var_mismatches(template, env)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("Y: ${Y:?...} becomes the value of Y under Coolify", errors[0])
+        commented = self.TEMPLATE.replace("# comment with ${IGNORED}", "# never ${IGNORED:?x}")
+        self.assertEqual(check.env_var_mismatches(commented, env), [])
 
     def test_comments_in_env_example_are_ignored(self):
         env = "# X=commented\nSERVICE_FQDN_A_80=\nX=1\nY=\nZ=\n"

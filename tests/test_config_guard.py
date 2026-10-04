@@ -15,7 +15,13 @@ VALID_ENV = {
     "TENANT_HOST_REGEX": r"^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me|app)$",
     "PROJECTS": "demo,other-project",
     "FARO_SERVICES": "web-app,desktop-app",
+    "GRAFANA_URL": "https://grafana.example.me",
+    "GRAFANA_SA_TOKEN": "glsa_harnessNotASecret_0000",
+    "LOKI_INTERNAL_URL": "http://loki:3100",
+    "TEMPO_INTERNAL_URL": "http://tempo:3200",
+    "PROMETHEUS_INTERNAL_URL": "http://prometheus:9090",
 }
+URL_VARIABLES = ("GRAFANA_URL", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
 
 
 class GuardCases:
@@ -94,6 +100,27 @@ class GuardCases:
         for key in ["", "short-key-01234", "with space 0123456789", 'with"quote0123456789', "valid-faro-key-0123456789\nx"]:
             with self.subTest(key=key):
                 self.assert_fails(self.guard(FARO_API_KEY=key), "FARO_API_KEY")
+
+    def test_url_rules(self):
+        """Coolify turns `${X:?message}` into X=message: the guard is the required check (spec 4.4)."""
+        for name in URL_VARIABLES:
+            for value in ("http://a", "https://grafana.example.me/sub/", "http://10.0.0.5:3000"):
+                with self.subTest(name=name, value=value):
+                    self.assertEqual(self.guard(**{name: value}).returncode, 0)
+            for value in ("", f"{name} is required", "grafana:3000", "ftp://a", "http://", "http://a b", "http://a\nhttp://b"):
+                with self.subTest(name=name, value=value):
+                    self.assert_fails(self.guard(**{name: value}), f"{name} must be an http:// or https:// URL")
+
+    def test_url_unset_fails(self):
+        prefix, path = self.shell()
+        env = {"PATH": path, **{k: v for k, v in VALID_ENV.items() if k != "GRAFANA_URL"}}
+        env["CONFIG_GUARD_EXPECTED"] = f"{self.file}={self.sha}"
+        self.assert_fails(run([*prefix, GUARD], env=env), "GRAFANA_URL must be an http:// or https:// URL")
+
+    def test_grafana_sa_token_required(self):
+        for value in ("", "   "):
+            with self.subTest(value=value):
+                self.assert_fails(self.guard(GRAFANA_SA_TOKEN=value), "GRAFANA_SA_TOKEN is required")
 
     def test_projects_rules(self):
         self.assertEqual(self.guard(PROJECTS="").returncode, 0)

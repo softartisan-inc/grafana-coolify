@@ -17,14 +17,20 @@ services:
       - "echo '@@GUARD_SHA256@@  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "@@CONFIG_GUARD_EXPECTED@@"
-      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
-      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh.
+      IP_HASH_SALT: ${IP_HASH_SALT:-}
+      FARO_API_KEY: ${FARO_API_KEY:-}
       PROJECTS: ${PROJECTS:-}
       FARO_SERVICES: ${FARO_SERVICES:-}
       HOST_MAP: ${HOST_MAP:-}
       RESERVED_SUBDOMAINS: ${RESERVED_SUBDOMAINS:-}
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
       HOST_ENV: ${HOST_ENV:-prod}
+      GRAFANA_URL: ${GRAFANA_URL:-}
+      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
+      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
+      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
+      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh
@@ -162,8 +168,8 @@ services:
       SERVICE_FQDN_ALLOY_12347:
       BIND_ADDR: 0.0.0.0
       ALLOY_QUEUE_DIR: /var/lib/alloy/queue
-      IP_HASH_SALT: ${IP_HASH_SALT:?IP_HASH_SALT is required}
-      FARO_API_KEY: ${FARO_API_KEY:?FARO_API_KEY is required}
+      IP_HASH_SALT: ${IP_HASH_SALT:-}
+      FARO_API_KEY: ${FARO_API_KEY:-}
       PROJECTS: ${PROJECTS:-}
       FARO_SERVICES: ${FARO_SERVICES:-}
       FARO_RATE: ${FARO_RATE:-100}
@@ -237,11 +243,11 @@ services:
       - python3
       - /opt/grafana-setup/setup.py
     environment:
-      GRAFANA_URL: ${GRAFANA_URL:?GRAFANA_URL is required}
-      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}
-      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:?LOKI_INTERNAL_URL is required}
-      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:?TEMPO_INTERNAL_URL is required}
-      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:?PROMETHEUS_INTERNAL_URL is required}
+      GRAFANA_URL: ${GRAFANA_URL:-}
+      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
+      LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
+      TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
+      PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
       PROJECTS: ${PROJECTS:-}
       # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
       GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/@@GRAFANA_SETUP_TAG@@"
