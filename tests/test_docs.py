@@ -1,4 +1,7 @@
+import re
+import tempfile
 import unittest
+from pathlib import Path
 
 from support import ROOT
 
@@ -149,6 +152,56 @@ class ReadmeTest(unittest.TestCase):
         for name in ("IP_HASH_SALT", "FARO_API_KEY", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL", "GRAFANA_URL", "GRAFANA_SA_TOKEN"):
             with self.subTest(name=name):
                 self.assertIn(f"`{name}`", README)
+
+
+def heading_anchors(path):
+    """GitHub anchors of a Markdown file: lower case, punctuation dropped, spaces as hyphens."""
+    anchors, seen, fence = set(), {}, False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("```"):
+            fence = not fence
+            continue
+        match = None if fence else re.match(r"#{1,6} (.+)", line)
+        if match:
+            slug = re.sub(r"[^\w\- ]", "", match.group(1).strip().lower()).replace(" ", "-")
+            count = seen.get(slug, 0)
+            seen[slug] = count + 1
+            anchors.add(slug if count == 0 else f"{slug}-{count}")
+    return anchors
+
+
+def broken_links(markdown):
+    """Relative links of a Markdown file whose target file or heading anchor does not exist."""
+    text = re.sub(r"```.*?```", "", markdown.read_text(encoding="utf-8"), flags=re.S)
+    text = re.sub(r"`[^`\n]*`", "", text)
+    broken = []
+    for target in re.findall(r"\]\(([^)\s]+)\)", text):
+        if re.match(r"[a-z][a-z0-9+.-]*:", target):
+            continue
+        path, _, anchor = target.partition("#")
+        destination = (markdown.parent / path) if path else markdown
+        if not destination.exists():
+            broken.append(f"{target} (missing file)")
+        elif anchor and destination.suffix == ".md" and anchor not in heading_anchors(destination):
+            broken.append(f"{target} (missing anchor)")
+    return broken
+
+
+class DocsLinksTest(unittest.TestCase):
+    """Every relative link of docs/ points to an existing file and, if any, an existing heading."""
+
+    def test_relative_links_and_anchors_resolve(self):
+        pages = sorted((ROOT / "docs").glob("**/*.md"))
+        self.assertGreater(len(pages), 10)
+        for page in pages:
+            with self.subTest(page=str(page.relative_to(ROOT))):
+                self.assertEqual(broken_links(page), [])
+
+    def test_checker_reports_a_missing_file_and_a_missing_anchor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            page = Path(directory) / "page.md"
+            page.write_text("# Titre `code`\n\n[ok](#titre-code) [a](#absent) [f](absent.md) [w](https://x.test)\n", encoding="utf-8")
+            self.assertEqual(broken_links(page), ["#absent (missing anchor)", "absent.md (missing file)"])
 
 
 if __name__ == "__main__":
