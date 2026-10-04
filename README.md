@@ -147,10 +147,16 @@ ce nom change à chaque redéploiement, et `loki-<uuid>` ne résout **pas** sur 
 Le compose donne donc lui-même à `loki`, `tempo`, `prometheus` et `alloy` un **alias stable et
 unique** sur ce réseau : `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-alloy`.
 
+Le réseau externe s'appelle `coolify` : c'est le réseau de la destination par défaut de Coolify.
+Si la destination de la ressource porte un autre nom, adapter `networks.coolify.name` dans
+`compose.template.yaml`, puis régénérer `docker-compose.yaml` (`python3 scripts/render.py`).
+
 1. **Ce package** : laisser **Connect To Predefined Network** **désactivé** sur la ressource. Le
-   compose déclare le réseau externe `coolify` et y rattache les quatre services avec leur alias.
-   Option activée, Coolify remplace l'entrée `coolify` de chaque service par la sienne, sans
-   alias : les noms `gc-*` ne résolvent plus (voir `docs/spikes.md`, S1).
+   compose déclare le réseau externe `coolify` et y rattache les quatre services avec leur alias,
+   ainsi que `grafana-setup`, sans alias, pour joindre `GRAFANA_URL` ; option désactivée, Coolify
+   n'y met aucun autre service. Option activée, Coolify remplace l'entrée `coolify` de chaque
+   service par la sienne, sans alias : les noms `gc-*` ne résolvent plus (voir `docs/spikes.md`,
+   S1).
 2. **Le service Coolify « Grafana »** : il n'est que sur son propre réseau. Dans son onglet,
    activer **Connect To Predefined Network**, puis le redémarrer : sans cela, il ne joint ni Loki,
    ni Tempo, ni Prometheus.
@@ -179,14 +185,49 @@ unique** sur ce réseau : `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-alloy`.
 > **Repli : noms nus.** Les noms de service nus (`http://loki:3100`, `http://tempo:3200`,
 > `http://prometheus:9090`, `http://alloy:4318`) résolvent aussi sur le réseau `coolify`, mais
 > toute autre ressource du serveur qui a un service du même nom (un autre `loki`, un autre
-> `prometheus`…) entre en collision : le nom désigne alors plusieurs conteneurs, et Docker répond par l'un ou
-> l'autre. Ne s'en
-> servir qu'en dépannage.
+> `prometheus`…) entre en collision : le nom désigne alors plusieurs conteneurs, et Docker répond
+> par l'un ou l'autre. Ne s'en servir qu'en dépannage. Les alias `gc-*` n'évitent pas la collision
+> entre **deux déploiements de ce package** sur le même serveur : ils partageraient aussi
+> `gc-loki`.
 
-**Migration d'un déploiement existant** (valeurs `loki-<uuid>` ou noms nus) : après la mise à jour
-du dépôt, désactiver **Connect To Predefined Network** sur ce package, remplacer les trois
-variables `*_INTERNAL_URL` par les valeurs `gc-*` ci-dessus, puis **redéployer** ; mettre à jour
-`ALLOY_INTERNAL_URL` dans les applications qui envoient à Alloy.
+> **Alternative écartée : « Consistent Container Names ».** Cette option de Coolify donne aux
+> conteneurs un nom stable, `loki-<uuid>`. Les alias lui sont préférés : courts, indépendants de
+> l'UUID de la ressource, ils restent identiques d'un serveur à l'autre et après une recréation de
+> la ressource, sans modifier les variables.
+
+**Migration d'un déploiement existant** (option activée sur le package, noms nus ou
+`loki-<uuid>`) :
+
+1. Noter les valeurs actuelles de `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`,
+   `PROMETHEUS_INTERNAL_URL` et `GRAFANA_URL` : ce sont les valeurs de retour arrière.
+2. Vérifier que le service Coolify « Grafana » est sur le réseau `coolify` :
+
+   ```bash
+   GRAFANA=$(docker ps --format '{{.Names}}' | grep -i grafana | head -n1)
+   docker inspect "$GRAFANA" --format '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'
+   ```
+
+3. Mettre à jour le dépôt, puis **désactiver** **Connect To Predefined Network** sur ce package,
+   sans toucher aux variables.
+4. Redéployer, puis vérifier que les alias de `loki` contiennent `gc-loki` et `loki`, et que les
+   deux noms répondent depuis Grafana :
+
+   ```bash
+   docker inspect "$(docker ps --format '{{.Names}}' | grep -E '^loki-')" \
+     --format '{{json .NetworkSettings.Networks.coolify.Aliases}}'
+   docker exec "$GRAFANA" wget -qO- http://gc-loki:3100/ready
+   docker exec "$GRAFANA" wget -qO- http://loki:3100/ready
+   ```
+
+5. Passer les trois `*_INTERNAL_URL` aux valeurs `gc-*` ci-dessus (et `GRAFANA_URL` à l'adresse
+   interne), redéployer, puis tester les sources de données dans Grafana (**Connections** →
+   **Data sources** → **Save & test**).
+6. Passer `ALLOY_INTERNAL_URL` des applications à `http://gc-alloy:4318`, une application à la
+   fois, en vérifiant l'arrivée de ses données avant de passer à la suivante.
+
+Retour arrière : remettre les valeurs notées à l'étape 1 et redéployer. Les noms nus résolvent
+dans les deux états de l'option, car Compose ajoute toujours le nom du service aux alias du
+conteneur.
 
 **Hypothèse de sécurité** : tout conteneur du réseau `coolify` est de confiance (Loki, Tempo,
 Prometheus et les ports internes d'Alloy n'ont pas d'authentification). Aucun service interne ne
@@ -443,6 +484,9 @@ package et redéployer.
 ```bash
 GRAFANA_URL=https://grafana.example.com GRAFANA_SA_TOKEN=glsa_... python3 scripts/notify_test.py
 ```
+
+Depuis un poste, `GRAFANA_URL` est l'URL **publique** de Grafana (dans le package, c'est
+l'adresse interne : étape 4).
 
 Le script demande à Grafana d'envoyer une notification de test par `gc-telegram` et par
 `gc-email`, avec les réglages enregistrés (le token du bot ne quitte pas Grafana). Attendu :

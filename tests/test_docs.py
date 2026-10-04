@@ -119,11 +119,17 @@ class ReadmeTest(unittest.TestCase):
             "docker ps --format '{{.Names}}' | grep -i grafana",
             "Grafana not healthy after 120s",
             "Repli : noms nus",
+            "Consistent Container Names",
+            "networks.coolify.name",
+            "wget -qO- http://gc-loki:3100/ready",
+            "wget -qO- http://loki:3100/ready",
+            "Retour arrière",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, README)
         self.assertNotIn("http://loki-<uuid>:3100", README)
-        for text in ("loki-<uuid>-<horodatage>", "applicationParser", "gc-loki"):
+        for text in ("loki-<uuid>-<horodatage>", "applicationParser", "gc-loki", "l. 1590-1603",
+                     "Consistent Container Names"):
             with self.subTest(text=text):
                 self.assertIn(text, spikes)
         self.assertIn("http://gc-loki:3100", env_example)
