@@ -30,10 +30,11 @@ PROMETHEUS_INTERNAL_URL=http://gc-prometheus:9090
 ```
 
 Repli de dépannage : les noms nus `http://loki:3100`, `http://tempo:3200`,
-`http://prometheus:9090`. Ils résolvent que l'option **Connect To Predefined Network** du
-package soit activée ou non, car Compose ajoute toujours le nom du service aux alias du
-conteneur ; ils restent la seule option avec un compose antérieur à la PR #6 (sans alias
-`gc-*`). Risque : la [collision](#la-source-répond-mais-interroge-la-mauvaise-stack-collision)
+`http://prometheus:9090`. Avec le compose de la PR #6, ils résolvent que l'option
+**Connect To Predefined Network** du package soit activée ou non (Compose ajoute le nom du
+service aux alias sur chaque réseau déclaré). Avec un compose antérieur à la PR #6 (sans alias
+`gc-*`), ils sont la seule option, et seulement option activée : désactivée, aucun service n'est
+sur `coolify`. Risque : la [collision](#la-source-répond-mais-interroge-la-mauvaise-stack-collision)
 plus bas.
 
 **Vérification** : **Save & test** vert sur `gc-loki`, `gc-tempo`, `gc-prometheus`. Sur l'hôte,
@@ -47,13 +48,14 @@ for s in loki tempo prometheus alloy; do c=$(docker ps --format '{{.Names}}' | g
 
 **Symptôme** : le déploiement réussit, `config-guard` passe, mais **Save & test** échoue avec
 `lookup gc-prometheus on 127.0.0.11:53: no such host` (idem `gc-loki`, `gc-tempo`) ; la boucle
-ci-dessus montre des alias sans `gc-*` (seulement le nom du conteneur et le nom nu).
+ci-dessus montre des alias sans `gc-*` (seulement le nom nu et l'identifiant court du conteneur).
 
 **Cause** : **Connect To Predefined Network** est **activé** sur la ressource `grafana-coolify`.
-Pour une ressource Application, Coolify rattache **dans les deux cas** chaque service du package
-au réseau `coolify` ; seuls les alias diffèrent. Option activée, il écrit son entrée **après**
-les réseaux du compose et remplace `coolify: {aliases: [gc-loki]}` par `coolify: null` : les
-alias `gc-*` disparaissent sans aucun message, les noms nus (`loki`…) résolvent toujours.
+Pour une ressource Application, option désactivée, Coolify garde telles quelles les entrées
+`networks` du compose (seul le réseau `<uuid>` est ajouté à tous les services). Option activée,
+il écrit son entrée **après** les réseaux du compose et remplace
+`coolify: {aliases: [gc-loki]}` par `coolify: null` : les alias `gc-*` disparaissent sans aucun
+message, les noms nus (`loki`…) résolvent toujours.
 Détail du code de Coolify en cause : spike S1 de [`docs/spikes.md`](../spikes.md).
 
 **Correctif** : ressource `grafana-coolify` → **désactiver** Connect To Predefined Network →
@@ -92,3 +94,5 @@ même cause que [`Grafana not healthy after 120s`](grafana-setup.md#grafana-setu
 **Cause** : `ALLOY_INTERNAL_URL` pointe sur un nom de conteneur suffixé, ou l'application n'est
 pas sur le réseau `coolify`. **Correctif** : `http://gc-alloy:4318` (OTLP/HTTP) ou
 `gc-alloy:4317` (gRPC), et **Connect To Predefined Network** sur la ressource de l'application.
+Cette option ne concerne que les applications au build pack **Docker Compose** : une application
+Nixpacks ou Dockerfile est déjà rattachée au réseau `coolify`.
