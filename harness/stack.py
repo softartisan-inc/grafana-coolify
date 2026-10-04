@@ -6,6 +6,8 @@ command arguments and environment as in the compose, on its own loopback IP. Vol
 mapped to local paths (.harness/data/<volume>, .harness/tmpfs/<service>, and .harness/coolify/
 for ./config), and "0.0.0.0" is replaced by the service IP. /etc/hosts maps the service names to
 those IPs (sudo), so the configs keep their in-stack names (loki:3100, tempo:4317...).
+The network aliases of the compose (gc-loki... on the `coolify` network) go on the same line
+as their service, so harness.env uses the names an operator sets on the server.
 
 .harness/coolify/ plays the directory where Coolify writes the content: files. Each one is copied
 from ./config (or --config-dir) to its content-addressed name (config/loki/loki.<sha8>.yaml), the
@@ -256,9 +258,22 @@ def build(name, service, env_values, config_dir):
     return {"args": args, "env": env, "ip": ip}
 
 
+def network_aliases(services):
+    """{service: [alias, ...]} of the `aliases:` of every network of every service (long syntax)."""
+    result = {}
+    for name, service in services.items():
+        networks = service.get("networks") or {}
+        if isinstance(networks, dict):
+            aliases = [alias for network in networks.values() for alias in ((network or {}).get("aliases") or [])]
+            if aliases:
+                result[name] = aliases
+    return result
+
+
 # ------------------------------------------------------------------ host plumbing
 def hosts_block():
-    lines = [HOSTS_BEGIN] + [f"{ip} {name}" for name, ip in SERVICE_IPS.items()] + [HOSTS_END]
+    aliases = network_aliases(load_compose()["services"])
+    lines = [HOSTS_BEGIN] + [" ".join([ip, name, *aliases.get(name, [])]) for name, ip in SERVICE_IPS.items()] + [HOSTS_END]
     return "\n".join(lines) + "\n"
 
 

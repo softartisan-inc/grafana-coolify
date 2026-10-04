@@ -60,6 +60,23 @@ class RewriteTest(unittest.TestCase):
         self.assertIn("127.0.10.2 loki", with_block)
         self.assertEqual(stack.without_block(with_block), original)
 
+    def test_hosts_block_maps_the_network_aliases(self):
+        """The bench resolves the gc-* aliases of the `coolify` network like the services' names."""
+        block = stack.hosts_block()
+        for line in ("127.0.10.2 loki gc-loki", "127.0.10.3 tempo gc-tempo", "127.0.10.4 prometheus gc-prometheus", "127.0.10.5 alloy gc-alloy"):
+            with self.subTest(line=line):
+                self.assertIn(line + "\n", block)
+        self.assertIn("127.0.10.6 alloy-gateway\n", block)
+
+    def test_network_aliases_of_every_network(self):
+        services = {
+            "a": {"networks": {"default": {}, "coolify": {"aliases": ["gc-a"]}, "other": {"aliases": ["x-a"]}}},
+            "b": {"networks": ["default"]},
+            "c": {},
+            "d": {"networks": {"coolify": None}},
+        }
+        self.assertEqual(stack.network_aliases(services), {"a": ["gc-a", "x-a"]})
+
     def test_dangling_begin_is_stripped(self):
         """A write cut short leaves BEGIN without END: its partial lines go, other lines stay."""
         original = "127.0.0.1 localhost\n"

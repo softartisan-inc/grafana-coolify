@@ -19,6 +19,8 @@ Standard library only. Rules (spec 4.1-4.4):
   (strip_comments); hashes and content-addressed names are computed on the stripped text, which
   is what Coolify writes; config/ keeps the comments;
 - compose.dev.yaml mounts config/ directly: it keeps the repository names (no hash);
+- compose.dev.yaml creates its own `coolify` network (no Coolify on the bench) and puts its test
+  Grafana on it, so the gc-* aliases resolve there as on the server;
 - the output is deterministic.
 """
 
@@ -54,6 +56,9 @@ ITEM_KEY_RE = re.compile(r"^(?P<indent> *)(?:- )?(?P<key>source|target): (?P<val
 SERVICE_RE = re.compile(r"^  (?P<name>[a-z0-9][a-z0-9-]*):$")
 PLACEHOLDER_RE = re.compile(r"@@([A-Z0-9_]+)@@")
 TOP_SERVICES_RE = re.compile(r"^services:\n", re.MULTILINE)
+# The external network of the deployed compose, and what the dev bench declares instead.
+COOLIFY_NETWORK = "networks:\n  coolify:\n    name: coolify\n    external: true\n"
+DEV_COOLIFY_NETWORK = "networks:\n  coolify:\n    name: gc-dev-coolify\n"
 DEV_GRAFANA = """  grafana:
     image: grafana/grafana:@@GRAFANA_VERSION@@
     environment:
@@ -62,6 +67,9 @@ DEV_GRAFANA = """  grafana:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
     ports:
       - "127.0.0.1:3000:3000"
+    networks:
+      - default
+      - coolify
 """
 
 
@@ -282,8 +290,15 @@ def render_text(template_text, root, versions, strip_content=False, hashed=True)
     return "\n".join(out)
 
 
+def dev_networks(text):
+    """The rendered compose with the external `coolify` network replaced by a bench-local one."""
+    if text.count(COOLIFY_NETWORK) != 1:
+        raise RenderError("template must declare the external coolify network once, as:\n" + COOLIFY_NETWORK)
+    return text.replace(COOLIFY_NETWORK, DEV_COOLIFY_NETWORK)
+
+
 def render_dev(template_text, root, versions):
-    stub = render_text(template_text, root, versions, strip_content=True, hashed=False)
+    stub = dev_networks(render_text(template_text, root, versions, strip_content=True, hashed=False))
     grafana = substitute(DEV_GRAFANA, versions)
     rendered, count = TOP_SERVICES_RE.subn(lambda _m: "services:\n" + grafana, stub, count=1)
     if count != 1:

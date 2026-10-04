@@ -7,6 +7,11 @@
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
 # - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
+# - Network (spike S1): loki, tempo, prometheus and alloy join the external `coolify` network
+#   with a gc-* alias, the stable name Grafana and the applications use (Coolify suffixes the
+#   container names per deployment; the bare service names collide with other resources). The
+#   compose declares the network itself: keep "Connect To Predefined Network" OFF on this resource,
+#   since Coolify then replaces the `coolify` entry of every service and drops the aliases.
 services:
   config-guard:
     image: @@ALPINE_IMAGE@@
@@ -63,6 +68,11 @@ services:
       - loki-data:/loki
     expose:
       - "3100"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-loki
     mem_limit: 1536m
     cpus: 1.0
 
@@ -91,6 +101,11 @@ services:
     expose:
       - "3200"
       - "4317"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-tempo
     mem_limit: 1536m
     cpus: 1.0
 
@@ -118,6 +133,11 @@ services:
       - prometheus-data:/prometheus
     expose:
       - "9090"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-prometheus
     mem_limit: 1536m
     cpus: 1.0
 
@@ -189,6 +209,11 @@ services:
       - "4318"
       - "12345"
       - "12347"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-alloy
     mem_limit: 768m
     cpus: 1.0
 
@@ -272,3 +297,8 @@ volumes:
   tempo-data:
   prometheus-data:
   alloy-data:
+
+networks:
+  coolify:
+    name: coolify
+    external: true
