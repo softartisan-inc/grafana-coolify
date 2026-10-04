@@ -257,7 +257,8 @@ appliqué là où la valeur est lue, plus seulement dans le compose :
   les options de rétention et `--enable-feature` seulement si `PROM_ENABLE_FEATURES` est rempli ;
 - `config-guard` reçoit ces variables **sans** repli et refuse le déploiement si une valeur
   **renseignée** est mal formée ou nulle (`0`, `0h`, `0GB`… : rétention nulle ou
-  plafond illimité), `ENABLE_EXEMPLARS` autre que `true`/`false` compris ;
+  plafond illimité), `ENABLE_EXEMPLARS` autre que `true`/`false` compris, ainsi qu'une
+  rétention Loki de moins de `24h` (Loki la refuse au démarrage et redémarre en boucle) ;
 - `tests/test_empty_values.py` vérifie que chaque `${VAR:-défaut}` du compose a son défaut chez
   le consommateur, identique à `.env.example` ; `scripts/check.py` (`validators`) valide les
   configs Loki et Tempo une seconde fois avec toutes ces variables vides ; le banc natif
@@ -288,6 +289,37 @@ Vérification à rejouer après le déploiement du correctif :
    (`docker logs config-guard-<uuid>` : `TEMPO_MAX_ACTIVE_SERIES must be a positive integer`) et
    aucun service ne démarre.
 4. Remettre les valeurs de `.env.example` (ou laisser vide) et redéployer.
+
+### Résultat du déploiement réel (2026-10-04)
+
+**Partie A (montages et droits) : OK.**
+
+- `alloy` et `alloy-gateway` tournent en `473:473`, `ro=true`, `cap_drop: ALL`,
+  `no-new-privileges` ; `/var/lib/alloy/queue` (volume) et le tmpfs de 64 Mo de la passerelle
+  sont inscriptibles ; l'écriture dans le fichier de config est refusée ;
+- `node-exporter` : `/host/proc`, `/host/root` et `/host/sys` en `"RW":false` ;
+- `config-guard` : `/guard` en `"RW":false` ;
+- limites mémoire appliquées : `config-guard` 32m, `loki`, `tempo` et `prometheus` 1536m chacun,
+  `node-exporter` 64m, `alloy` 768m, `alloy-gateway` 256m.
+
+**Partie B (variables vidées), après la PR #8 : OK.** `TEMPO_MAX_ACTIVE_SERIES` vidée : Tempo
+reçoit la variable vide et sa configuration effective affiche `max_active_series: 100000`.
+`TEMPO_MAX_ACTIVE_SERIES=0` : `config-guard` échoue
+(`TEMPO_MAX_ACTIVE_SERIES must be a positive integer, 0 means no limit (empty: 100000)`) et aucun
+service ne démarre. Le log de déploiement de Coolify n'affiche que
+`service "config-guard" didn't complete successfully: exit 1` : la raison se lit avec
+`docker logs` ([dépannage](depannage/deploiement-coolify.md#service-config-guard-didnt-complete-successfully-exit-1)).
+
+**Lignes `block_retention: 336h0m0s` en plus dans `/status/config` de Tempo** : sans effet. Ce
+sont les défauts de modules qui ne tournent pas (`backend-worker`, `backend-scheduler`) ;
+`/status/config` affiche la configuration de tous les modules. `/status/services` liste
+`compactor` en `Running` et aucun de ces deux modules : la rétention effective des traces est
+celle du compacteur, `168h0m0s`. Pour le vérifier :
+
+```bash
+T=tempo-<uuid>
+docker run --rm --network container:"$T" alpine:3.22 wget -qO- http://localhost:3200/status/services
+```
 
 ## S6 — `grafana-setup` du plan B sur la recette (bloquant avant la production)
 
@@ -325,5 +357,5 @@ Attendu :
 | S2 | | | | |
 | S3 | | | | |
 | S4 | | | | |
-| S5 | | | KO puis corrigé | Variable vidée : Coolify transmet la valeur vide, le repli `:-` du compose ne s'applique pas (Tempo `Up` sans erreur). Défauts appliqués par Tempo, Loki, `start.sh` de Prometheus ; valeurs nulles refusées par `config-guard`. À rejouer après la fusion. |
+| S5 | 2026-10-04 | | KO puis corrigé, OK | Variable vidée : Coolify transmet la valeur vide, le repli `:-` du compose ne s'applique pas (Tempo `Up` sans erreur). Défauts appliqués par Tempo, Loki, `start.sh` de Prometheus ; valeurs nulles refusées par `config-guard`. Rejoué le 2026-10-04 après la PR #8 : montages, droits et limites OK ; vide → `100000`, `0` refusé. |
 | S6 | | | | |
