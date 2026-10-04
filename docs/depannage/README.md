@@ -18,7 +18,8 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | `/etc/fail2ban/jail.d/…: No such file or directory` | hôte | [fail2ban non installé](../serveur/durcissement.md#a-fail2ban) |
 | Domaines `alloy-<uuid>.<wildcard>` remplis sans demande | Coolify | [domaines générés](deploiement-coolify.md#faro-et-otlp-exposés-sans-domaine-demandé) |
 | Sentinel **Out of sync** | Coolify | [Sentinel](deploiement-coolify.md#sentinel-out-of-sync) |
-| `config-guard: FAILED - no service will start` (prévention) | logs `config-guard` | [config-guard](deploiement-coolify.md#config-guard-failed---no-service-will-start) |
+| `service "config-guard" didn't complete successfully: exit 1` | log de déploiement | [lire la raison](deploiement-coolify.md#service-config-guard-didnt-complete-successfully-exit-1) |
+| `config-guard: FAILED - no service will start` | logs `config-guard` | [config-guard](deploiement-coolify.md#config-guard-failed---no-service-will-start) |
 | `ENABLE_EXEMPLARS=` (vide) dans `docker inspect`, conteneur `Up` sans erreur | Coolify | [variable vide](deploiement-coolify.md#variable-vide-transmise-par-coolify-le-défaut-du-compose-est-ignoré) |
 
 ## `grafana-setup`
