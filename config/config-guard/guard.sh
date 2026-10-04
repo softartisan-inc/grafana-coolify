@@ -93,6 +93,24 @@ case ${HOST_ENV:-prod} in
   prod | preprod) ;;
   *) error "HOST_ENV must be prod or preprod" ;;
 esac
+# Retentions and limits: empty takes the default where the value is consumed (Coolify passes an
+# emptied variable as "", spike S5); a set value must be well formed and never 0, which Tempo
+# reads as "delete every block" (retention) or "no limit" (series).
+check_set() { # name value extended_regex message
+  if [ -n "$2" ] && { ! matches "$2" "$3" || matches "$2" '^(0+[a-zA-Z]*)+$'; }; then
+    error "$1 $4"
+  fi
+}
+check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
+check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
+check_set LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 720h (empty: 720h)"
+check_set LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 168h (empty: 168h)"
+check_set PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 90d (empty: 90d)"
+check_set PROM_RETENTION_SIZE "${PROM_RETENTION_SIZE:-}" '^[0-9]+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$' "must be a non-zero size such as 100GB (empty: 100GB)"
+case ${ENABLE_EXEMPLARS:-false} in
+  true | false) ;;
+  *) error "ENABLE_EXEMPLARS must be true or false (empty: false)" ;;
+esac
 tenant_regex=${TENANT_HOST_REGEX:-}
 if [ -n "$tenant_regex" ]; then
   case $tenant_regex in

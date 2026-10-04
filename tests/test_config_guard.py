@@ -145,6 +145,25 @@ class GuardCases:
             with self.subTest(value=value):
                 self.assert_fails(self.guard(RESERVED_SUBDOMAINS=value), "RESERVED_SUBDOMAINS")
 
+    def test_retention_and_limit_rules(self):
+        """Empty takes the default downstream (Coolify passes "", spike S5); a set value must be valid and non-zero."""
+        rules = {
+            "TEMPO_RETENTION": (["168h", "1h30m", "720h"], ["0", "0h", "0h0m", "7d", "168", "168 h", "-1h", "168h\nx"]),
+            "TEMPO_MAX_ACTIVE_SERIES": (["100000", "1"], ["0", "000", "-1", "1e5", "100 000", "unlimited", "10\nx"]),
+            "LOKI_RETENTION_PROD": (["720h", "30d", "4w"], ["0", "0d", "30", "30 d", "thirty"]),
+            "LOKI_RETENTION_DEFAULT": (["168h", "7d"], ["0s", "7", "7D"]),
+            "PROM_RETENTION_TIME": (["90d", "1y", "2w3d"], ["0", "0d", "90", "90 d", "-90d"]),
+            "PROM_RETENTION_SIZE": (["100GB", "512MiB"], ["0", "0GB", "100", "100 GB", "100gb", "-1GB"]),
+            "ENABLE_EXEMPLARS": (["true", "false"], ["yes", "1", "True", "on", "false\nx"]),
+        }
+        for name, (good, bad) in rules.items():
+            for value in ["", *good]:
+                with self.subTest(name=name, value=value):
+                    self.assertEqual(self.guard(**{name: value}).returncode, 0)
+            for value in bad:
+                with self.subTest(name=name, value=value):
+                    self.assert_fails(self.guard(**{name: value}), name)
+
     def test_tenant_regex_needs_sub_group(self):
         self.assertEqual(self.guard(TENANT_HOST_REGEX="").returncode, 0)
         self.assert_fails(self.guard(TENANT_HOST_REGEX=r"^([a-z]+)\.example\.me$"), "TENANT_HOST_REGEX")
@@ -172,6 +191,15 @@ class GuardEnvironmentTest(unittest.TestCase):
         environment = compose["services"]["config-guard"]["environment"]
         self.assertEqual(sorted(set(SETUP_ONLY_VARIABLES) & set(environment)), [])
         self.assertIn("FARO_API_KEY", environment)
+
+    def test_config_guard_receives_the_checked_retentions(self):
+        compose = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+        environment = compose["services"]["config-guard"]["environment"]
+        names = ("TEMPO_RETENTION", "TEMPO_MAX_ACTIVE_SERIES", "ENABLE_EXEMPLARS", "LOKI_RETENTION_PROD", "LOKI_RETENTION_DEFAULT")
+        for name in (*names, "PROM_RETENTION_TIME", "PROM_RETENTION_SIZE"):
+            with self.subTest(name=name):
+                # No default here: guard.sh must see an emptied variable as empty, as on Coolify.
+                self.assertEqual(environment.get(name), f"${{{name}:-}}")
 
 
 if __name__ == "__main__":

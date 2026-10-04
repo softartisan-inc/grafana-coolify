@@ -1,6 +1,9 @@
 # Loki single-binary configuration for grafana-coolify.
 # Environment variables are expanded by Loki itself (-config.expand-env=true); compose.template.yaml
 # sets every one of them (BIND_ADDR, LOKI_DATA_DIR, LOKI_RETENTION_*).
+# The retentions carry their default here too: Coolify passes a variable emptied in its UI as an
+# empty string and skips the compose `${VAR:-default}` (spike S5); Loki's expander
+# (drone/envsubst) applies `:-` to an empty value as to an unset one. Keep them equal to .env.example.
 auth_enabled: false
 
 server:
@@ -74,11 +77,11 @@ limits_config:
   per_stream_rate_limit: 8MB
   per_stream_rate_limit_burst: 24MB
   # Every env except prod falls back to the short default (spec 9.1).
-  retention_period: ${LOKI_RETENTION_DEFAULT}
+  retention_period: ${LOKI_RETENTION_DEFAULT:-168h}
   retention_stream:
     - selector: '{env="prod"}'
       priority: 1
-      period: ${LOKI_RETENTION_PROD}
+      period: ${LOKI_RETENTION_PROD:-720h}
   # Only project, env and service.name become index labels; ignore_defaults stops Loki from
   # indexing service.instance.id and friends. trace_id/span_id of OTLP log records are stored as
   # structured metadata by Loki itself (spec 6.2).

@@ -25,6 +25,8 @@ DOC_ONLY_VARS = {"ALLOY_INTERNAL_URL"}
 # check.py size warns when the compose gets this close to its base64 budget.
 SIZE_WARN_MARGIN = 4096
 VAR_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:?+-][^}]*)?\}")
+# ${VAR:-default} with a non-empty default: Coolify skips it for a variable emptied in its UI.
+FALLBACK_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?-([^}]+)\}")
 # ${VAR:?message} / ${VAR?message}: Coolify does not refuse to deploy, it sets VAR=message.
 REQUIRED_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?\?")
 # `SERVICE_FQDN_ALLOY_12347:` with no value: Coolify magic variable declared in `environment:`.
@@ -60,6 +62,15 @@ def template_variables(template_text):
         if match:
             names.add(match.group(1))
     return names
+
+
+def fallback_defaults(template_text):
+    """{VAR: default} of every `${VAR:-default}` / `${VAR-default}` with a non-empty default."""
+    defaults = {}
+    for line in template_text.splitlines():
+        if not line.lstrip().startswith("#"):
+            defaults.update(FALLBACK_RE.findall(line))
+    return defaults
 
 
 def env_var_mismatches(template_text, env_example_text, doc_only=frozenset(DOC_ONLY_VARS)):
@@ -319,10 +330,14 @@ def check_validators():
         env = dict(os.environ)
         env.update(load_env(ROOT / "harness" / "harness.env"))
         env.update({"BIND_ADDR": "127.0.0.1", "LOKI_DATA_DIR": f"{tmp}/loki", "TEMPO_DATA_DIR": f"{tmp}/tempo", "ALLOY_QUEUE_DIR": f"{tmp}/queue"})
-        for cmd in validator_commands(sources):
-            code, output = run(cmd, env=env)
-            if code != 0:
-                errors.append(f"{Path(cmd[0]).name} rejected {cmd[-1] if 'check' in cmd else cmd[1:]}:\n{output.strip()}")
+        # Second pass as Coolify runs it when the operator empties a variable (spike S5): the
+        # compose fallback is skipped, the config must still load with its own defaults.
+        emptied = {**env, **dict.fromkeys(fallback_defaults(template), "")}
+        for label, values in (("", env), (" with every fallback variable empty", emptied)):
+            for cmd in validator_commands(sources):
+                code, output = run(cmd, env=values)
+                if code != 0:
+                    errors.append(f"{Path(cmd[0]).name} rejected {cmd[-1] if 'check' in cmd else cmd[1:]}{label}:\n{output.strip()}")
     return errors
 
 
@@ -334,6 +349,7 @@ def check_lint():
     for cmd in (
         [tool("shellcheck"), "-x", "tools/fetch-binaries.sh"],
         [tool("shellcheck"), "-s", "sh", "config/config-guard/guard.sh"],
+        [tool("shellcheck"), "-s", "sh", "config/prometheus/start.sh"],
     ):
         code, output = run(cmd)
         if code != 0:
