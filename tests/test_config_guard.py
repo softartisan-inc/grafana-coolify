@@ -156,6 +156,12 @@ class GuardCases:
             "PROM_RETENTION_SIZE": (["100GB", "512MiB"], ["0", "0GB", "100", "100 GB", "100gb", "-1GB"]),
             "ENABLE_EXEMPLARS": (["true", "false"], ["yes", "1", "True", "on", "false\nx"]),
         }
+        # Loki refuses a retention below 24h at startup ("retention period must be >= 24h") and
+        # restarts in a loop: config-guard rejects it first.
+        for name in ("LOKI_RETENTION_PROD", "LOKI_RETENTION_DEFAULT"):
+            good, bad = rules[name]
+            good.extend(["24h", "1d", "1w", "2w3d", "1y", "86400s", "1440m", "23h60m", "023h1h", "99999999999s"])
+            bad.extend(["1h", "12h", "23h", "23h59m59s", "86399s", "1439m", "0d23h", "0y0w0d23h59m"])
         for name, (good, bad) in rules.items():
             for value in ["", *good]:
                 with self.subTest(name=name, value=value):

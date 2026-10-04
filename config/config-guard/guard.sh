@@ -103,8 +103,45 @@ check_set() { # name value extended_regex message
 }
 check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
 check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
-check_set LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 720h (empty: 720h)"
-check_set LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 168h (empty: 168h)"
+# Loki refuses a retention below 24h at startup ("retention period must be >= 24h") and restarts
+# in a loop: a well-formed Loki retention must also add up to at least one day.
+at_least_one_day() { # duration already matching ^([0-9]+(y|w|d|h|m|s))+$
+  rest=$1
+  total=0
+  while [ -n "$rest" ]; do
+    num=${rest%%[!0-9]*}
+    rest=${rest#"$num"}
+    unit=${rest%"${rest#?}"}
+    rest=${rest#?}
+    # Leading zeros would make $(( )) read the number as octal.
+    while :; do
+      case $num in
+        0?*) num=${num#0} ;;
+        *) break ;;
+      esac
+    done
+    # 10 digits or more is at least 1e9 seconds whatever the unit (and would overflow below).
+    [ "${#num}" -ge 10 ] && return 0
+    case $unit in
+      y) mult=31536000 ;;
+      w) mult=604800 ;;
+      d) mult=86400 ;;
+      h) mult=3600 ;;
+      m) mult=60 ;;
+      *) mult=1 ;;
+    esac
+    total=$((total + num * mult))
+    [ "$total" -ge 86400 ] && return 0
+  done
+  return 1
+}
+check_loki_retention() { # name value example
+  if [ -n "$2" ] && { ! matches "$2" '^([0-9]+(y|w|d|h|m|s))+$' || ! at_least_one_day "$2"; }; then
+    error "$1 must be a duration of at least 24h such as $3 (empty: $3)"
+  fi
+}
+check_loki_retention LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 720h
+check_loki_retention LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 168h
 check_set PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 90d (empty: 90d)"
 check_set PROM_RETENTION_SIZE "${PROM_RETENTION_SIZE:-}" '^[0-9]+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$' "must be a non-zero size such as 100GB (empty: 100GB)"
 case ${ENABLE_EXEMPLARS:-false} in

@@ -29,7 +29,7 @@ services:
     command:
       - sh
       - -c
-      - "echo '9fa15ea7fa542046d0021b0122e6bbf6ff3307a139006af45da3c8b63ff091e2  /opt/config-guard/guard.9fa15ea7.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.9fa15ea7.sh"
+      - "echo 'eb6b48d584014def577cb6574060be1fca8e4b167be89ab299e9675b87ac8966  /opt/config-guard/guard.eb6b48d5.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.eb6b48d5.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.4ebe90a7.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.be7203a4.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/tempo/tempo.d08f6ba0.yaml=d08f6ba01f1a2b4f6e33ff6e1748cdce0ac3582fa3ea23690eae6d25d2751d58"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
@@ -52,8 +52,8 @@ services:
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.9fa15ea7.sh
-        target: /opt/config-guard/guard.9fa15ea7.sh
+        source: ./config/config-guard/guard.eb6b48d5.sh
+        target: /opt/config-guard/guard.eb6b48d5.sh
         content: |2
           #!/bin/sh
           # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
@@ -160,8 +160,45 @@ services:
           }
           check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
           check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
-          check_set LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 720h (empty: 720h)"
-          check_set LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 168h (empty: 168h)"
+          # Loki refuses a retention below 24h at startup ("retention period must be >= 24h") and restarts
+          # in a loop: a well-formed Loki retention must also add up to at least one day.
+          at_least_one_day() { # duration already matching ^([0-9]+(y|w|d|h|m|s))+$
+            rest=$1
+            total=0
+            while [ -n "$rest" ]; do
+              num=${rest%%[!0-9]*}
+              rest=${rest#"$num"}
+              unit=${rest%"${rest#?}"}
+              rest=${rest#?}
+              # Leading zeros would make $(( )) read the number as octal.
+              while :; do
+                case $num in
+                  0?*) num=${num#0} ;;
+                  *) break ;;
+                esac
+              done
+              # 10 digits or more is at least 1e9 seconds whatever the unit (and would overflow below).
+              [ "${#num}" -ge 10 ] && return 0
+              case $unit in
+                y) mult=31536000 ;;
+                w) mult=604800 ;;
+                d) mult=86400 ;;
+                h) mult=3600 ;;
+                m) mult=60 ;;
+                *) mult=1 ;;
+              esac
+              total=$((total + num * mult))
+              [ "$total" -ge 86400 ] && return 0
+            done
+            return 1
+          }
+          check_loki_retention() { # name value example
+            if [ -n "$2" ] && { ! matches "$2" '^([0-9]+(y|w|d|h|m|s))+$' || ! at_least_one_day "$2"; }; then
+              error "$1 must be a duration of at least 24h such as $3 (empty: $3)"
+            fi
+          }
+          check_loki_retention LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 720h
+          check_loki_retention LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 168h
           check_set PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" '^([0-9]+(y|w|d|h|m|s))+$' "must be a non-zero duration such as 90d (empty: 90d)"
           check_set PROM_RETENTION_SIZE "${PROM_RETENTION_SIZE:-}" '^[0-9]+(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)$' "must be a non-zero size such as 100GB (empty: 100GB)"
           case ${ENABLE_EXEMPLARS:-false} in
