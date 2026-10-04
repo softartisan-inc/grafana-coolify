@@ -33,6 +33,8 @@ incidents rencontrés lors du premier déploiement réel**, avec leur correctif.
   ou après une fuite.
 - [Vérifications](exploitation/verifications.md) : `security.py`, `smoke.py`, `notify_test.py`,
   spikes, sonde externe.
+- [Sonde externe](exploitation/sonde-externe.md) : UptimeRobot (ou Uptime Kuma) sur
+  `/api/health` de Grafana, la seule alerte qui survit à une panne complète du serveur.
 
 ## Dépannage
 

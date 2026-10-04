@@ -61,3 +61,16 @@ Comportement voulu : Telegram ne reçoit que `critical` **et** `env=prod`. L'ale
 **Cause** : `GRAFANA_URL` interne (`http://grafana-<uuid>:3000`) utilisé depuis un poste hors du
 réseau `coolify`. **Correctif** : depuis votre poste, passer l'URL **publique** de Grafana au
 script ; ou utiliser les boutons **Test** des points de contact.
+
+## Faux `Down : 200 - OK, but keyword is not in…`
+
+**Symptôme** : le moniteur est `Down` avec le message `200 - OK, but keyword is not in…` alors
+que `curl -s https://<grafana>/api/health` affiche bien `"database": "ok"`.
+
+**Cause** : le mot-clé contient un espace (`"database": "ok"`) ou d'autres caractères en trop.
+UptimeRobot ne trouve que la forme sans espace.
+
+**Correctif** : mot-clé exactement `"database":"ok"`, enregistrer.
+
+**Vérification** : le moniteur repasse `Up` au cycle suivant ; refaire le
+[test](../exploitation/sonde-externe.md#tester-la-sonde).

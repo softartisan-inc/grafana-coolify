@@ -61,6 +61,7 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | Terminal muet après `read -rs` | [deux commandes](notifications.md#le-terminal-semble-bloqué-après-read--rs) |
 | `notifications: skipped (ALERT_EMAILS is empty: the rules notify nobody)` | [personne n'est prévenu](notifications.md#les-règles-se-déclenchent-mais-personne-nest-prévenu) |
 | `GF_SMTP_*` présents dans le package | [SMTP](notifications.md#gc-email--le-test-échoue-ou-rien-narrive) |
+| `Down` UptimeRobot : `200 - OK, but keyword is not in…` | [mot-clé de la sonde](notifications.md#faux-down--200---ok-but-keyword-is-not-in) |
 
 ## Sécurité
 
