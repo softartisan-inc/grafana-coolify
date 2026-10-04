@@ -150,16 +150,37 @@ class BundleTest(unittest.TestCase):
         self.assertIn("absent from tag grafana-setup-content-v1", self.errors(stored=None)[0])
 
     def test_shallow_clone_without_the_tag_is_skipped(self):
+        """Simulated shallow clone: the skip notice is captured, never printed into the test output."""
         saved = check.git_tag_exists, check.git_is_shallow
         check.git_tag_exists = lambda _tag: False
         try:
             for shallow, expected in ((True, []), (False, 1)):
                 with self.subTest(shallow=shallow):
                     check.git_is_shallow = lambda shallow=shallow: shallow
-                    errors = check.check_bundle()
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        errors = check.check_bundle()
                     self.assertEqual(errors if shallow else len(errors), expected)
+                    if shallow:
+                        self.assertIn("skipped: tag grafana-setup-content-v1 not found locally and this clone is shallow", out.getvalue())
+                    else:
+                        self.assertEqual(out.getvalue(), "")
         finally:
             check.git_tag_exists, check.git_is_shallow = saved
+
+    def test_repository_tag_is_checked_not_skipped(self):
+        """With the tag present locally (any clone depth), the bundle is checked, silently."""
+        if not check.git_tag_exists(check.render.load_versions(ROOT / "tools" / "versions.env")["GRAFANA_SETUP_TAG"]):
+            self.skipTest("the grafana-setup content tag is not fetched in this clone (git fetch --tags)")
+        saved = check.git_is_shallow
+        check.git_is_shallow = lambda: True
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(check.check_bundle(), [])
+        finally:
+            check.git_is_shallow = saved
+        self.assertEqual(out.getvalue(), "")
 
 
 class StripHazardTest(unittest.TestCase):

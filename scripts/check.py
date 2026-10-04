@@ -349,7 +349,7 @@ def check_dashboards():
 def check_bundle():
     tag = render.load_versions(ROOT / "tools" / "versions.env").get("GRAFANA_SETUP_TAG", "")
     if not git_tag_exists(tag) and git_is_shallow():
-        print(f"    skipped: tag {tag} absent from this shallow clone (git fetch --unshallow --tags to check it)")
+        print(f"    skipped: tag {tag} not found locally and this clone is shallow (git fetch --tags, or --unshallow, to check it)")
         return []
     return bundle_errors(tag, render.grafana_setup_files(ROOT), git_show, git_tag_exists)
 
