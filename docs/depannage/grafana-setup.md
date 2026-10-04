@@ -50,7 +50,7 @@ demande pas de jeton : c'est le réseau ou l'URL). Deux causes, rencontrées ens
 2. Sur l'hôte, tester (`-sS` pour voir l'erreur) :
 
    ```bash
-   G=$(docker ps --format '{{.Names}}' | grep -i '^grafana' | head -1)
+   G=$(docker ps --format '{{.Names}}' | grep -E '^grafana-[a-z0-9]+$' | head -1)
    docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$G"
    docker run --rm --network coolify curlimages/curl -sS -m 5 "http://$G:3000/api/health"
    ```

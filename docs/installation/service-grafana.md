@@ -19,7 +19,7 @@ Loki, Tempo ni Prometheus.
 3. Sur l'hôte, vérifier :
 
    ```bash
-   G=$(docker ps --format '{{.Names}}' | grep -i '^grafana' | head -1); echo "$G"
+   G=$(docker ps --format '{{.Names}}' | grep -E '^grafana-[a-z0-9]+$' | head -1); echo "$G"
    docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$G"
    docker run --rm --network coolify curlimages/curl -sS -m 5 "http://$G:3000/api/health"
    ```

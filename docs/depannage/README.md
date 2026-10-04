@@ -57,7 +57,7 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 |---|---|
 | `{"ok":true,"result":[]}` sur `getUpdates` | [bot muet](notifications.md#getupdates-renvoie-une-liste-vide) |
 | Terminal muet après `read -rs` | [deux commandes](notifications.md#le-terminal-semble-bloqué-après-read--rs) |
-| `notifications: skipped (ALERT_EMAILS is empty: the rules notify nobody)` | [personne prévenu](notifications.md#les-règles-se-déclenchent-mais-personne-nest-prévenu) |
+| `notifications: skipped (ALERT_EMAILS is empty: the rules notify nobody)` | [personne n'est prévenu](notifications.md#les-règles-se-déclenchent-mais-personne-nest-prévenu) |
 | `GF_SMTP_*` présents dans le package | [SMTP](notifications.md#gc-email--le-test-échoue-ou-rien-narrive) |
 
 ## Sécurité
