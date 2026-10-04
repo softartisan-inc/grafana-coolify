@@ -176,7 +176,7 @@ Si la destination de la ressource porte un autre nom, adapter `networks.coolify.
    rejoint pas sa propre adresse publique à travers le proxy. Relever le nom sur le serveur :
 
    ```bash
-   docker ps --format '{{.Names}}' | grep -i grafana
+   docker ps --format '{{.Names}}' | grep -E '^grafana-[a-z0-9]+$'
    ```
 
    Le service Grafana en un clic est une ressource **Service** de Coolify : son conteneur s'appelle
@@ -203,12 +203,16 @@ Si la destination de la ressource porte un autre nom, adapter `networks.coolify.
 2. Vérifier que le service Coolify « Grafana » est sur le réseau `coolify` :
 
    ```bash
-   GRAFANA=$(docker ps --format '{{.Names}}' | grep -i grafana | head -n1)
+   GRAFANA=$(docker ps --format '{{.Names}}' | grep -E '^grafana-[a-z0-9]+$')
    docker inspect "$GRAFANA" --format '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'
    ```
 
 3. Mettre à jour le dépôt, puis **désactiver** **Connect To Predefined Network** sur ce package,
    sans toucher aux variables.
+
+   > **Ne jamais désactiver l'option tant que le compose déployé ne déclare pas lui-même le réseau
+   > `coolify`** : avec l'ancien compose et l'option désactivée, aucun service n'est sur `coolify`,
+   > les sources Grafana et `grafana-setup` tombent.
 4. Redéployer, puis vérifier que les alias de `loki` contiennent `gc-loki` et `loki`, et que les
    deux noms répondent depuis Grafana :
 

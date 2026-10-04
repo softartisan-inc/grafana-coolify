@@ -116,7 +116,8 @@ class ReadmeTest(unittest.TestCase):
             "PROMETHEUS_INTERNAL_URL=http://gc-prometheus:9090",
             "ALLOY_INTERNAL_URL=http://gc-alloy:4318",
             "http://grafana-<uuid>:3000",
-            "docker ps --format '{{.Names}}' | grep -i grafana",
+            "docker ps --format '{{.Names}}' | grep -E '^grafana-[a-z0-9]+$'",
+            "Ne jamais désactiver l'option tant que le compose déployé ne déclare pas lui-même le réseau",
             "Grafana not healthy after 120s",
             "Repli : noms nus",
             "Consistent Container Names",
@@ -128,6 +129,8 @@ class ReadmeTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(text, README)
         self.assertNotIn("http://loki-<uuid>:3100", README)
+        for doc in (README, spikes):
+            self.assertNotIn("grep -i grafana", doc)
         for text in ("loki-<uuid>-<horodatage>", "applicationParser", "gc-loki", "l. 1590-1603",
                      "Consistent Container Names"):
             with self.subTest(text=text):

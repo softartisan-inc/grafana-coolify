@@ -31,7 +31,7 @@ la règle tant que ce n'est pas démontré autrement.
 ## S1 — Noms internes vus depuis Grafana (spec § 3.3)
 
 ```bash
-GRAFANA=$(docker ps --format '{{.Names}}' | grep -i grafana | head -n1); echo "$GRAFANA"
+GRAFANA=$(docker ps --format '{{.Names}}' | grep -E '^grafana-[a-z0-9]+$'); echo "$GRAFANA"
 docker inspect "$GRAFANA" --format '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'
 for url in http://gc-loki:3100/ready http://gc-tempo:3200/ready http://gc-prometheus:9090/-/ready; do
   docker exec "$GRAFANA" wget -qO- "$url"; echo " <- $url"
@@ -57,7 +57,7 @@ sont les valeurs de `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTER
   `http://grafana-<uuid>:3000` fonctionne.
 
 **Pourquoi l'option reste désactivée sur le package.** Pour une ressource Application, le parseur
-de Coolify (`applicationParser`, `bootstrap/helpers/parsers.php`, branche `v4.x`, commit
+de Coolify (`applicationParser`, `bootstrap/helpers/parsers.php`, commit
 `16a8c79`) ajoute, option activée, le réseau de destination à chaque service par
 `$networks_temp->put($network, null)` **après** les réseaux écrits dans le compose : l'entrée
 `coolify: {aliases: [gc-loki]}` est remplacée par `coolify: null` et les alias disparaissent.
