@@ -62,7 +62,7 @@ renseignée mais mal formée ou nulle (`0`, `0h`, `0GB`) arrête le déploiement
 
 | Variable | Défaut |
 |---|---|
-| `LOKI_RETENTION_PROD` / `LOKI_RETENTION_DEFAULT` | `720h` / `168h` (au moins `24h` : Loki refuse de démarrer en dessous, `config-guard` le refuse avant) |
+| `LOKI_RETENTION_PROD` / `LOKI_RETENTION_DEFAULT` | `720h` / `168h` (entre `24h` et `292y`, unités dans l'ordre `y w d h m s ms`. Loki refuse au démarrage une rétention de flux (`LOKI_RETENTION_PROD`) sous 24h ; `LOKI_RETENTION_DEFAULT` est aligné sur le même plancher, le minimum documenté par Loki. `config-guard` refuse les deux avant) |
 | `TEMPO_RETENTION` | `168h` |
 | `TEMPO_MAX_ACTIVE_SERIES` | `100000` (vide = `100000` ; `0`, qui voudrait dire « illimité », est refusé par `config-guard`) |
 | `PROM_RETENTION_TIME` / `PROM_RETENTION_SIZE` | `90d` / `100GB` |

@@ -140,7 +140,9 @@ variable vérifiée par `config-guard` (`IP_HASH_SALT`, `FARO_API_KEY`, `PROJECT
 `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX`, `HOST_ENV`, les
 rétentions, `TEMPO_MAX_ACTIVE_SERIES`, `ENABLE_EXEMPLARS`) a un format invalide ou une valeur
 nulle, ou une rétention Loki (`LOKI_RETENTION_PROD`, `LOKI_RETENTION_DEFAULT`) est inférieure à
-`24h`, que Loki refuserait au démarrage.
+`24h`, supérieure à `292y` ou mal ordonnée (`1h1d`). Loki refuse au démarrage une rétention de
+flux (`LOKI_RETENTION_PROD`) sous 24h ; `LOKI_RETENTION_DEFAULT` est aligné sur le même
+plancher, le minimum documenté par Loki.
 
 **Correctif** : lire la ligne `ERROR`, corriger la variable, ou pour un fichier, vérifier que le
 compose déployé est le `docker-compose.yaml` généré à jour (`python3 scripts/check.py`), puis
@@ -152,7 +154,7 @@ compose déployé est le `docker-compose.yaml` généré à jour (`python3 scrip
 
 **Symptôme** : une variable vidée dans l'onglet **Environment Variables** (variable gardée,
 valeur vide) arrive vide dans le conteneur :
-`docker inspect tempo-<uuid> --format '{{range .Config.Env}}{{println .}}{{end}}'` affiche
+`docker inspect tempo-<uuid>-<horodatage> --format '{{range .Config.Env}}{{println .}}{{end}}'` affiche
 `ENABLE_EXEMPLARS=` au lieu de `ENABLE_EXEMPLARS=false`. Le conteneur reste `Up`, sans message.
 
 **Cause** : Coolify substitue lui-même les variables et transmet la valeur vide : le repli
@@ -160,7 +162,7 @@ valeur vide) arrive vide dans le conteneur :
 vide valait `0s` (traces supprimées aussitôt) et un `TEMPO_MAX_ACTIVE_SERIES` vide valait `0`
 (aucun plafond de séries) ; sur une rétention vide, Loki redémarrait en boucle ; sur le banc,
 Prometheus aussi. Sur Coolify, Prometheus n'était pas touché : ses options de rétention étaient
-dans `command:`, interpolée par Docker Compose depuis le `.env` écrit par Coolify, où
+dans `command:`, interpolées par Docker Compose depuis le `.env` écrit par Coolify, où
 `${X:-90d}` couvre la valeur vide. Les variables de Loki, elles, passent par `environment:`.
 
 **Correctif** : aucun à faire sur une version à jour : le défaut de `.env.example` est appliqué
@@ -171,6 +173,6 @@ le refuse.
 
 **Vérification** : la variable reste vide dans `docker inspect` (comportement de Coolify), mais
 la configuration effective porte le défaut, par exemple
-`docker run --rm --network container:tempo-<uuid> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep max_active_series`
+`docker run --rm --network container:tempo-<uuid>-<horodatage> alpine:3.22 wget -qO- http://localhost:3200/status/config | grep max_active_series`
 affiche `max_active_series: 100000`. Procédure complète : spike S5 de
 [`docs/spikes.md`](../spikes.md#variables-vidées-dans-coolify--le-repli-var-défaut-du-compose-ne-sapplique-pas).
