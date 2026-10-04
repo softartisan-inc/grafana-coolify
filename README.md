@@ -20,6 +20,13 @@ PostgreSQL recommandée), inchangé. Toutes les images sont officielles et épin
 (`tools/versions.env`). La conception complète est dans
 [`docs/superpowers/specs/2026-09-27-grafana-coolify-design.md`](docs/superpowers/specs/2026-09-27-grafana-coolify-design.md).
 
+## Documentation
+
+Le guide de l'opérateur, en pages courtes, est dans [`docs/README.md`](docs/README.md) :
+installation pas à pas, ajout d'un projet, alertes, rotation des secrets, durcissement du
+serveur, et un [index de dépannage](docs/depannage/README.md) qui part du message d'erreur exact
+(tous les incidents du premier déploiement réel, avec leur correctif).
+
 ## Prérequis
 
 - Un serveur Coolify avec le proxy Traefik, et le service Coolify **Grafana 12.0 ou plus récent**.
