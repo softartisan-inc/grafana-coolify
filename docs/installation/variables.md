@@ -65,7 +65,7 @@ renseignée mais mal formée ou nulle (`0`, `0h`, `0GB`) arrête le déploiement
 | `LOKI_RETENTION_PROD` / `LOKI_RETENTION_DEFAULT` | `720h` / `168h` (entre `24h` et `292y`, unités dans l'ordre `y w d h m s ms`. Loki refuse au démarrage une rétention de flux (`LOKI_RETENTION_PROD`) sous 24h ; `LOKI_RETENTION_DEFAULT` est aligné sur le même plancher, le minimum documenté par Loki. `config-guard` refuse les deux avant) |
 | `TEMPO_RETENTION` | `168h` |
 | `TEMPO_MAX_ACTIVE_SERIES` | `100000` (vide = `100000` ; `0`, qui voudrait dire « illimité », est refusé par `config-guard`) |
-| `PROM_RETENTION_TIME` / `PROM_RETENTION_SIZE` | `90d` / `100GB` |
+| `PROM_RETENTION_TIME` / `PROM_RETENTION_SIZE` | `90d` / `100GB` (durée non nulle jusqu'à `292y`, unités dans l'ordre `y w d h m s ms` ; taille entière non nulle sous `8EB`, unités `B KB MB GB TB PB EB` ou `KiB`… `EiB`, puissances de 2) |
 | `PROM_ENABLE_FEATURES`, `ENABLE_EXEMPLARS` | vide, `false` (exemplars : activer les deux ensemble) |
 | `GRAFANA_SETUP_MIRROR_URL` | vide (ce dépôt, au tag épinglé) |
 | `ALLOY_INTERNAL_URL` | documentaire : `http://gc-alloy:4318` (ou `http://alloy:4318`) pour les applications du même hôte |
