@@ -194,6 +194,26 @@ class StripHazardTest(unittest.TestCase):
         text = "a: 1\nexpr: 'x | y'\nurl: https://a/#b\nlist:\n  - '>'\n"
         self.assertEqual(check.strip_hazards("config/x.yml", text), [])
 
+    def test_shell_heredoc_is_flagged(self):
+        for line in ("cat <<EOF", "cat <<-'EOF'", 'cat << "END"'):
+            errors = check.strip_hazards("config/x.sh", f"#!/bin/sh\n{line}\n# kept?\nEOF\n")
+            self.assertEqual(len(errors), 1, line)
+            self.assertIn("config/x.sh:2: heredoc", errors[0])
+
+    def test_shell_multiline_quote_is_flagged(self):
+        for text in ('a="one\n# two"\n', "a='one\n# two'\n", 'a="x \\" y\n# two"\n'):
+            errors = check.strip_hazards("config/x.sh", text)
+            self.assertEqual(errors, ["config/x.sh:2: multi-line quoted string, strip_comments is line-based: keep each string on one line"], text)
+
+    def test_shell_single_line_quotes_and_comments_pass(self):
+        text = "#!/bin/sh\n# it's a comment\necho \"it's\" 'a \"b' # don't\nx=${y#z} n=$#\n[ $((1 << 2)) ]\n"
+        self.assertEqual(check.strip_hazards("config/x.sh", text), [])
+
+    def test_repository_scripts_have_no_hazard(self):
+        for path in ("config/config-guard/guard.sh", "config/prometheus/start.sh"):
+            with self.subTest(path=path):
+                self.assertEqual(check.strip_hazards(path, (check.ROOT / path).read_text(encoding="utf-8")), [])
+
     def test_alloy_multiline_raw_string_is_flagged(self):
         errors = check.strip_hazards("config/x.alloy", 'a = `one\n// inside\ntwo`\n')
         self.assertEqual(len(errors), 2)

@@ -29,9 +29,9 @@ services:
     command:
       - sh
       - -c
-      - "echo '8d25a1f67c6e6fe5242abed0c5299b32c590267169e672c7039009369f96e7e8  /opt/config-guard/guard.8d25a1f6.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.8d25a1f6.sh"
+      - "echo '199a40bf5878f936b8825ad78f66f3c126a3267134bdfd42c9400b744df71a38  /opt/config-guard/guard.199a40bf.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.199a40bf.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.4ebe90a7.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.be7203a4.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/tempo/tempo.d08f6ba0.yaml=d08f6ba01f1a2b4f6e33ff6e1748cdce0ac3582fa3ea23690eae6d25d2751d58"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.68351f56.py=68351f563802cf7f702133bf9f2a32d07644e8cc9c172854ae2d296a3ed9f701;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.8839df29.sh=8839df2975e953c5def06ee0fbf63cce7b43766649beaa1b929c9d800fa8d68e;/guard/tempo/tempo.d08f6ba0.yaml=d08f6ba01f1a2b4f6e33ff6e1748cdce0ac3582fa3ea23690eae6d25d2751d58"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
       # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
@@ -52,20 +52,14 @@ services:
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.8d25a1f6.sh
-        target: /opt/config-guard/guard.8d25a1f6.sh
+        source: ./config/config-guard/guard.199a40bf.sh
+        target: /opt/config-guard/guard.199a40bf.sh
         content: |2
           #!/bin/sh
-          # config-guard (spec 4.4): refuse to start the stack when a config file written by Coolify is
-          # missing, empty, a directory, or differs from its source (SHA-256), or when a runtime variable
-          # used inside a config would break it. POSIX sh + busybox (alpine).
-          #
-          # CONFIG_GUARD_EXPECTED="path=sha256;path=sha256;..." is computed by scripts/render.py.
           set -u
           set -f
 
           failed=0
-          # A literal newline: grep matches line by line, so a multi-line value must be rejected first.
           NL=$(printf '\n.')
           NL=${NL%.}
 
@@ -117,22 +111,16 @@ services:
           done
           unset IFS
 
-          # The salt is spliced into an OTTL statement and a Go template: letters and digits only.
           if ! matches "${IP_HASH_SALT:-}" '^[A-Za-z0-9]{16,}$'; then
             error "IP_HASH_SALT must be at least 16 characters from [A-Za-z0-9]"
           fi
-          # alloy always runs faro.receiver, and an empty api_key disables its check: the key is mandatory.
           if ! matches "${FARO_API_KEY:-}" '^[A-Za-z0-9._~+/=-]{16,}$'; then
             error "FARO_API_KEY must be at least 16 characters from [A-Za-z0-9._~+/=-] (openssl rand -hex 24)"
           fi
-          # PROJECTS is split on commas by a Go template (Faro allow-list): no spaces, no empty item.
-          # Each item: ^[a-z0-9][a-z0-9-]{0,63}$, the rule of grafana-setup (no leading hyphen).
           projects=${PROJECTS:-}
           if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
             error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
           fi
-          # FARO_SERVICES (Faro service allow-list) is spliced into an OTTL regex and a Go template: same
-          # rule as PROJECTS.
           faro_services=${FARO_SERVICES:-}
           if [ -n "$faro_services" ] && ! matches "$faro_services" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
             error "FARO_SERVICES must look like web-app,desktop (lowercase, comma separated, no spaces)"
@@ -145,14 +133,10 @@ services:
           if [ -n "$reserved" ] && ! matches "$reserved" '^[a-z0-9-]+(,[a-z0-9-]+)*$'; then
             error "RESERVED_SUBDOMAINS must look like www,api (lowercase, comma separated)"
           fi
-          # env label of the host-level alerts (grafana-setup): same values as the env of the data.
           case ${HOST_ENV:-prod} in
             prod | preprod) ;;
             *) error "HOST_ENV must be prod or preprod" ;;
           esac
-          # Retentions and limits: empty takes the default where the value is consumed (Coolify passes an
-          # emptied variable as "", spike S5); a set value must be well formed and never 0, which Tempo
-          # reads as "delete every block" (retention) or "no limit" (series).
           check_set() { # name value extended_regex message
             if [ -n "$2" ] && { ! matches "$2" "$3" || matches "$2" '^(0+[a-zA-Z]*)+$'; }; then
               error "$1 $4"
@@ -160,8 +144,6 @@ services:
           }
           check_set TEMPO_RETENTION "${TEMPO_RETENTION:-}" '^([0-9]+(h|m|s))+$' "must be a non-zero Go duration such as 168h (empty: 168h)"
           check_set TEMPO_MAX_ACTIVE_SERIES "${TEMPO_MAX_ACTIVE_SERIES:-}" '^[0-9]+$' "must be a positive integer, 0 means no limit (empty: 100000)"
-          # Loki and Prometheus read retention times with model.ParseDuration: units y w d h m s ms, once
-          # each, in that order, at most 9223372036854ms (int64 ns, ~292y). Else they stop at startup.
           DURATION='^([0-9]+y)?([0-9]+w)?([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?([0-9]+ms)?$'
           MAX_MS=9223372036854
           strip_zeros() { # $(( )) reads leading zeros as octal
@@ -181,7 +163,6 @@ services:
               esac
               rest=${rest#"$unit"}
               num=$(strip_zeros "$num")
-              # Over 13 digits exceeds MAX_MS (and $(( ))).
               [ "${#num}" -le 13 ] || return 1
               case $unit in
                 y) mult=31536000000 ;;
@@ -192,7 +173,6 @@ services:
                 s) mult=1000 ;;
                 *) mult=1 ;;
               esac
-              # Compare before multiplying: no 64-bit overflow.
               [ "$num" -le $((MAX_MS / mult)) ] || return 1
               total=$((total + num * mult))
               [ "$total" -le "$MAX_MS" ] || return 1
@@ -204,19 +184,13 @@ services:
               error "$1 $4"
             fi
           }
-          # Loki refuses a stream retention (LOKI_RETENTION_PROD) under 24h and loops; the default
-          # retention keeps the same floor, Loki's documented minimum.
           order='up to 292y, units in the order y w d h m s ms, such as'
           check_duration LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 86400000 "must be 24h $order 720h (empty: 720h)"
           check_duration LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
-          # Prometheus has no floor; 0 turns time retention off (unbounded).
           check_duration PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" 1 "must be non-zero $order 90d (empty: 90d)"
-          # Size: units.ParseBase2Bytes (KB = KiB) also takes -1GB, 1.5GB, 1GB512MB and wraps at 8EB:
-          # only a positive integer and one unit, below 2^63 bytes.
           MAX_BYTES=9223372036854775807
           size_in_range() { # size matching the PROM_RETENTION_SIZE regex; 1 <= bytes <= MAX_BYTES
             num=$(strip_zeros "${1%%[!0-9]*}")
-            # 18 digits stay below 2^63 in $(( )).
             [ "${#num}" -le 18 ] || return 1
             case ${1#"${1%%[!0-9]*}"} in
               B) mult=1 ;;
@@ -466,7 +440,7 @@ services:
     # start.sh adds the retention and feature flags, with their default when the variable is empty.
     entrypoint:
       - /bin/sh
-      - /etc/prometheus/start.be7203a4.sh
+      - /etc/prometheus/start.8839df29.sh
     command:
       - --config.file=/etc/prometheus/prometheus.8fe5d468.yml
       - --storage.tsdb.path=/prometheus
@@ -514,12 +488,10 @@ services:
                 - targets: ["node-exporter:9100"]
         read_only: true
       - type: bind
-        source: ./config/prometheus/start.be7203a4.sh
-        target: /etc/prometheus/start.be7203a4.sh
+        source: ./config/prometheus/start.8839df29.sh
+        target: /etc/prometheus/start.8839df29.sh
         content: |2
           #!/bin/sh
-          # Prometheus entrypoint. Coolify passes an emptied variable as "" and skips the compose
-          # ${VAR:-default} (spike S5): empty means default here. Keep the defaults equal to .env.example.
           set -eu
           : "${PROM_RETENTION_TIME:=90d}" "${PROM_RETENTION_SIZE:=100GB}"
           set -- "$@" "--storage.tsdb.retention.time=$PROM_RETENTION_TIME" "--storage.tsdb.retention.size=$PROM_RETENTION_SIZE"
@@ -1240,7 +1212,7 @@ services:
         condition: service_completed_successfully
     command:
       - python3
-      - /opt/grafana-setup/setup.4ebe90a7.py
+      - /opt/grafana-setup/setup.68351f56.py
     environment:
       GRAFANA_URL: ${GRAFANA_URL:-}
       GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
@@ -1263,8 +1235,8 @@ services:
       HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
-        source: ./config/grafana-setup/setup.4ebe90a7.py
-        target: /opt/grafana-setup/setup.4ebe90a7.py
+        source: ./config/grafana-setup/setup.68351f56.py
+        target: /opt/grafana-setup/setup.68351f56.py
         content: |2
           #!/usr/bin/env python3
           """grafana-setup: idempotently provision Grafana (spec 10). Standard library only.
@@ -1292,14 +1264,9 @@ services:
           LOKI_UID = "gc-loki"
           TEMPO_UID = "gc-tempo"
           PROMETHEUS_UID = "gc-prometheus"
-          # Same rule as config-guard (guard.sh) for each item of PROJECTS.
           PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-          # Trace -> logs: every log of the trace, whatever its path (OTLP or Faro), via trace_id metadata.
           TRACE_TO_LOGS_QUERY = '{project=~".+"} | trace_id="${__trace.traceId}"'
-          # Fields compared to decide whether an existing datasource must be updated. isDefault is left to
-          # the operator (Grafana makes the first datasource of an organisation the default one).
           COMPARED_FIELDS = ("name", "type", "access", "url", "basicAuth", "jsonData")
-          # Folder of the shared dashboards and of the alert rules.
           SHARED_FOLDER_UID = "gc-grafana-coolify"
           SHARED_FOLDER_TITLE = "grafana-coolify"
           SECRET_VARIABLES = ("GRAFANA_SA_TOKEN", "TELEGRAM_BOT_TOKEN")
@@ -1307,10 +1274,7 @@ services:
           CONTENT_RE = re.compile(r"^(?:dashboards/)?[a-z0-9_-]+\.(?:py|json)$")
           CONTENT_MODULES = ("alerting.py", "dashboards.py")
           SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-          # GRAFANA_URL and the *_INTERNAL_URL variables: checked here, not by config-guard, so that a wrong
-          # value stops grafana-setup alone and never the data path (Loki, Tempo, Prometheus, Alloy).
           HTTP_URL_RE = re.compile(r"^https?://\S+$")
-          # Credentials of a URL (https://user:password@host), at the start of a value or inside a message.
           USERINFO_RE = re.compile(r"(https?://)[^/@\s'\"]*@")
           URL_VARIABLES = ("GRAFANA_URL", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
           SCHEMES = ("https://", "http://", "file:")
@@ -1349,8 +1313,6 @@ services:
                   except urllib.error.HTTPError as exc:
                       return exc.code, parse_json(exc.read())
                   except (ValueError, http.client.InvalidURL) as exc:
-                      # Malformed URL (http.client.InvalidURL is an HTTPException, hence this clause first):
-                      # retrying cannot help. Only the opening is covered: never a decoding error.
                       raise self.invalid(method, path, exc) from None
                   except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as exc:
                       raise SetupError(f"{method} {path}: Grafana unreachable ({reason(exc)})") from None
@@ -1583,7 +1545,6 @@ services:
 
 
           def fetch(url, attempts=3, timeout=30, pause=2, limit=MAX_CONTENT_BYTES):
-              # Network errors and 5xx are retried; 4xx and file: errors are not.
               for attempt in range(1, attempts + 1):
                   try:
                       with urllib.request.urlopen(url, timeout=timeout) as resp:

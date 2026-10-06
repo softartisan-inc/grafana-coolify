@@ -224,13 +224,45 @@ def compose_json():
 
 
 YAML_BLOCK_SCALAR_RE = re.compile(r":\s*[|>][-+0-9]*\s*$")
+SHELL_HEREDOC_RE = re.compile(r"<<-?\s*['\"]?[A-Za-z_]")
+
+
+def shell_open_quote_lines(text):
+    """1-based numbers of the lines of a shell script that start inside a quoted string.
+
+    A small scanner: quotes ' and " (backslash escapes outside single quotes) and # comments
+    at the start of a word. Enough for the inlined scripts; a heredoc is reported apart.
+    """
+    lines = []
+    quote = None
+    for number, line in enumerate(text.split("\n"), 1):
+        if quote:
+            lines.append(number)
+        index = 0
+        while index < len(line):
+            char = line[index]
+            if quote == "'":
+                if char == "'":
+                    quote = None
+            elif char == "\\":
+                index += 1
+            elif quote == '"':
+                if char == '"':
+                    quote = None
+            elif char in "'\"":
+                quote = char
+            elif char == "#" and (index == 0 or line[index - 1] in " \t;&|()"):
+                break
+            index += 1
+    return lines
 
 
 def strip_hazards(source, text):
     """Lines of an inlined file where the line-based strip_comments could cut a multi-line value.
 
     YAML: a block scalar (key: | or key: >); Alloy: a line with an odd number of backticks
-    (a raw string spanning several lines). Other files are not stripped.
+    (a raw string spanning several lines); shell: a heredoc or a line starting inside a quoted
+    string. Python is stripped with tokenize; other files are not stripped.
     """
     suffix = Path(source).suffix
     errors = []
@@ -239,6 +271,11 @@ def strip_hazards(source, text):
             errors.append(f"{source}:{number}: YAML block scalar, strip_comments is line-based: use a quoted or flow value")
         elif suffix == ".alloy" and line.count("`") % 2:
             errors.append(f"{source}:{number}: multi-line raw string, strip_comments is line-based: keep each raw string on one line")
+        elif suffix == ".sh" and SHELL_HEREDOC_RE.search(line):
+            errors.append(f"{source}:{number}: heredoc, strip_comments is line-based: use printf")
+    if suffix == ".sh":
+        for number in shell_open_quote_lines(text):
+            errors.append(f"{source}:{number}: multi-line quoted string, strip_comments is line-based: keep each string on one line")
     return errors
 
 

@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import sys
 import tempfile
@@ -6,10 +7,12 @@ from pathlib import Path
 
 import yaml
 
-from support import ROOT
+from support import ROOT, binary, run
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import render  # noqa: E402
+
+TEMPLATE_TEXT = (ROOT / "compose.template.yaml").read_text(encoding="utf-8")
 
 # Everything Coolify must copy byte for byte: $-expressions, tabs, trailing blank lines,
 # non-ASCII text, a line starting with spaces and trailing spaces.
@@ -248,9 +251,20 @@ class CommentStrippingTest(unittest.TestCase):
         self.assertEqual(render.strip_comments(ALLOY, "./config/alloy/config.alloy"), ALLOY_STRIPPED)
         self.assertEqual(render.strip_comments(LOKI, "./config/loki/loki.yaml"), LOKI_STRIPPED)
         self.assertEqual(render.strip_comments(LOKI, "./config/prometheus/prometheus.yml"), LOKI_STRIPPED)
-        # Other files (shell, Python) are inlined unchanged: "#!" and "#" lines matter there.
-        self.assertEqual(render.strip_comments("#!/bin/sh\n\n# x\n", "./config/config-guard/guard.sh"), "#!/bin/sh\n\n# x\n")
-        self.assertEqual(render.strip_comments("# x\n\ny = 1\n", "./config/grafana-setup/setup.py"), "# x\n\ny = 1\n")
+        # Shell and Python lose their full-line comments but keep the shebang and blank lines.
+        self.assertEqual(render.strip_comments("#!/bin/sh\n\n# x\n  # y\necho a # b\n", "./config/config-guard/guard.sh"), "#!/bin/sh\n\necho a # b\n")
+        self.assertEqual(render.strip_comments("# x\n\ny = 1\n", "./config/grafana-setup/setup.py"), "\ny = 1\n")
+        self.assertEqual(render.strip_comments("# x\nset -u\n", "./config/x.sh"), "set -u\n")
+        # Python: a "#" line inside a string is text, not a comment (tokenize).
+        python = '#!/usr/bin/env python3\n"""Doc.\n\n# not a comment\n"""\n\n\ndef f():\n    # gone\n    return "#x"  # kept\n'
+        self.assertEqual(
+            render.strip_comments(python, "./config/grafana-setup/setup.py"),
+            '#!/usr/bin/env python3\n"""Doc.\n\n# not a comment\n"""\n\n\ndef f():\n    return "#x"  # kept\n',
+        )
+        # Other files are inlined unchanged.
+        self.assertEqual(render.strip_comments("# x\n\n", "./config/x.json"), "# x\n\n")
+        with self.assertRaises(render.RenderError):
+            render.strip_comments('x = """open\n', "./config/grafana-setup/setup.py")
 
     def test_compose_carries_stripped_content_and_hashes(self):
         doc = yaml.safe_load(render.render_text(STRIP_TEMPLATE, self.root, {}))
@@ -261,7 +275,10 @@ class CommentStrippingTest(unittest.TestCase):
         self.assertNotIn("Header comment", alloy["content"])
         self.assertIn("https://loki:3100/push", alloy["content"])
         self.assertIn("https://example.com/#anchor", loki["content"])
-        self.assertEqual(services["config-guard"]["volumes"][0]["content"], "#!/bin/sh\n\n# guard\necho guard\n")
+        self.assertEqual(services["config-guard"]["volumes"][0]["content"], "#!/bin/sh\n\necho guard\n")
+        # config-guard checks its own script against the stripped text Coolify writes.
+        guard_sha = hashlib.sha256(b"#!/bin/sh\n\necho guard\n").hexdigest()
+        self.assertEqual(services["config-guard"]["environment"]["GUARD"], guard_sha)
         alloy_sha = hashlib.sha256(ALLOY_STRIPPED.encode()).hexdigest()
         loki_sha = hashlib.sha256(LOKI_STRIPPED.encode()).hexdigest()
         self.assertEqual(alloy["source"], f"./config/alloy/config.{alloy_sha[:8]}.alloy")
@@ -276,6 +293,9 @@ class CommentStrippingTest(unittest.TestCase):
         alloy_sha = hashlib.sha256(ALLOY.encode()).hexdigest()
         loki_sha = hashlib.sha256(LOKI.encode()).hexdigest()
         self.assertEqual(expected, f"/guard/alloy/config.alloy={alloy_sha};/guard/loki/loki.yaml={loki_sha}")
+        # compose.dev.yaml mounts the repository guard.sh, comments included.
+        guard_sha = hashlib.sha256(b"#!/bin/sh\n\n# guard\necho guard\n").hexdigest()
+        self.assertEqual(dev["services"]["config-guard"]["environment"]["GUARD"], guard_sha)
 
     def test_repository_configs_keep_their_meaning(self):
         for path in ("loki/loki.yaml", "tempo/tempo.yaml", "prometheus/prometheus.yml"):
@@ -289,6 +309,39 @@ class CommentStrippingTest(unittest.TestCase):
                 self.assertLess(len(stripped), len(text))
                 kept = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("//")]
                 self.assertEqual(stripped.splitlines(), kept)
+
+    def test_repository_python_keeps_its_ast(self):
+        paths = sorted(item.source for item in render.content_items(ROOT, TEMPLATE_TEXT, stripped=False) if item.source.endswith(".py"))
+        self.assertIn("./config/grafana-setup/setup.py", paths)
+        for path in paths:
+            with self.subTest(path=path):
+                text = (ROOT / path).read_text(encoding="utf-8")
+                stripped = render.strip_comments(text, path)
+                self.assertLess(len(stripped), len(text))
+                self.assertEqual(ast.dump(ast.parse(stripped)), ast.dump(ast.parse(text)))
+                # Docstrings are part of the AST: a "#" line inside one survives.
+                self.assertEqual(ast.get_docstring(ast.parse(stripped)), ast.get_docstring(ast.parse(text)))
+
+    def test_repository_shell_scripts_stay_valid(self):
+        paths = sorted(item.source for item in render.content_items(ROOT, TEMPLATE_TEXT, stripped=False) if item.source.endswith(".sh"))
+        self.assertIn("./config/config-guard/guard.sh", paths)
+        with tempfile.TemporaryDirectory() as tmp:
+            for path in paths:
+                with self.subTest(path=path):
+                    text = (ROOT / path).read_text(encoding="utf-8")
+                    stripped = render.strip_comments(text, path)
+                    self.assertLess(len(stripped), len(text))
+                    self.assertTrue(stripped.startswith("#!/bin/sh\n"))
+                    # Same lines once comments are gone: nothing but comment lines was dropped.
+                    lines = text.split("\n")
+                    code = lines[:1] + [line for line in lines[1:] if not line.lstrip().startswith("#")]
+                    self.assertEqual(stripped.split("\n"), code)
+                    script = Path(tmp) / Path(path).name
+                    script.write_text(stripped, encoding="utf-8")
+                    result = run(["sh", "-n", script])
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    result = run([binary("shellcheck"), "-s", "sh", script])
+                    self.assertEqual(result.returncode, 0, result.stdout)
 
 
 class RepositoryRenderTest(unittest.TestCase):

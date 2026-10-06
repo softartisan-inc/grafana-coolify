@@ -13,11 +13,12 @@ Standard library only. Rules (spec 4.1-4.4):
 - `@@NAME@@` placeholders come from tools/versions.env, plus two computed values:
   CONFIG_GUARD_EXPECTED ("/guard/<hashed path under config/>=sha256;..." for every content file
   of the other services: config-guard mounts ./config at /guard) and GUARD_SHA256 (hash of
-  guard.sh), and GRAFANA_SETUP_FILES ("<file>=sha256;..." for every file setup.py downloads: the
+  the guard.sh Coolify writes), and GRAFANA_SETUP_FILES ("<file>=sha256;..." for every file setup.py downloads: the
   .py and .json files of config/grafana-setup/ but setup.py, paths relative to that directory);
-- budget: inlined YAML and Alloy files lose their full-line comments and blank lines
-  (strip_comments); hashes and content-addressed names are computed on the stripped text, which
-  is what Coolify writes; config/ keeps the comments;
+- budget: inlined YAML and Alloy files lose their full-line comments and blank lines, shell and
+  Python files their full-line comments only (shebang and blank lines kept: strip_comments);
+  hashes, content-addressed names and GUARD_SHA256 are computed on the stripped text, which is
+  what Coolify writes; config/ keeps the comments;
 - compose.dev.yaml mounts config/ directly: it keeps the repository names (no hash);
 - compose.dev.yaml creates its own `coolify` network (no Coolify on the bench) and puts its test
   Grafana on it, so the gc-* aliases resolve there as on the server;
@@ -28,8 +29,10 @@ import argparse
 import base64
 import difflib
 import hashlib
+import io
 import re
 import sys
+import tokenize
 from collections import namedtuple
 from pathlib import Path
 
@@ -48,8 +51,11 @@ GUARD_PREFIX = "/guard/"
 GRAFANA_SETUP_DIR = "config/grafana-setup"
 # The only grafana-setup file inlined in the compose; it downloads the others (spec 4.3).
 GRAFANA_SETUP_INLINE = "setup.py"
-# Full-line comment markers of the inlined files that strip_comments shortens.
+# Full-line comment markers of the inlined files that strip_comments shortens. Data files also
+# lose their blank lines; code files keep them (a blank line can sit inside a Python string).
 COMMENT_PREFIXES = {".alloy": "//", ".yaml": "#", ".yml": "#"}
+CODE_SUFFIXES = (".sh", ".py")
+STRIPPED_SUFFIXES = tuple(COMMENT_PREFIXES) + CODE_SUFFIXES
 HASH_LEN = 8
 CONTENT_RE = re.compile(r'^(?P<indent> *)content: "@@CONTENT@@"$')
 ITEM_KEY_RE = re.compile(r"^(?P<indent> *)(?:- )?(?P<key>source|target): (?P<value>\S+)$")
@@ -183,16 +189,48 @@ def hashed_path(path, digest):
     return head + slash + hashed
 
 
-def strip_comments(text, source):
-    """Drop the full-line comments and blank lines of a YAML or Alloy file; other files unchanged.
+def strips(source):
+    """True when strip_comments shortens the file `source` (decided by its extension)."""
+    return Path(source).suffix in STRIPPED_SUFFIXES
 
-    Only lines whose first non-blank characters are the comment marker go: end-of-line comments
-    and markers inside values (https://, #anchor) stay.
+
+def python_comment_lines(text, name):
+    """0-based numbers of the lines of Python `text` that hold only a comment.
+
+    tokenize never yields a COMMENT inside a string, so a "#" line of a docstring stays.
     """
-    prefix = COMMENT_PREFIXES.get(Path(source).suffix)
+    lines = set()
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type == tokenize.COMMENT and not token.line[: token.start[1]].strip():
+                lines.add(token.start[0] - 1)
+    except (tokenize.TokenError, SyntaxError) as exc:
+        raise RenderError(f"{name}: cannot tokenize Python ({exc})") from exc
+    return lines
+
+
+def strip_comments(text, source):
+    """Drop the full-line comments of an inlined file; files of other types are unchanged.
+
+    YAML and Alloy also lose their blank lines. Shell and Python keep them and keep a first-line
+    shebang (#!); Python comments are found with tokenize, shell comments line by line (check.py
+    rejects a heredoc or a multi-line quote in an inlined shell script). End-of-line comments and
+    markers inside values (https://, #anchor, ${x#y}) stay.
+    """
+    suffix = Path(source).suffix
+    lines = text.split("\n")
+    if suffix in CODE_SUFFIXES:
+        if suffix == ".py":
+            drop = python_comment_lines(text, source)
+        else:
+            drop = {number for number, line in enumerate(lines) if line.lstrip().startswith("#")}
+        if lines[0].startswith("#!"):
+            drop.discard(0)
+        return "\n".join(line for number, line in enumerate(lines) if number not in drop)
+    prefix = COMMENT_PREFIXES.get(suffix)
     if prefix is None:
         return text
-    lines = [line for line in text.split("\n") if line.strip() and not line.lstrip().startswith(prefix)]
+    lines = [line for line in lines if line.strip() and not line.lstrip().startswith(prefix)]
     return "\n".join(lines) + "\n" if lines else ""
 
 
@@ -226,14 +264,20 @@ def grafana_setup_files(root):
 
 def computed_values(root, template_text, hashed=True):
     expected = set()
+    guard_sha256 = None
     # compose.dev.yaml (hashed=False) mounts the repository files, comments included.
     for item in content_items(root, template_text, stripped=hashed):
-        if item.service != "config-guard":
+        if item.source == "./" + GUARD_SCRIPT:
+            guard_sha256 = item.sha256
+        elif item.service != "config-guard":
             source = item.hashed_source if hashed else item.source
             expected.add(f"{GUARD_PREFIX}{source[len('./config/'):]}={item.sha256}")
+    if guard_sha256 is None:
+        # The guard script is not inlined: its hash is that of the file.
+        guard_sha256 = sha256_text(read_config(root, "./" + GUARD_SCRIPT))
     return {
         "CONFIG_GUARD_EXPECTED": ";".join(sorted(expected)),
-        "GUARD_SHA256": sha256_text(read_config(root, "./" + GUARD_SCRIPT)),
+        "GUARD_SHA256": guard_sha256,
         "GRAFANA_SETUP_FILES": ";".join(f"{path}={digest}" for path, digest in grafana_setup_files(root)),
     }
 
