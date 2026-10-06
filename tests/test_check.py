@@ -205,6 +205,13 @@ class StripHazardTest(unittest.TestCase):
             errors = check.strip_hazards("config/x.sh", text)
             self.assertEqual(errors, ["config/x.sh:2: multi-line quoted string, strip_comments is line-based: keep each string on one line"], text)
 
+    def test_shell_continuation_before_comment_is_flagged(self):
+        errors = check.strip_hazards("config/x.sh", "#!/bin/sh\nset -- a \\\n  # note\n  b\n")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("config/x.sh:2: line continuation before a comment line", errors[0])
+        # A continuation followed by code is fine.
+        self.assertEqual(check.strip_hazards("config/x.sh", "set -- a \\\n  b\n"), [])
+
     def test_shell_single_line_quotes_and_comments_pass(self):
         text = "#!/bin/sh\n# it's a comment\necho \"it's\" 'a \"b' # don't\nx=${y#z} n=$#\n[ $((1 << 2)) ]\n"
         self.assertEqual(check.strip_hazards("config/x.sh", text), [])

@@ -166,11 +166,18 @@ exacts du commit déployé sont dans `docker-compose.yaml`
 
    - un fichier par volume `content:`, sous le nom à empreinte du compose ; les 8 premiers
      caractères de chaque SHA-256 sont ceux du nom, et l'empreinte complète est celle du fichier
-     du dépôt au même commit (`sha256sum config/...` en local) ;
+     du dépôt au même commit **débarrassé de ses commentaires** (`render.py` les retire avant de
+     calculer l'empreinte : `sha256sum config/...` ne convient donc pas). En local, au même
+     commit :
+     `python3 -c 'import hashlib, sys; sys.path.insert(0, "scripts"); import render; p = sys.argv[1]; print(hashlib.sha256(render.strip_comments(open(p, encoding="utf-8").read(), p).encode()).hexdigest())' config/loki/loki.yaml`,
+     ou la valeur de `CONFIG_GUARD_EXPECTED` dans `docker-compose.yaml` ;
    - aucun de ces chemins n'est un dossier (`find -mindepth 2 -type d` ne liste rien) ;
    - `config-guard` affiche `config-guard: all checks passed`.
-2. Modification : en local, ajouter une ligne de commentaire à `config/loki/loki.yaml`, lancer
-   `python3 scripts/render.py`, valider le commit, `git push`, puis **Redeploy** dans Coolify.
+2. Modification : en local, changer une valeur réelle et sans effet notable de
+   `config/loki/loki.yaml` (par exemple `log_level: info` → `log_level: debug`, à remettre
+   ensuite ; une ligne de commentaire ne suffit pas, `render.py` la retire et l'empreinte ne
+   change pas), lancer `python3 scripts/render.py`, valider le commit, `git push`, puis
+   **Redeploy** dans Coolify.
 
    ```bash
    grep -E 'loki\.[0-9a-f]{8}\.yaml' /data/coolify/applications/<app>/docker-compose.yaml | head -n 2
@@ -179,7 +186,7 @@ exacts du commit déployé sont dans `docker-compose.yaml`
    docker logs config-guard-<uuid>-<horodatage>
    ```
 
-   Attendu : un nouveau fichier `loki.<nouvelle empreinte>.yaml` contenant la ligne ajoutée, monté
+   Attendu : un nouveau fichier `loki.<nouvelle empreinte>.yaml` contenant la valeur modifiée, monté
    par `loki` (la commande `-config.file` le désigne) ; `config-guard` passe. Noter si l'ancien
    `loki.<ancienne empreinte>.yaml` est toujours sur l'hôte et s'il apparaît encore dans l'onglet
    **Storages** de la ressource : Coolify supprime-t-il les stockages périmés ? (Attendu probable :

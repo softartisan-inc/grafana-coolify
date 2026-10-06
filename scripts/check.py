@@ -261,8 +261,9 @@ def strip_hazards(source, text):
     """Lines of an inlined file where the line-based strip_comments could cut a multi-line value.
 
     YAML: a block scalar (key: | or key: >); Alloy: a line with an odd number of backticks
-    (a raw string spanning several lines); shell: a heredoc or a line starting inside a quoted
-    string. Python is stripped with tokenize; other files are not stripped.
+    (a raw string spanning several lines); shell: a heredoc, a line starting inside a quoted
+    string or a backslash continuation followed by a comment line. Python is stripped with
+    tokenize; other files are not stripped.
     """
     suffix = Path(source).suffix
     errors = []
@@ -274,6 +275,10 @@ def strip_hazards(source, text):
         elif suffix == ".sh" and SHELL_HEREDOC_RE.search(line):
             errors.append(f"{source}:{number}: heredoc, strip_comments is line-based: use printf")
     if suffix == ".sh":
+        lines = text.split("\n")
+        for number, (line, following) in enumerate(zip(lines, lines[1:], strict=False), 1):
+            if line.endswith("\\") and following.lstrip().startswith("#"):
+                errors.append(f"{source}:{number}: line continuation before a comment line, strip_comments would join it with the next command")
         for number in shell_open_quote_lines(text):
             errors.append(f"{source}:{number}: multi-line quoted string, strip_comments is line-based: keep each string on one line")
     return errors
