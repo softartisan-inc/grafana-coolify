@@ -149,7 +149,7 @@ check_duration() { # name value min_ms message
 }
 # Loki refuses a stream retention (LOKI_RETENTION_PROD) under 24h and loops; the default
 # retention keeps the same floor, Loki's documented minimum.
-order='up to 292y, units in the order y w d h m s ms, such as'
+order='up to 292y, units y w d h m s ms once each in order, such as'
 check_duration LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 86400000 "must be 24h $order 720h (empty: 720h)"
 check_duration LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
 # Prometheus has no floor; 0 turns time retention off (unbounded).
@@ -174,7 +174,7 @@ size_in_range() { # size matching the PROM_RETENTION_SIZE regex; 1 <= bytes <= M
 }
 size=${PROM_RETENTION_SIZE:-}
 if [ -n "$size" ] && { ! matches "$size" '^[0-9]+(B|KB|MB|GB|TB|PB|EB|KiB|MiB|GiB|TiB|PiB|EiB)$' || ! size_in_range "$size"; }; then
-  error "PROM_RETENTION_SIZE must be a non-zero integer size below 8EB such as 100GB (empty: 100GB)"
+  error "PROM_RETENTION_SIZE must be a non-zero integer and one unit, below 8EB, such as 100GB (B KB MB GB TB PB EB or KiB..EiB; empty: 100GB)"
 fi
 case ${ENABLE_EXEMPLARS:-false} in
   true | false) ;;

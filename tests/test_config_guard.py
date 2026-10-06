@@ -1,6 +1,7 @@
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,9 @@ from pathlib import Path
 import yaml
 
 from support import BIN, ROOT, binary, run, validator_env
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import render  # noqa: E402
 
 GUARD = ROOT / "config" / "config-guard" / "guard.sh"
 LOKI_CONFIG = ROOT / "config" / "loki" / "loki.yaml"
@@ -54,6 +58,10 @@ class GuardCases:
         """(argv prefix, PATH) of the shell under test."""
         raise NotImplementedError
 
+    def script(self):
+        """The guard.sh under test: the repository file."""
+        return GUARD
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
@@ -69,7 +77,7 @@ class GuardCases:
         env = {"PATH": path, **VALID_ENV}
         env["CONFIG_GUARD_EXPECTED"] = f"{self.file}={self.sha}" if expected is None else expected
         env.update(overrides)
-        return run([*prefix, GUARD], env=env)
+        return run([*prefix, self.script()], env=env)
 
     def assert_fails(self, result, message):
         self.assertEqual(result.returncode, 1, result.stdout)
@@ -193,6 +201,15 @@ class GuardCases:
                 with self.subTest(name=name, value=value):
                     self.assert_fails(self.guard(**{name: value}), name)
 
+    def test_retention_messages_state_the_rules(self):
+        for name in ("LOKI_RETENTION_PROD", "LOKI_RETENTION_DEFAULT", "PROM_RETENTION_TIME"):
+            with self.subTest(name=name):
+                self.assert_fails(self.guard(**{name: "1h1d"}), f"{name} must be ")
+                self.assertIn("up to 292y, units y w d h m s ms once each in order", self.guard(**{name: "1h1d"}).stdout)
+        result = self.guard(PROM_RETENTION_SIZE="1.5GB")
+        self.assert_fails(result, "PROM_RETENTION_SIZE must be a non-zero integer and one unit, below 8EB")
+        self.assertIn("(B KB MB GB TB PB EB or KiB..EiB; empty: 100GB)", result.stdout)
+
     def test_tenant_regex_needs_sub_group(self):
         self.assertEqual(self.guard(TENANT_HOST_REGEX="").returncode, 0)
         self.assert_fails(self.guard(TENANT_HOST_REGEX=r"^([a-z]+)\.example\.me$"), "TENANT_HOST_REGEX")
@@ -288,6 +305,40 @@ class BusyboxGuardTest(GuardCases, unittest.TestCase):
 
     def shell(self):
         return [binary("busybox"), "sh"], str(binary("busybox-applets"))
+
+
+class StrippedGuard:
+    """The guard.sh Coolify writes: the compose content:, stripped of its full-line comments."""
+
+    def script(self):
+        path = self.dir / "guard.sh"
+        if not path.exists():
+            path.write_text(render.strip_comments(GUARD.read_text(encoding="utf-8"), str(GUARD)), encoding="utf-8")
+        return path
+
+
+class StrippedDashGuardTest(StrippedGuard, DashGuardTest):
+    """The stripped guard.sh under dash."""
+
+
+class StrippedBusyboxGuardTest(StrippedGuard, BusyboxGuardTest):
+    """The stripped guard.sh under busybox sh, as in the alpine image of config-guard."""
+
+
+class StrippedGuardTest(unittest.TestCase):
+    def test_stripped_guard_is_shorter_and_keeps_its_shebang(self):
+        text = GUARD.read_text(encoding="utf-8")
+        stripped = render.strip_comments(text, str(GUARD))
+        self.assertLess(len(stripped), len(text))
+        self.assertTrue(stripped.startswith("#!/bin/sh\n"))
+        self.assertEqual([line for line in stripped.split("\n")[1:] if line.lstrip().startswith("#")], [])
+
+    def test_compose_runs_the_stripped_guard(self):
+        compose = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
+        guard = compose["services"]["config-guard"]
+        content = guard["volumes"][0]["content"]
+        self.assertEqual(content, render.strip_comments(GUARD.read_text(encoding="utf-8"), str(GUARD)))
+        self.assertIn(hashlib.sha256(content.encode("utf-8")).hexdigest(), guard["command"][2])
 
 
 class GuardEnvironmentTest(unittest.TestCase):

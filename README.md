@@ -518,8 +518,13 @@ vérifie l'empreinte SHA-256 de chacun (liste `GRAFANA_SETUP_FILES` du compose, 
 fichier) et ne les exécute que si toutes correspondent.
 
 Le compose ne contient pas non plus les commentaires : `render.py` retire des fichiers YAML et
-Alloy qu'il y insère les lignes de commentaire et les lignes vides (l'empreinte est calculée
-après ce retrait). Les commentaires restent dans `config/`, mais n'apparaissent ni dans le compose
+Alloy qu'il y insère les lignes de commentaire et les lignes vides, et des scripts shell (`.sh`)
+et Python (`.py`) les seules lignes de commentaire : le shebang (`#!`) et les lignes vides restent.
+Pour Python, les commentaires sont repérés avec `tokenize`, si bien qu'une ligne commençant par
+`#` dans une chaîne reste ; pour le shell, `check.py` refuse un heredoc ou une chaîne entre
+guillemets sur plusieurs lignes dans un script inséré. Les empreintes (noms de fichiers,
+`CONFIG_GUARD_EXPECTED`, empreinte de `guard.sh` dans la commande de `config-guard`) sont calculées
+après ce retrait. Les commentaires restent dans `config/`, mais n'apparaissent ni dans le compose
 ni dans les fichiers que Coolify écrit sur le serveur ; `compose.dev.yaml` monte les fichiers du
 dépôt tels quels.
 

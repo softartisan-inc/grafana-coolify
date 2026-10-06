@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import sys
 import tempfile
@@ -154,7 +155,10 @@ class RenderedContentTest(unittest.TestCase):
     def test_only_setup_is_inlined(self):
         contents = [volume for volume in self.service["volumes"] if isinstance(volume, dict) and "content" in volume]
         self.assertEqual(len(contents), 1)
-        self.assertEqual(contents[0]["content"], SETUP.read_text(encoding="utf-8"))
+        # Inlined without its full-line comments (render.strip_comments): same program.
+        text = SETUP.read_text(encoding="utf-8")
+        self.assertEqual(contents[0]["content"], render.strip_comments(text, str(SETUP)))
+        self.assertEqual(ast.dump(ast.parse(contents[0]["content"])), ast.dump(ast.parse(text)))
 
     def test_repository_files_verify(self):
         with tempfile.TemporaryDirectory() as tmp:
