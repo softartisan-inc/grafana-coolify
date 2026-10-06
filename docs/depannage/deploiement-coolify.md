@@ -142,7 +142,12 @@ rétentions, `TEMPO_MAX_ACTIVE_SERIES`, `ENABLE_EXEMPLARS`) a un format invalide
 nulle, ou une rétention Loki (`LOKI_RETENTION_PROD`, `LOKI_RETENTION_DEFAULT`) est inférieure à
 `24h`, supérieure à `292y` ou mal ordonnée (`1h1d`). Loki refuse au démarrage une rétention de
 flux (`LOKI_RETENTION_PROD`) sous 24h ; `LOKI_RETENTION_DEFAULT` est aligné sur le même
-plancher, le minimum documenté par Loki.
+plancher, le minimum documenté par Loki. La même règle de durée vaut pour
+`PROM_RETENTION_TIME`, sans plancher : non nulle, au plus `292y`, unités `y w d h m s ms` chacune
+une seule fois et dans cet ordre (`90d`, `2w3d` ; pas `1h1d` ni `1d1d`). `PROM_RETENTION_SIZE` est
+un entier non nul suivi d'une seule unité, sous `8EB` : `B KB MB GB TB PB EB` ou `KiB`… `EiB`
+(puissances de 2 ; `100GB`, pas `1.5GB`, `1GB512MB` ni `100gb`). Les règles et les défauts de
+chaque variable sont dans le [tableau des variables](../installation/variables.md#rétention-et-réglages).
 
 **Correctif** : lire la ligne `ERROR`, corriger la variable, ou pour un fichier, vérifier que le
 compose déployé est le `docker-compose.yaml` généré à jour (`python3 scripts/check.py`), puis

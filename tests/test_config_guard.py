@@ -201,6 +201,15 @@ class GuardCases:
                 with self.subTest(name=name, value=value):
                     self.assert_fails(self.guard(**{name: value}), name)
 
+    def test_retention_messages_state_the_rules(self):
+        for name in ("LOKI_RETENTION_PROD", "LOKI_RETENTION_DEFAULT", "PROM_RETENTION_TIME"):
+            with self.subTest(name=name):
+                self.assert_fails(self.guard(**{name: "1h1d"}), f"{name} must be ")
+                self.assertIn("up to 292y, units y w d h m s ms once each in order", self.guard(**{name: "1h1d"}).stdout)
+        result = self.guard(PROM_RETENTION_SIZE="1.5GB")
+        self.assert_fails(result, "PROM_RETENTION_SIZE must be a non-zero integer and one unit, below 8EB")
+        self.assertIn("(B KB MB GB TB PB EB or KiB..EiB; empty: 100GB)", result.stdout)
+
     def test_tenant_regex_needs_sub_group(self):
         self.assertEqual(self.guard(TENANT_HOST_REGEX="").returncode, 0)
         self.assert_fails(self.guard(TENANT_HOST_REGEX=r"^([a-z]+)\.example\.me$"), "TENANT_HOST_REGEX")

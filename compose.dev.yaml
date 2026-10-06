@@ -40,7 +40,7 @@ services:
     command:
       - sh
       - -c
-      - "echo '8d25a1f67c6e6fe5242abed0c5299b32c590267169e672c7039009369f96e7e8  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
+      - "echo '972a52a5aedafed2f540aed8e44da694478a902106a1d3c202fb20d7fe145e7b  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=55d0b48e7f05b4b09fd05300a31cbd302fc5e00a46c460e55b1416e8544b7a20;/guard/grafana-setup/setup.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.yaml=03314b1798606e2df34068e561a8d7e338b3e6ab61cc2ab3024b9bd834968fc8;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/prometheus/start.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/tempo/tempo.yaml=216f8641f7da179cfbd6122ae491643652d30177f97232b4be0b58dd254785dd"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh

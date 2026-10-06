@@ -29,7 +29,7 @@ services:
     command:
       - sh
       - -c
-      - "echo '199a40bf5878f936b8825ad78f66f3c126a3267134bdfd42c9400b744df71a38  /opt/config-guard/guard.199a40bf.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.199a40bf.sh"
+      - "echo '0c61b885fccb9718253dfaa57e9c3fe02aa322a1920e4c4cda42564a9e3839e8  /opt/config-guard/guard.0c61b885.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.0c61b885.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.68351f56.py=68351f563802cf7f702133bf9f2a32d07644e8cc9c172854ae2d296a3ed9f701;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.8839df29.sh=8839df2975e953c5def06ee0fbf63cce7b43766649beaa1b929c9d800fa8d68e;/guard/tempo/tempo.d08f6ba0.yaml=d08f6ba01f1a2b4f6e33ff6e1748cdce0ac3582fa3ea23690eae6d25d2751d58"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
@@ -52,8 +52,8 @@ services:
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.199a40bf.sh
-        target: /opt/config-guard/guard.199a40bf.sh
+        source: ./config/config-guard/guard.0c61b885.sh
+        target: /opt/config-guard/guard.0c61b885.sh
         content: |2
           #!/bin/sh
           set -u
@@ -184,7 +184,7 @@ services:
               error "$1 $4"
             fi
           }
-          order='up to 292y, units in the order y w d h m s ms, such as'
+          order='up to 292y, units y w d h m s ms once each in order, such as'
           check_duration LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 86400000 "must be 24h $order 720h (empty: 720h)"
           check_duration LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
           check_duration PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" 1 "must be non-zero $order 90d (empty: 90d)"
@@ -205,7 +205,7 @@ services:
           }
           size=${PROM_RETENTION_SIZE:-}
           if [ -n "$size" ] && { ! matches "$size" '^[0-9]+(B|KB|MB|GB|TB|PB|EB|KiB|MiB|GiB|TiB|PiB|EiB)$' || ! size_in_range "$size"; }; then
-            error "PROM_RETENTION_SIZE must be a non-zero integer size below 8EB such as 100GB (empty: 100GB)"
+            error "PROM_RETENTION_SIZE must be a non-zero integer and one unit, below 8EB, such as 100GB (B KB MB GB TB PB EB or KiB..EiB; empty: 100GB)"
           fi
           case ${ENABLE_EXEMPLARS:-false} in
             true | false) ;;
