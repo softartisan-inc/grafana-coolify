@@ -53,6 +53,15 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | `middleware "gc-…@file" does not exist` (prévention) | [fichier dynamique](traefik.md#middleware-gc-file-does-not-exist) |
 | `401` OTLP avec le bon mot de passe (prévention) | [htpasswd](traefik.md#otlp--401-avec-le-bon-mot-de-passe) |
 
+## Ingestion Faro
+
+| Message ou symptôme | Page |
+|---|---|
+| `loki_process_dropped_lines_total{reason="unknown_service"}` augmente (prévention) | [service non listé](ingestion-faro.md#loki_process_dropped_lines_totalreasonunknown_service-augmente) |
+| `reason="invalid_env"`, `reason="missing_env"` (prévention) | [env du client](ingestion-faro.md#reasoninvalid_env-ou-reasonmissing_env-augmente) |
+| Lignes `immo-desktop` sans `tenant` (prévention) | [tenant retiré ou absent](ingestion-faro.md#lignes-du-desktop-stockées-sans-tenant) |
+| Traces du desktop absentes, logs présents (prévention) | [traces supprimées](ingestion-faro.md#traces-du-desktop-absentes-logs-présents) |
+
 ## Notifications
 
 | Message ou symptôme | Page |

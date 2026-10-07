@@ -590,8 +590,10 @@ avec son motif dans `loki_process_dropped_lines_total{reason=...}`, si son proje
 ni dans `FARO_SERVICES` ni un service de `HOST_MAP` (`unknown_service`). Une trace Faro dont le
 projet est absent de `PROJECTS` (liste renseignée) ou dont le service n'est pas autorisé est
 supprimée (`otelcol_processor_filter_spans_filtered_total{component_id="otelcol.processor.filter.faro"}`).
-Un tenant client hors de `[a-z0-9-]+` ou réservé est retiré. Pour les logs Faro, `env` et `tenant` sont
-**déduits de l'hôte de la page** :
+Un tenant client hors de `[a-z0-9-]+` ou réservé est retiré. Un client hors navigateur (desktop :
+`page_url` en `app://<service>/…`) n'a pas d'hôte reconnu : son `env` et son `tenant` sont pris du
+client et validés ([client desktop](docs/ajouter-un-projet.md#un-client-desktop-hors-navigateur)).
+Pour les logs Faro, `env` et `tenant` sont **déduits de l'hôte de la page** :
 
 | Variable | Exemple |
 |---|---|
