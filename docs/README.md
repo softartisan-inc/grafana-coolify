@@ -44,6 +44,7 @@ incidents rencontrés lors du premier déploiement réel**, avec leur correctif.
 - [grafana-setup](depannage/grafana-setup.md) ;
 - [Sources de données](depannage/sources-de-donnees.md) ;
 - [Traefik](depannage/traefik.md) ;
+- [Ingestion Faro](depannage/ingestion-faro.md) (rejets, `FARO_SERVICES`, client desktop) ;
 - [Notifications](depannage/notifications.md) ;
 - [Sécurité et fuites](depannage/securite-fuites.md).
 
