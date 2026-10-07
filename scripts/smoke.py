@@ -404,6 +404,80 @@ def faro_hosts(c):
             expect(host not in line and c.ip_hash(host) in line, f"page_url IP not hashed: {line}")
 
 
+# Desktop client (Electron): page_url is app://<service>/<route>, a host that is neither in
+# HOST_MAP nor matched by TENANT_HOST_REGEX, so env and tenant are the client's, validated
+# (spec 6.4 last row, 6.5). (client environment, client tenant, stored tenant); None = absent.
+DESKTOP_CASES = [
+    ("prod", "acme", "acme"),
+    ("preprod", "acme", "acme"),
+    ("prod", None, None),
+    ("prod", "Acme Corp", None),
+    ("prod", "RESERVED", None),
+]
+
+
+@section("faro-desktop")
+def faro_desktop(c):
+    """12.3.2 (desktop): an app:// page keeps the client env and tenant once validated; a forged tenant is
+    removed, a forged env or an unlisted service is dropped with its reason, on logs and traces."""
+    page_url = f"app://{c.faro_service}/actifs/{{id}}"
+    reserved = next((r for r in c.s.get("RESERVED_SUBDOMAINS", "").split(",") if r), None)
+    for index, (env, client_tenant, tenant) in enumerate(DESKTOP_CASES):
+        if client_tenant == "RESERVED":
+            if not reserved:
+                continue
+            client_tenant = reserved
+        token = f"desktop-{index}-{c.run}"
+        attributes = {"tenant": client_tenant} if client_tenant else {}
+        payload = g.faro_payload(c.faro_app(environment=env), page_url, logs=[g.faro_log(token)], session_attributes=attributes)
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+        labels, line, meta = c.wait_logs(f'{{project="{c.faro_project}"}} |= "{token}"')[0]
+        expect(labels == {"project": c.faro_project, "env": env, "service_name": c.faro_service}, f"desktop ({env}, {client_tenant}): labels {labels}")
+        expect(meta.get("tenant") == tenant, f"desktop ({env}, {client_tenant}): tenant {meta.get('tenant')} != {tenant}")
+        expect(f"page_url={page_url}" in line, f"desktop page_url rewritten: {line}")
+    alloy = c.s["GC_ALLOY_METRICS_URL"]
+    metric = "loki_process_dropped_lines_total"
+    app = c.faro_app(environment="prod")
+    cases = {
+        "invalid_env": dict(app, environment="staging"),
+        "missing_env": {k: v for k, v in app.items() if k != "environment"},
+        "unknown_service": dict(app, name=f"unlisted-{c.run}"),
+    }
+    before = {reason: g.metric_value(g.scrape(alloy), metric, {"reason": reason}) for reason in cases}
+    for reason, case_app in cases.items():
+        payload = g.faro_payload(case_app, page_url, logs=[g.faro_log(f"desktop-{reason}-{c.run}")], session_attributes={"tenant": "acme"})
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    def counted():
+        text = g.scrape(alloy)
+        return all(g.metric_value(text, metric, {"reason": r}) >= before[r] + 1 for r in cases)
+
+    g.wait_for(counted, f"{metric} +1 for {sorted(cases)}", timeout=30)
+    for reason in cases:
+        stored = [e for label in sorted(INDEXED) for e in c.logs(f'{{{label}=~".+"}} |= "desktop-{reason}-{c.run}"')]
+        expect(not stored, f"desktop line {reason} stored: {stored}")
+    # Traces: the desktop rewrites its resource (deployment.environment.name, service.*, tenant).
+    trace_id = g.new_trace_id()
+    resource = {"service.name": c.faro_service, "service.namespace": c.faro_project, "deployment.environment.name": "preprod", "tenant": "acme"}
+    payload = g.faro_payload(app, page_url, traces=g.otlp_traces(resource, [g.span(trace_id, "GET", kind=3)]))
+    g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    resource_attrs, _ = g.trace_resources_and_spans(c.wait_trace(trace_id))[0]
+    expect(resource_attrs.get("env") == "preprod" and resource_attrs.get("tenant") == "acme", f"desktop trace resource: {resource_attrs}")
+    expect(resource_attrs.get("project") == c.faro_project, f"desktop trace project: {resource_attrs}")
+    expect(resource_attrs.get("service.name") == c.faro_service, f"desktop trace service: {resource_attrs}")
+    # A forged env or tenant on a trace: the span is dropped (env) or the tenant removed.
+    filtered, default_filter = "otelcol_processor_filter_spans_filtered_total", {"component_id": "otelcol.processor.filter.default"}
+    before_spans = g.metric_value(g.scrape(alloy), filtered, default_filter)
+    staging_id, forged_id = g.new_trace_id(), g.new_trace_id()
+    for tid, env, tenant in ((staging_id, "staging", "acme"), (forged_id, "prod", "Acme Corp")):
+        forged = dict(resource, **{"deployment.environment.name": env, "tenant": tenant})
+        payload = g.faro_payload(app, page_url, traces=g.otlp_traces(forged, [g.span(tid, "GET", kind=3)]))
+        g.send_faro(c.s["GC_FARO_URL"], payload, c.s["FARO_API_KEY"])
+    forged_attrs, _ = g.trace_resources_and_spans(c.wait_trace(forged_id))[0]
+    expect("tenant" not in forged_attrs, f"forged desktop tenant kept: {forged_attrs}")
+    g.wait_for(lambda: g.metric_value(g.scrape(alloy), filtered, default_filter) >= before_spans + 1, f"{filtered} {default_filter} +1", timeout=30)
+    expect(g.tempo_trace(c.s["GC_TEMPO_URL"], staging_id) is None, "desktop trace with env=staging reached Tempo")
+
+
 @section("faro-names")
 def faro_names(c):
     """12.3.1 + 12.3.9 (logs): Faro logs use the Loki names of the OTLP path; app.* mapping."""
