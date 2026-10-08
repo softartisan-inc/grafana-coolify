@@ -47,8 +47,21 @@ class TempoConfigTest(unittest.TestCase):
         remote_write = generator["storage"]["remote_write"]
         self.assertEqual(remote_write, [{"url": "http://prometheus:9090/api/v1/write", "send_exemplars": "${ENABLE_EXEMPLARS:-false}"}])
         defaults = self.doc["overrides"]["defaults"]["metrics_generator"]
-        self.assertEqual(defaults["processors"], ["span-metrics", "service-graphs"])
+        self.assertEqual(defaults["processors"], ["span-metrics", "service-graphs", "local-blocks"])
         self.assertEqual(defaults["max_active_series"], "${TEMPO_MAX_ACTIVE_SERIES:-100000}")
+
+    def test_traceql_metrics_local_blocks(self):
+        # TraceQL metrics (Traces Drilldown) answer "localblocks processor not found" without it.
+        self.assertIn("local-blocks", self.doc["overrides"]["defaults"]["metrics_generator"]["processors"])
+        generator = self.doc["metrics_generator"]
+        self.assertEqual(generator["traces_storage"]["path"], "${TEMPO_DATA_DIR}/generator/traces")
+        local_blocks = generator["processor"]["local_blocks"]
+        self.assertIs(local_blocks["filter_server_spans"], False)
+        self.assertEqual(local_blocks["max_live_traces"], 10000)
+        self.assertEqual(local_blocks["max_live_traces_bytes"], 100_000_000)
+        self.assertEqual(local_blocks["max_block_bytes"], 100_000_000)
+        self.assertEqual(local_blocks["complete_block_timeout"], "1h")
+        self.assertNotIn("flush_to_storage", local_blocks)
 
 
 if __name__ == "__main__":

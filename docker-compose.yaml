@@ -31,7 +31,7 @@ services:
       - -c
       - "echo '0c61b885fccb9718253dfaa57e9c3fe02aa322a1920e4c4cda42564a9e3839e8  /opt/config-guard/guard.0c61b885.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.0c61b885.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.68351f56.py=68351f563802cf7f702133bf9f2a32d07644e8cc9c172854ae2d296a3ed9f701;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.8839df29.sh=8839df2975e953c5def06ee0fbf63cce7b43766649beaa1b929c9d800fa8d68e;/guard/tempo/tempo.d08f6ba0.yaml=d08f6ba01f1a2b4f6e33ff6e1748cdce0ac3582fa3ea23690eae6d25d2751d58"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.68351f56.py=68351f563802cf7f702133bf9f2a32d07644e8cc9c172854ae2d296a3ed9f701;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.8839df29.sh=8839df2975e953c5def06ee0fbf63cce7b43766649beaa1b929c9d800fa8d68e;/guard/tempo/tempo.86df7701.yaml=86df7701962c324e02857df241d356bc8532b6d712eaef3fdf4e7624da043621"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
       # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
@@ -336,7 +336,7 @@ services:
       config-guard:
         condition: service_completed_successfully
     command:
-      - -config.file=/etc/tempo/tempo.d08f6ba0.yaml
+      - -config.file=/etc/tempo/tempo.86df7701.yaml
       - -config.expand-env=true
     environment:
       BIND_ADDR: 0.0.0.0
@@ -346,8 +346,8 @@ services:
       ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-false}
     volumes:
       - type: bind
-        source: ./config/tempo/tempo.d08f6ba0.yaml
-        target: /etc/tempo/tempo.d08f6ba0.yaml
+        source: ./config/tempo/tempo.86df7701.yaml
+        target: /etc/tempo/tempo.86df7701.yaml
         content: |2
           stream_over_http_enabled: true
           server:
@@ -392,6 +392,12 @@ services:
                 dimensions:
                   - project
                   - env
+              local_blocks:
+                filter_server_spans: false
+                max_live_traces: 10000
+                max_live_traces_bytes: 100000000
+                max_block_bytes: 100000000
+                complete_block_timeout: 1h
             registry:
               external_labels:
                 source: tempo
@@ -415,6 +421,7 @@ services:
                 processors:
                   - span-metrics
                   - service-graphs
+                  - local-blocks
                 max_active_series: ${TEMPO_MAX_ACTIVE_SERIES:-100000}
           usage_report:
             reporting_enabled: false

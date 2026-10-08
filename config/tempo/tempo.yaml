@@ -58,6 +58,20 @@ metrics_generator:
       dimensions:
         - project
         - env
+    # TraceQL metrics (`| rate()`, Traces Drilldown): without this processor Tempo answers
+    # "localblocks processor not found". It answers the last 30 min (query_frontend
+    # query_backend_after) from blocks it keeps on disk under traces_storage; older ranges read
+    # the regular blocks. Keys checked against Tempo 2.10 (docs and -config.verify).
+    local_blocks:
+      # All spans, not only root/server ones, like the backend blocks: Drilldown "All spans" mode.
+      filter_server_spans: false
+      # Memory bound on traces being assembled (defaults: no count limit, 250 MB): 10000 traces,
+      # the ingester's max_traces_per_user, and 100 MB, inside tempo's 1536m mem_limit.
+      max_live_traces: 10000
+      max_live_traces_bytes: 100000000
+      # Disk bound: blocks of at most 100 MB, dropped 1h after completion (Tempo default).
+      max_block_bytes: 100000000
+      complete_block_timeout: 1h
   registry:
     external_labels:
       source: tempo
@@ -84,6 +98,7 @@ overrides:
       processors:
         - span-metrics
         - service-graphs
+        - local-blocks
       max_active_series: ${TEMPO_MAX_ACTIVE_SERIES:-100000}
 
 usage_report:
