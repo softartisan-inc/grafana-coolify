@@ -67,7 +67,17 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
   Coolify tente de l'interpréter.
 - Les domaines publics `SERVICE_FQDN_ALLOY_12347` (Faro) et `SERVICE_FQDN_ALLOY_GATEWAY_4318`
   (OTLP) sont générés par Coolify : renseigner le domaine de chaque service dans l'onglet de la
-  ressource, par exemple `https://faro.example.com:12347` et `https://otlp.example.com:4318`.
+  ressource, **sans port** (`https://faro.example.com`, `https://otlp.example.com`), et mettre
+  dans le champ **Internal port** de ce domaine le port du conteneur : `12347` pour `alloy`,
+  `4318` pour `alloy-gateway` (vérifié sur Coolify v4.3.23). **Save** en confirmant
+  l'avertissement sur le port s'il s'affiche (sinon Coolify restaure l'ancienne valeur sans le
+  dire), puis **Redeploy** de la ressource entière (un Restart ne régénère pas les
+  labels Traefik). Le port routé par défaut est le premier de `expose` (12347 et 4318 dans ce
+  compose), mais un **Internal port** déjà enregistré l'emporte. Versions plus anciennes de
+  Coolify (sans champ **Internal port**) : saisir le port dans l'URL,
+  `https://faro.example.com:12347` et `https://otlp.example.com:4318`. Symptôme d'un mauvais
+  port (`POST /collect` → `500 Internal Server Error`) et vérification :
+  [dépannage](docs/depannage/deploiement-coolify.md#faro--500-internal-server-error-sur-collect).
   **Ne pas ajouter soi-même** de variable `SERVICE_FQDN_*` dans **Environment Variables** :
   Coolify les crée quand un domaine est renseigné (et n'en crée aucune pour un service sans
   domaine, ce qui garde le point Faro fermé).
@@ -81,8 +91,9 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
   chacun de ces deux services dans la ressource, **vider le champ Domains** de `alloy-gateway`
   (tant qu'aucun serveur distant n'envoie d'OTLP) et de `alloy` (tant qu'aucune application
   n'est instrumentée avec Faro), enregistrer et redéployer. Pour ouvrir Faro plus tard, saisir
-  le domaine **avec le port** : `https://faro.example.com:12347` (le `:12347` désigne le port du
-  conteneur, pas un port public) ; de même `https://otlp.example.com:4318` pour OTLP.
+  `https://faro.example.com` avec **Internal port** `12347` (OTLP : `https://otlp.example.com`,
+  port `4318`) ; ce port désigne le conteneur, le public reste sur 443. Sur une version de
+  Coolify sans ce champ, le port s'écrit dans l'URL (`https://faro.example.com:12347`).
 - `config-guard` refuse de démarrer la stack si `IP_HASH_SALT`, `FARO_API_KEY`, `PROJECTS`,
   `FARO_SERVICES`, `HOST_MAP`, `RESERVED_SUBDOMAINS` ou `TENANT_HOST_REGEX` ont un format invalide :
   le message d'erreur est dans les logs de `config-guard`.

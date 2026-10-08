@@ -72,9 +72,53 @@ Juste après le premier déploiement :
    Faro) → **Save**.
 3. **Redeploy**.
 
-Pour ouvrir un point plus tard, saisir le domaine **avec le port du conteneur** :
-`https://faro.example.com:12347` pour `alloy`, `https://otlp.example.com:4318` pour
-`alloy-gateway` (le port désigne le conteneur ; le public reste sur 443).
+### Ouvrir Faro ou OTLP
+
+Comportement vérifié sur **Coolify v4.3.23** : sous chaque domaine, un champ **Internal port**
+donne le port du conteneur vers lequel Traefik envoie les requêtes (le public reste sur 443).
+
+| Service | Domains (sans port) | Internal port |
+|---|---|---|
+| `alloy` (Faro) | `https://faro.example.com` | `12347` |
+| `alloy-gateway` (OTLP/HTTP) | `https://otlp.example.com` | `4318` |
+
+1. Service → **Domains** : saisir le domaine **sans** `:port`, puis le port dans **Internal
+   port** → **Save**. Si Coolify ouvre une fenêtre d'avertissement sur le port (port saisi
+   différent de celui qu'il attend), la **confirmer** : sans confirmation, Coolify restaure
+   **sans le dire** le domaine et le port précédents, et rien n'est enregistré.
+2. **Redeploy** de la ressource entière. **Restart** ne suffit pas : il relance les conteneurs avec
+   leurs anciens labels Traefik.
+3. Vérifier le port réellement routé (voir ci-dessous).
+
+Ordre de choix du port (v4.3.23) : port écrit dans l'URL, puis **Internal port** enregistré
+pour ce domaine, puis port par défaut du service : pour une **Application** (ce dépôt), le
+**premier port tcp de `expose`** ; pour un **Service**, le suffixe de
+`SERVICE_FQDN_<SERVICE>_<PORT>`, sinon le premier port de `expose`. Le compose
+met `12347` en tête pour `alloy` et `4318` pour `alloy-gateway` (contrôle `ports` de
+`scripts/check.py`). Une valeur déjà enregistrée dans **Internal port** l'emporte toujours :
+un `4317` (OTLP gRPC) resté là d'un déploiement antérieur envoie Faro au mauvais port.
+
+**Le champ garde 4317 malgré la correction** (valeur enregistrée par domaine) :
+
+1. Supprimer le domaine du service → **Save** → **Redeploy**.
+2. Ressaisir le domaine sans port et **Internal port** `12347` → **Save** → **Redeploy**.
+
+**Vérification**, sur l'hôte (le motif `^alloy-<uuid>` n'attrape pas `alloy-gateway-<uuid>`) :
+
+```bash
+docker inspect $(docker ps --format '{{.Names}}' | grep '^alloy-<uuid>' | head -1) | grep loadbalancer.server.port
+```
+
+Attendu : `…loadbalancer.server.port=12347` (`4318` pour `alloy-gateway-<uuid>`). Puis un
+`POST https://faro.example.com/collect` ne répond plus `500` (voir
+[dépannage](../depannage/deploiement-coolify.md#faro--500-internal-server-error-sur-collect)).
+
+**Versions plus anciennes de Coolify** (pas de champ **Internal port**) : le port s'écrit dans
+l'URL, `https://faro.example.com:12347` pour `alloy`, `https://otlp.example.com:4318` pour
+`alloy-gateway`.
+
+Derrière Cloudflare ou un autre proxy, la limite de débit Faro doit lire l'IP du client :
+`ipStrategy.depth: 1` et `trustedIPs` ([limite de débit](traefik.md#limite-de-débit)).
 
 ## 6. Contrôler
 

@@ -125,6 +125,44 @@ def port_violations(compose_json):
     return [f"{name}: declares ports: {service['ports']}" for name, service in sorted(compose_json["services"].items()) if service.get("ports")]
 
 
+# SERVICE_FQDN_<NAME>_<PORT> / SERVICE_URL_<NAME>_<PORT>: the port Traefik must route to.
+ROUTE_VAR_RE = re.compile(r"^SERVICE_(?:FQDN|URL)_[A-Z0-9_]+?_([0-9]{1,5})$")
+
+
+def first_tcp_port(expose):
+    """First tcp port of `expose`, the port Coolify routes a domain to when none is given."""
+    for entry in expose or []:
+        text = str(entry)
+        if "/" in text and text.rsplit("/", 1)[1] != "tcp":
+            continue
+        port = text.split("/", 1)[0].rsplit(":", 1)[-1]
+        if port.isdigit():
+            return int(port)
+    return None
+
+
+def route_port_violations(compose_json):
+    """A service with a SERVICE_FQDN_*_<port> variable lists that port first in `expose`.
+
+    Coolify (firstDockerComposeServicePort) sends a domain saved without a port, or without an
+    "Internal port" override, to the first port of `expose`: alloy once routed Faro to 4317.
+    """
+    errors = []
+    for name, service in sorted(compose_json["services"].items()):
+        environment = service.get("environment") or {}
+        keys = environment if isinstance(environment, dict) else [str(item).split("=", 1)[0] for item in environment]
+        for key in sorted(keys):
+            match = ROUTE_VAR_RE.match(key)
+            if not match:
+                continue
+            port = int(match.group(1))
+            first = first_tcp_port(service.get("expose"))
+            if first != port:
+                found = "no expose entry" if first is None else f"the first expose entry is {first}"
+                errors.append(f"{name}: {key} routes port {port}, but {found} (Coolify's default routed port)")
+    return errors
+
+
 def limit_violations(compose_json):
     """Every service has mem_limit and cpus (spec 9.4)."""
     errors = []
@@ -318,7 +356,7 @@ def check_compose():
 
 
 def check_ports():
-    return port_violations(compose_json())
+    return port_violations(compose_json()) + route_port_violations(compose_json())
 
 
 def check_env():

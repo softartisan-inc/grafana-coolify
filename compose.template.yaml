@@ -230,11 +230,13 @@ services:
     labels:
       # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
       - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
+    # Faro first: Coolify routes a domain saved without an "Internal port" to the first port of
+    # `expose` (scripts/check.py, ports). 4317/4318 stay internal (OTLP from the same host).
     expose:
+      - "12347"
       - "4317"
       - "4318"
       - "12345"
-      - "12347"
     networks:
       default: {}
       coolify:
@@ -274,6 +276,7 @@ services:
       - /var/lib/alloy:mode=1777,size=64m
     labels:
       - coolify.traefik.middlewares=gc-otlp-auth@file
+    # OTLP/HTTP first: the port Coolify routes the public domain to (scripts/check.py, ports).
     expose:
       - "4318"
       - "12345"
