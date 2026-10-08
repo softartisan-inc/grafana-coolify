@@ -9,7 +9,7 @@ traces et métriques :
 | `alloy` | Collecteur : OTLP interne (4317/4318) et Faro (12347), masquage, étiquetage, filtrage, routage | Faro public via Traefik |
 | `alloy-gateway` | Relais OTLP/HTTP authentifié (Basic Auth par projet) vers `alloy` | OTLP public via Traefik |
 | `loki` | Logs (rétention prod 30 j, reste 7 j) | interne |
-| `tempo` | Traces (7 j) et métriques dérivées (span-metrics, carte des services) | interne |
+| `tempo` | Traces (7 j), métriques dérivées (span-metrics, carte des services) et métriques TraceQL (Traces Drilldown) | interne |
 | `prometheus` | Métriques (90 j), récepteurs OTLP et remote write, scrape de la stack | interne |
 | `node-exporter` | Métriques de l'hôte (montages en lecture seule) | interne |
 | `config-guard` | Ponctuel : vérifie les fichiers de config et les variables avant tout démarrage | — |
@@ -395,6 +395,29 @@ binaires (`24MB` = 24 Mio ; les `*_mb` aussi) : la rafale contient trois des plu
 (32 Mio). Au-delà de ces hypothèses (enregistrements plus gros, plus de 8 Gio en attente sur un
 seul flux), des lots peuvent encore être abandonnés : raccourcir la panne ou relever ces
 plafonds ensemble.
+
+### Métriques TraceQL (processeur `local-blocks`)
+
+Les requêtes TraceQL de métriques (`| rate()`, `| count_over_time()`…), dont **Traces
+Drilldown** dans Grafana, exigent le processeur `local-blocks` du `metrics_generator` de Tempo
+(`config/tempo/tempo.yaml`) ; sans lui, Tempo répond `localblocks processor not found`
+([dépannage](docs/depannage/sources-de-donnees.md#localblocks-processor-not-found-traces-drilldown-métriques-traceql)).
+La dernière demi-heure (`query_backend_after`, défaut de Tempo) est lue dans les blocs de ce
+processeur, le reste dans les blocs habituels de Tempo. Réglages (clés de Tempo 2.10, vérifiées
+par `tempo -config.verify`) et coût :
+
+- `filter_server_spans: false` : tous les spans, comme les blocs habituels, pour que le mode
+  « All spans » de Drilldown compte la même chose avant et après 30 min ;
+- mémoire : traces en cours d'assemblage bornées à 10 000 (`max_live_traces`, la limite de
+  l'ingester) et 100 Mo (`max_live_traces_bytes`, défaut de Tempo 250 Mo) ; au-delà, les
+  nouvelles traces sont ignorées par ce processeur seulement (stockage et span-metrics
+  inchangés) ; le `mem_limit` de `tempo` (1536m) est inchangé ;
+- disque : une **seconde copie de la dernière heure environ** de spans dans le volume
+  `tempo-data` (`generator/traces`) : blocs coupés à 100 Mo (`max_block_bytes`) ou 1 min
+  (défaut), supprimés 1 h après (`complete_block_timeout`), indépendamment de `TEMPO_RETENTION` ;
+- `flush_to_storage` reste à `false` (défaut) : ces blocs ne sont pas écrits dans le stockage
+  des traces, qui garde seulement les blocs habituels ;
+- une requête de métriques couvre au plus 3 h (`query_frontend.metrics.max_duration`, défaut).
 
 ## Tableaux de bord et alertes
 

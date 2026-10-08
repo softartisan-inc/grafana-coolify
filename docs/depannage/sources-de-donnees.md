@@ -96,3 +96,35 @@ pas sur le réseau `coolify`. **Correctif** : `http://gc-alloy:4318` (OTLP/HTTP)
 `gc-alloy:4317` (gRPC), et **Connect To Predefined Network** sur la ressource de l'application.
 Cette option ne concerne que les applications au build pack **Docker Compose** : une application
 Nixpacks ou Dockerfile est déjà rattachée au réseau `coolify`.
+
+## `localblocks processor not found` (Traces Drilldown, métriques TraceQL)
+
+**Symptôme** : dans Grafana, **Explore → Traces Drilldown** (ou toute requête TraceQL qui se
+termine par `| rate()`, `| count_over_time()`…) reste vide avec une erreur `500`, par exemple pour
+`{nestedSetParent<0 && true && resource.service.name != nil} | rate() by(resource.service.name)` :
+
+```
+error querying generators in Querier.queryRangeRecent: failed to get response from generators: … localblocks processor not found
+```
+
+La recherche de traces (TraceQL sans `|`) et les tableaux span-metrics fonctionnent.
+
+**Cause** : les métriques TraceQL lisent la dernière demi-heure dans le processeur `local-blocks`
+du `metrics_generator` de Tempo. Avant la PR qui l'ajoute, `config/tempo/tempo.yaml` n'activait
+que `span-metrics` et `service-graphs`.
+
+**Correctif** : déployer un `config/tempo/tempo.yaml` qui liste `local-blocks` dans
+`overrides.defaults.metrics_generator.processors` : une fois ce changement sur la branche que
+suit Coolify, **Redeploy** de la ressource `grafana-coolify` (un Restart ne suffit pas : le
+fichier monté porte l'empreinte de son contenu dans son nom, seul un Redeploy l'écrit). Rien à changer dans les variables ni dans Grafana. Coût et bornes : README,
+« Métriques TraceQL (processeur `local-blocks`) ».
+
+**Vérification** : Traces Drilldown affiche les débits par service ; depuis un conteneur du
+réseau `coolify`, la même requête répond `200` :
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -G http://gc-tempo:3200/api/metrics/query_range --data-urlencode 'q={resource.service.name != nil} | rate() by(resource.service.name)' --data-urlencode "start=$(($(date +%s)-1800))" --data-urlencode "end=$(date +%s)" --data-urlencode step=60s
+```
+
+Juste après le redéploiement, seuls les spans reçus depuis le redémarrage de Tempo sont comptés
+pour la dernière demi-heure ; au-delà, Tempo lit ses blocs habituels.
