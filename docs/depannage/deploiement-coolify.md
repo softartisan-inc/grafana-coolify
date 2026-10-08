@@ -80,10 +80,52 @@ sans le port attendu).
 
 **Correctif** : vider **Domains** d'`alloy-gateway` et d'`alloy` tant qu'ils ne servent pas,
 **Save**, **Redeploy** ([étape 5](../installation/deploiement-coolify.md#5-retirer-les-domaines-générés-doffice)).
-Pour les ouvrir : `https://faro.example.com:12347`, `https://otlp.example.com:4318`.
+Pour les ouvrir : domaine sans port et **Internal port** `12347` (Faro) ou `4318` (OTLP)
+([ouvrir Faro ou OTLP](../installation/deploiement-coolify.md#ouvrir-faro-ou-otlp)).
 
 **Vérification** : `curl -sI http://alloy-<uuid>.<wildcard>` ne répond plus par le service
 (404 de Traefik).
+
+## Faro : `500 Internal Server Error` sur `/collect`
+
+**Symptôme** : le domaine Faro est en place, mais `POST https://faro.example.com/collect`
+répond `500` (`Internal Server Error`), sans aucune ligne dans les logs d'`alloy`. Le SDK Faro
+des applications n'envoie rien.
+
+**Cause** : Traefik route le domaine vers le mauvais port du conteneur `alloy`, en général
+`4317` (OTLP **gRPC**), qui ne parle pas HTTP/1 : Traefik renvoie `500`. Coolify choisit le
+port dans cet ordre (vérifié sur v4.3.23) : le port écrit dans l'URL, puis le champ
+**Internal port** enregistré pour ce domaine, puis le port par défaut du service (suffixe de
+`SERVICE_FQDN_<SERVICE>_<PORT>` ou premier port de `expose`). Avant ce correctif, `4317` était le premier port
+de `expose` d'`alloy` ; un **Internal port** enregistré à `4317` reste en place même après la
+mise à jour du compose.
+
+**Vérification du port routé**, sur l'hôte :
+
+```bash
+docker inspect $(docker ps --format '{{.Names}}' | grep '^alloy-<uuid>' | head -1) | grep loadbalancer.server.port
+```
+
+Attendu : `12347`. Toute autre valeur (`4317`, `4318`, `12345`) confirme la cause.
+
+**Correctif** ([ouvrir Faro ou OTLP](../installation/deploiement-coolify.md#ouvrir-faro-ou-otlp)) :
+
+1. Service `alloy` → **Domains** : `https://faro.example.com` (sans port), **Internal port**
+   `12347` → **Save** (confirmer la fenêtre d'avertissement sur le port si elle s'ouvre : sans
+   confirmation, Coolify restaure en silence l'ancienne valeur) → **Redeploy** de la ressource
+   entière (pas **Restart** : les labels ne seraient pas régénérés).
+2. Si le champ revient à `4317` ou si le label ne change pas : supprimer le domaine → **Save**
+   → **Redeploy**, puis ressaisir le domaine et **Internal port** `12347` → **Save** →
+   **Redeploy**.
+3. Versions plus anciennes de Coolify (sans champ **Internal port**) :
+   `https://faro.example.com:12347` dans **Domains**.
+
+Même logique pour `alloy-gateway` : port `4318` (le seul que Traefik doit joindre).
+
+**Vérification** : le label vaut `12347`, et une requête depuis une origine autorisée n'est
+plus en `500` (un `400` ou `401` sans clé Faro valide prouve qu'Alloy répond). Derrière
+Cloudflare, des `429` en série ensuite relèvent de la
+[limite de débit](../installation/traefik.md#limite-de-débit) (`ipStrategy.depth: 1`).
 
 ## Sentinel Out of sync
 

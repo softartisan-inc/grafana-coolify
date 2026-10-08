@@ -22,7 +22,7 @@ réseau interne (`ALLOY_INTERNAL_URL`), sans mot de passe.
 | Situation | Que faire |
 |---|---|
 | Tout tourne sur ce serveur | Laisser `alloy-gateway` **sans domaine** (porte fermée). Remplacer quand même la ligne d'exemple par une vraie, par hygiène. |
-| Un projet envoie depuis un autre serveur | Une ligne par projet, et un domaine pour `alloy-gateway` (`https://otlp.example.com:4318`). |
+| Un projet envoie depuis un autre serveur | Une ligne par projet, et un domaine pour `alloy-gateway` : `https://otlp.example.com`, **Internal port** `4318` ([ouvrir Faro ou OTLP](deploiement-coolify.md#ouvrir-faro-ou-otlp)). |
 
 Générer une ligne, sur votre poste :
 

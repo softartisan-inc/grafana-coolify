@@ -4,6 +4,8 @@ import io
 import sys
 import unittest
 
+import yaml
+
 from support import ROOT, run
 
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -91,6 +93,39 @@ class PortsTest(unittest.TestCase):
         compose = {"services": {"loki": {"expose": ["3100"]}, "bad": {"ports": [{"target": 3100, "published": "3100"}]}}}
         self.assertEqual(len(check.port_violations(compose)), 1)
         self.assertEqual(check.port_violations({"services": {"loki": {"expose": ["3100"]}}}), [])
+
+
+class RoutePortTest(unittest.TestCase):
+    """Coolify routes a domain without an explicit port to the FIRST tcp port of `expose`."""
+
+    def test_routed_port_must_be_first(self):
+        compose = {"services": {"alloy": {"environment": {"SERVICE_FQDN_ALLOY_12347": "x"}, "expose": ["4317", "12347"]}}}
+        self.assertEqual(
+            check.route_port_violations(compose),
+            ["alloy: SERVICE_FQDN_ALLOY_12347 routes port 12347, but the first expose entry is 4317 (Coolify's default routed port)"],
+        )
+
+    def test_missing_port_and_url_variables(self):
+        compose = {"services": {"a": {"environment": {"SERVICE_URL_A_8080": None}, "expose": ["3000"]}, "b": {"environment": {"SERVICE_FQDN_B_80": None}}}}
+        self.assertEqual(len(check.route_port_violations(compose)), 2)
+
+    def test_accepted(self):
+        compose = {
+            "services": {
+                "alloy": {"environment": {"SERVICE_FQDN_ALLOY_12347": None, "X": "1"}, "expose": ["12347/tcp", "4317"]},
+                "gw": {"environment": ["SERVICE_FQDN_GW_4318", "Y=2"], "expose": [4318, "12345"]},
+                "udp": {"environment": {"SERVICE_FQDN_UDP_53": None}, "expose": ["53/udp", "53"]},
+                "plain": {"environment": {"SERVICE_FQDN_PLAIN": None}, "expose": ["9000"]},
+                "internal": {"expose": ["3100"]},
+            }
+        }
+        self.assertEqual(check.route_port_violations(compose), [])
+
+    def test_template_routes_its_public_ports_first(self):
+        template = yaml.safe_load((ROOT / "compose.template.yaml").read_text(encoding="utf-8").replace("@@", "x"))
+        self.assertEqual(check.route_port_violations(template), [])
+        self.assertEqual(template["services"]["alloy"]["expose"][0], "12347")
+        self.assertEqual(template["services"]["alloy-gateway"]["expose"][0], "4318")
 
 
 class LimitsTest(unittest.TestCase):

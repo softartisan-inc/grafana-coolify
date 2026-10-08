@@ -17,6 +17,8 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | Le terminal affiche `>` et attend | terminal | [heredoc](deploiement-coolify.md#le-terminal-affiche--et-attend-heredoc) |
 | `/etc/fail2ban/jail.d/…: No such file or directory` | hôte | [fail2ban non installé](../serveur/durcissement.md#a-fail2ban) |
 | Domaines `alloy-<uuid>.<wildcard>` remplis sans demande | Coolify | [domaines générés](deploiement-coolify.md#faro-et-otlp-exposés-sans-domaine-demandé) |
+| `POST /collect` → `500 Internal Server Error`, label `loadbalancer.server.port=4317` | domaine Faro | [mauvais port routé](deploiement-coolify.md#faro--500-internal-server-error-sur-collect) |
+| **Internal port** reste à `4317` après correction | Coolify | [port enregistré](deploiement-coolify.md#faro--500-internal-server-error-sur-collect) |
 | Sentinel **Out of sync** | Coolify | [Sentinel](deploiement-coolify.md#sentinel-out-of-sync) |
 | `service "config-guard" didn't complete successfully: exit 1` | log de déploiement | [lire la raison](deploiement-coolify.md#service-config-guard-didnt-complete-successfully-exit-1) |
 | `config-guard: FAILED - no service will start` | logs `config-guard` | [config-guard](deploiement-coolify.md#config-guard-failed---no-service-will-start) |
