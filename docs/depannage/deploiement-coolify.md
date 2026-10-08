@@ -95,8 +95,9 @@ des applications n'envoie rien.
 **Cause** : Traefik route le domaine vers le mauvais port du conteneur `alloy`, en général
 `4317` (OTLP **gRPC**), qui ne parle pas HTTP/1 : Traefik renvoie `500`. Coolify choisit le
 port dans cet ordre (vérifié sur v4.3.23) : le port écrit dans l'URL, puis le champ
-**Internal port** enregistré pour ce domaine, puis le port par défaut du service (suffixe de
-`SERVICE_FQDN_<SERVICE>_<PORT>` ou premier port de `expose`). Avant ce correctif, `4317` était le premier port
+**Internal port** enregistré pour ce domaine, puis le port par défaut du service : pour une
+**Application** (ce dépôt), le premier port tcp de `expose` ; pour un **Service**, le suffixe
+de `SERVICE_FQDN_<SERVICE>_<PORT>`, sinon le premier port de `expose`. Avant ce correctif, `4317` était le premier port
 de `expose` d'`alloy` ; un **Internal port** enregistré à `4317` reste en place même après la
 mise à jour du compose.
 

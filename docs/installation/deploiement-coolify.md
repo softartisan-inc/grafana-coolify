@@ -91,8 +91,9 @@ donne le port du conteneur vers lequel Traefik envoie les requêtes (le public r
 3. Vérifier le port réellement routé (voir ci-dessous).
 
 Ordre de choix du port (v4.3.23) : port écrit dans l'URL, puis **Internal port** enregistré
-pour ce domaine, puis port par défaut du service, le suffixe de `SERVICE_FQDN_<SERVICE>_<PORT>`
-ou, selon le type de ressource, le **premier port de `expose`** : le compose
+pour ce domaine, puis port par défaut du service : pour une **Application** (ce dépôt), le
+**premier port tcp de `expose`** ; pour un **Service**, le suffixe de
+`SERVICE_FQDN_<SERVICE>_<PORT>`, sinon le premier port de `expose`. Le compose
 met `12347` en tête pour `alloy` et `4318` pour `alloy-gateway` (contrôle `ports` de
 `scripts/check.py`). Une valeur déjà enregistrée dans **Internal port** l'emporte toujours :
 un `4317` (OTLP gRPC) resté là d'un déploiement antérieur envoie Faro au mauvais port.
