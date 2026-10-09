@@ -456,7 +456,7 @@ matchers sont gérés. `grafana-setup` reconnaît sa route Telegram à son seul 
 | Règle | Condition | `severity` | Variable |
 |---|---|---|---|
 | Taux d'erreur | part des requêtes (spans serveur) en erreur sur 5 min, par service, au-dessus du seuil pendant 2 min | `critical` | `ALERT_ERROR_RATE` (0.05 = 5 %) |
-| Latence p95 | p95 sur 5 min au-dessus du seuil pendant 5 min, par service, seulement au-delà de `ALERT_P95_MIN_CALLS` requêtes sur ces 5 min ; reste déclenchée 15 min après le retour sous le seuil | `warning` | `ALERT_P95_MS`, `ALERT_P95_MIN_CALLS` |
+| Latence p95 | p95 sur 5 min au-dessus du seuil pendant 5 min, par service, seulement à partir de `ALERT_P95_MIN_CALLS` requêtes sur ces 5 min ; reste déclenchée 15 min après le retour sous le seuil | `warning` | `ALERT_P95_MS`, `ALERT_P95_MIN_CALLS` |
 | Service muet | service qui a émis des spans dans la dernière heure (4 × le délai au-delà de 15 min), mais aucun depuis le délai | `critical` | `ALERT_SILENCE_MIN` |
 | Disque | usage d'un système de fichiers de l'hôte au-dessus du seuil pendant 2 min | `critical` (`env` = `HOST_ENV`) | `ALERT_DISK_PCT`, `HOST_ENV` |
 | Cardinalité | séries actives de Prometheus au-dessus du seuil pendant 2 min | `warning` | `CARDINALITY_ALERT_THRESHOLD` |
