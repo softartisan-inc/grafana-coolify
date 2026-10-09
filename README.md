@@ -53,7 +53,7 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 |---|---|
 | `IP_HASH_SALT` | Obligatoire. Au moins 16 caractères `[A-Za-z0-9]`, par exemple `openssl rand -hex 24`. |
 | `FARO_API_KEY` | Obligatoire. Clé des SDK Faro (navigateur, poste de travail, mobile), au moins 16 caractères : `openssl rand -hex 24`. |
-| `PROJECTS` | Projets autorisés, séparés par des virgules **sans espace** (`in-immo,autre-projet`) : logs Faro d'un autre projet rejetés, un dossier Grafana `gc-<projet>` par projet. |
+| `PROJECTS` | Projets autorisés, séparés par des virgules **sans espace** (`demo,autre-projet`) : logs Faro d'un autre projet rejetés, un dossier Grafana `gc-<projet>` par projet. |
 | `FARO_SERVICES` | Services Faro autorisés (`app.name`), mêmes règles d'écriture que `PROJECTS` (`web-app,desktop`). Les services de `HOST_MAP` sont toujours acceptés ; tout autre nom choisi par le client est rejeté. **Fermé par défaut** : vide, seuls les services de `HOST_MAP` passent. |
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | Règles de déduction depuis l'hôte (voir plus bas). |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Alias stables sur le réseau `coolify` : `http://gc-loki:3100`, `http://gc-tempo:3200`, `http://gc-prometheus:9090` (étape 4). |
@@ -637,7 +637,7 @@ Pour les logs Faro, `env` et `tenant` sont **déduits de l'hôte de la page** :
 
 | Variable | Exemple |
 |---|---|
-| `HOST_MAP` | `example.me=guest-front:prod` (hôte exact → service et env) |
+| `HOST_MAP` | `example.me=web-front:prod` (hôte exact → service et env) |
 | `RESERVED_SUBDOMAINS` | `www,api` (jamais des tenants) |
 | `TENANT_HOST_REGEX` | `^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me\|app)$` |
 

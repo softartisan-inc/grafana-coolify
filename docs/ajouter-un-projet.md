@@ -56,22 +56,22 @@ l'alerte Disque), pas les applications. Serveur unique qui héberge la prod : `H
 
 ## Un client desktop (hors navigateur)
 
-Exemple : `immo-desktop`, l'application Electron d'IN IMMO, à côté du front web `tenant-front`
-du même projet `in-immo`. Le desktop envoie au **même** point Faro
+Exemple : `desktop-app`, un client desktop Electron, à côté du front web `web-front`
+du même projet `demo`. Le desktop envoie au **même** point Faro
 (`https://<domaine Faro>/collect`, même `FARO_API_KEY`) ; rien d'autre ne change dans le package.
 
 ### Ce qui diffère d'un navigateur
 
-- **Pas d'hôte de page.** Le client réécrit `page_url` en `app://immo-desktop/<route gabarit>`
-  (par exemple `app://immo-desktop/actifs/{id}`). L'hôte lu par Alloy est `immo-desktop` : il
+- **Pas d'hôte de page.** Le client réécrit `page_url` en `app://desktop-app/<route gabarit>`
+  (par exemple `app://desktop-app/commandes/{id}`). L'hôte lu par Alloy est `desktop-app` : il
   n'est pas dans `HOST_MAP` et `TENANT_HOST_REGEX` ne le reconnaît pas, donc **rien n'est déduit
   de l'hôte** ; `env` et `tenant` sont ceux que le client envoie, puis validés (tableau
   ci-dessous).
-  - Ne **pas** ajouter `immo-desktop` à `HOST_MAP` : une entrée y fixe un seul `env` et retire le
+  - Ne **pas** ajouter `desktop-app` à `HOST_MAP` : une entrée y fixe un seul `env` et retire le
     tenant, alors qu'un même poste parle à la prod ou à la préprod.
   - `TENANT_HOST_REGEX` doit rester ancrée (`^…$`) sur le domaine réel des tenants, comme
     l'exemple `^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me|app)$`. Sinon elle pourrait
-    reconnaître l'hôte `immo-desktop` et imposer un `env` faux.
+    reconnaître l'hôte `desktop-app` et imposer un `env` faux.
 - **CORS sans objet.** Le CORS ne protège que des pages web ; un client hors navigateur n'est
   arrêté que par la clé, le débit, la taille et `FARO_SERVICES`. La regex des origines ne change
   pas.
@@ -86,8 +86,8 @@ Logs (`loki.process "faro"`) et traces (`otelcol.processor.transform "faro"`, pu
 
 | Donnée | Envoyée par le desktop | Contrôle | Si le contrôle échoue |
 |---|---|---|---|
-| `project` | `app.namespace` (logs), `service.namespace` (traces) = `in-immo` | format `[a-z0-9][a-z0-9-]{0,63}`, présent dans `PROJECTS` | log rejeté (`invalid_project`, `unknown_project`, `missing_project`) ; trace supprimée |
-| `service_name` | `app.name` (logs), `service.name` (traces) = `immo-desktop` | présent dans `FARO_SERVICES` | log rejeté (`unknown_service`) ; trace supprimée |
+| `project` | `app.namespace` (logs), `service.namespace` (traces) = `demo` | format `[a-z0-9][a-z0-9-]{0,63}`, présent dans `PROJECTS` | log rejeté (`invalid_project`, `unknown_project`, `missing_project`) ; trace supprimée |
+| `service_name` | `app.name` (logs), `service.name` (traces) = `desktop-app` | présent dans `FARO_SERVICES` | log rejeté (`unknown_service`) ; trace supprimée |
 | `env` | `app.environment` (logs), `deployment.environment.name` (traces) | `prod` ou `preprod` | log rejeté (`invalid_env`, `missing_env`) ; trace supprimée |
 | `tenant` | attribut de session `tenant` (logs), attribut `tenant` de ressource ou de span (traces) | `[a-z0-9-]+` et absent de `RESERVED_SUBDOMAINS` | **seul le tenant est retiré**, la donnée est gardée |
 
@@ -98,7 +98,7 @@ le backend, reste la référence.
 
 Garde-fous de cardinalité :
 
-- **Loki** : les labels restent `project`, `env`, `service_name`. `immo-desktop` ajoute au plus
+- **Loki** : les labels restent `project`, `env`, `service_name`. `desktop-app` ajoute au plus
   deux flux (`prod`, `preprod`) ; `tenant` est une métadonnée structurée, jamais un label, et ne
   crée aucun flux.
 - **Prometheus** : `tenant` est une dimension des span-metrics de Tempo, donc un tenant inventé
@@ -110,29 +110,29 @@ Garde-fous de cardinalité :
 
 1. Ressource `grafana-coolify` → **Environment Variables** → relever la valeur actuelle de
    `FARO_SERVICES`.
-2. **Ajouter** `immo-desktop` à cette valeur, sans la remplacer, virgule **sans espace** :
+2. **Ajouter** `desktop-app` à cette valeur, sans la remplacer, virgule **sans espace** :
 
    ```
-   FARO_SERVICES=tenant-front,immo-desktop
+   FARO_SERVICES=web-front,desktop-app
    ```
 
-3. Laisser `PROJECTS` tel quel : il contient déjà `in-immo`. Ne toucher ni à `HOST_MAP`, ni à
+3. Laisser `PROJECTS` tel quel : il contient déjà `demo`. Ne toucher ni à `HOST_MAP`, ni à
    `RESERVED_SUBDOMAINS`, ni à `TENANT_HOST_REGEX`, ni au CORS de Traefik.
 4. **Redeploy** (pas *Restart*), comme pour toute variable du package.
 
 **Vérification**, dans Grafana → **Explore** :
 
-- Loki : `{project="in-immo", service_name="immo-desktop"}`, puis par environnement
-  `{project="in-immo", env="preprod", service_name="immo-desktop"}`, et par tenant
-  `{project="in-immo", service_name="immo-desktop"} | tenant="<slug>"` ;
-- Tempo (TraceQL) : `{ resource.service.name = "immo-desktop" }` ;
+- Loki : `{project="demo", service_name="desktop-app"}`, puis par environnement
+  `{project="demo", env="preprod", service_name="desktop-app"}`, et par tenant
+  `{project="demo", service_name="desktop-app"} | tenant="<slug>"` ;
+- Tempo (TraceQL) : `{ resource.service.name = "desktop-app" }` ;
 - Prometheus : `increase(loki_process_dropped_lines_total{reason=~"unknown_service|invalid_env|missing_env"}[1h])`
   n'augmente pas après le redéploiement (panneau « Rejets » du tableau « Santé du pipeline »).
 
 En cas de rejet : [Dépannage de l'ingestion Faro](depannage/ingestion-faro.md).
 
-**Interrupteur** : retirer `immo-desktop` de `FARO_SERVICES` puis **Redeploy** coupe le desktop
-seul (logs rejetés en `unknown_service`, traces supprimées) ; `tenant-front` n'est pas touché. Le
+**Interrupteur** : retirer `desktop-app` de `FARO_SERVICES` puis **Redeploy** coupe le desktop
+seul (logs rejetés en `unknown_service`, traces supprimées) ; `web-front` n'est pas touché. Le
 remettre rétablit le flux, sans rien réinstaller sur les postes.
 
 ## Retirer un projet
