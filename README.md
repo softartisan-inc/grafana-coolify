@@ -59,7 +59,7 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Alias stables sur le réseau `coolify` : `http://gc-loki:3100`, `http://gc-tempo:3200`, `http://gc-prometheus:9090` (étape 4). |
 | `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | Adresse **interne** de Grafana, `http://grafana-<uuid>:3000` (étape 4), et jeton du compte de service (étape 5). |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_EMAILS` | Notifications (voir « Tableaux de bord et alertes ») : bot Telegram pour `critical` + `prod`, email pour le reste. |
-| `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT`, `CARDINALITY_ALERT_THRESHOLD` | Seuils des alertes ; défauts de `.env.example`. |
+| `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_P95_MIN_CALLS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT`, `CARDINALITY_ALERT_THRESHOLD` | Seuils des alertes ; défauts de `.env.example`. |
 | `HOST_ENV` | `prod` (défaut) ou `preprod` : environnement que sert l'hôte, label `env` des alertes d'hôte (« Disque »). Vérifié par `config-guard`. |
 | `GRAFANA_SETUP_MIRROR_URL` | Facultatif : source de remplacement des tableaux et alertes de `grafana-setup` (fork, miroir). |
 
@@ -456,11 +456,17 @@ matchers sont gérés. `grafana-setup` reconnaît sa route Telegram à son seul 
 | Règle | Condition | `severity` | Variable |
 |---|---|---|---|
 | Taux d'erreur | part des requêtes (spans serveur) en erreur sur 5 min, par service, au-dessus du seuil pendant 2 min | `critical` | `ALERT_ERROR_RATE` (0.05 = 5 %) |
-| Latence p95 | p95 sur 10 min au-dessus du seuil pendant 2 min, par service | `warning` | `ALERT_P95_MS` |
+| Latence p95 | p95 sur 5 min au-dessus du seuil pendant 5 min, par service, seulement à partir de `ALERT_P95_MIN_CALLS` requêtes sur ces 5 min ; reste déclenchée 15 min après le retour sous le seuil | `warning` | `ALERT_P95_MS`, `ALERT_P95_MIN_CALLS` |
 | Service muet | service qui a émis des spans dans la dernière heure (4 × le délai au-delà de 15 min), mais aucun depuis le délai | `critical` | `ALERT_SILENCE_MIN` |
 | Disque | usage d'un système de fichiers de l'hôte au-dessus du seuil pendant 2 min | `critical` (`env` = `HOST_ENV`) | `ALERT_DISK_PCT`, `HOST_ENV` |
 | Cardinalité | séries actives de Prometheus au-dessus du seuil pendant 2 min | `warning` | `CARDINALITY_ALERT_THRESHOLD` |
 | Rejets | au moins une donnée rejetée (§ 6.3 de la spec) sur 15 min | `warning` | — |
+
+**Latence p95, anti-bagottement** : à faible trafic, une ou deux requêtes lentes suffisent à faire
+le p95 ; un service qui a servi moins de `ALERT_P95_MIN_CALLS` requêtes (100 par défaut) sur les
+5 dernières minutes n'est donc pas évalué. L'alerte attend 5 min au-dessus du seuil avant de se
+déclencher et reste déclenchée 15 min après le retour sous le seuil (`keep_firing_for`), au lieu
+d'envoyer un message de déclenchement puis de résolution toutes les dix minutes.
 
 **Routage** : `severity=critical` **et** `env=prod` → Telegram ; tout le reste → email. Le disque
 porte `env` = `HOST_ENV` (`prod` par défaut : l'hôte sert la production ; `preprod` sur un serveur

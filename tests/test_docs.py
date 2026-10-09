@@ -84,7 +84,16 @@ class ReadmeTest(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertIn(text, README)
-        variables = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "ALERT_EMAILS", "ALERT_ERROR_RATE", "ALERT_P95_MS", "ALERT_SILENCE_MIN", "ALERT_DISK_PCT")
+        variables = (
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_CHAT_ID",
+            "ALERT_EMAILS",
+            "ALERT_ERROR_RATE",
+            "ALERT_P95_MS",
+            "ALERT_P95_MIN_CALLS",
+            "ALERT_SILENCE_MIN",
+            "ALERT_DISK_PCT",
+        )
         for name in (*variables, "CARDINALITY_ALERT_THRESHOLD", "HOST_ENV"):
             with self.subTest(name=name):
                 self.assertIn(f"`{name}`", README)

@@ -22,6 +22,7 @@ TELEGRAM_MATCHERS = [["env", "=", "prod"], ["severity", "=", "critical"]]
 DEFAULTS = {
     "ALERT_ERROR_RATE": "0.05",
     "ALERT_P95_MS": "1500",
+    "ALERT_P95_MIN_CALLS": "100",
     "ALERT_SILENCE_MIN": "15",
     "ALERT_DISK_PCT": "80",
     "CARDINALITY_ALERT_THRESHOLD": "200000",
@@ -44,9 +45,28 @@ REJECTION_METRICS = (
     "loki_process_dropped_lines_total",
 )
 # Fields of an alert rule compared to decide whether it must be rewritten (Grafana adds id,
-# updated, keep_firing_for...). The desired data carries the defaults Grafana stores
-# (intervalMs, maxDataPoints, queryType, relativeTimeRange), so that equal means unchanged.
-RULE_FIELDS = ("title", "folderUID", "ruleGroup", "condition", "data", "noDataState", "execErrState", "for", "labels", "annotations", "isPaused")
+# updated...). The desired data carries the defaults Grafana stores (intervalMs, maxDataPoints,
+# queryType, relativeTimeRange, keep_firing_for "0s"), so that equal means unchanged.
+RULE_FIELDS = (
+    "title",
+    "folderUID",
+    "ruleGroup",
+    "condition",
+    "data",
+    "noDataState",
+    "execErrState",
+    "for",
+    "keep_firing_for",
+    "labels",
+    "annotations",
+    "isPaused",
+)
+# Latency p95 (spec 10.4, anti-flapping): 5 min window, evaluated only for services that served
+# at least ALERT_P95_MIN_CALLS requests in that window (at low traffic one or two slow requests
+# make the p95), pending 5 min, then kept firing 15 min after the condition clears.
+P95_WINDOW = "5m"
+P95_FOR = "5m"
+P95_KEEP_FIRING_FOR = "15m"
 
 
 class AlertingError(ValueError):
@@ -69,6 +89,7 @@ def thresholds(env):
     return {
         "error_rate": number(env, "ALERT_ERROR_RATE", float, 0, 1),
         "p95_ms": number(env, "ALERT_P95_MS", int, 0, 600_000),
+        "p95_min_calls": number(env, "ALERT_P95_MIN_CALLS", int, 0, 10_000_000),
         "silence_min": number(env, "ALERT_SILENCE_MIN", int, 0, 1440),
         "disk_pct": number(env, "ALERT_DISK_PCT", int, 0, 99),
         "cardinality": number(env, "CARDINALITY_ALERT_THRESHOLD", int, 0, 100_000_000),
@@ -195,7 +216,7 @@ def threshold(value):
     return {"refId": "C", "queryType": "", "relativeTimeRange": {"from": 0, "to": 0}, "datasourceUid": "__expr__", "model": model}
 
 
-def rule(uid, title, expr, above, severity, pending, summary, datasource_uid, window_s=900, labels=None):
+def rule(uid, title, expr, above, severity, pending, summary, datasource_uid, window_s=900, labels=None, keep_firing_for="0s"):
     return {
         "uid": uid,
         "title": title,
@@ -207,6 +228,8 @@ def rule(uid, title, expr, above, severity, pending, summary, datasource_uid, wi
         "noDataState": "OK",
         "execErrState": "Error",
         "for": pending,
+        # Grafana stores "0s" when the field is omitted: always sent, so that a rerun compares equal.
+        "keep_firing_for": keep_firing_for,
         "labels": dict(labels or {}, severity=severity),
         "annotations": {"summary": summary},
         "isPaused": False,
@@ -230,13 +253,23 @@ def silence_expr(minutes):
     return f"{seen} unless {alive}"
 
 
+def latency_expr(min_calls):
+    """p95 in ms per service over P95_WINDOW, kept only for services with at least `min_calls` requests in that window."""
+    by = "sum by (project, env, service)"
+    calls = f"traces_spanmetrics_calls_total{{{REQUEST_KINDS}}}"
+    buckets = f"traces_spanmetrics_latency_bucket{{{REQUEST_KINDS}}}"
+    p95 = f"1000 * histogram_quantile(0.95, sum by (le, project, env, service) (rate({buckets}[{P95_WINDOW}])))"
+    volume = f"{by} (increase({calls}[{P95_WINDOW}])) >= {min_calls}"
+    return f"({p95}) and on (project, env, service) ({volume})"
+
+
 def rules(limits, prometheus_uid):
     """The six base rules of spec 10.4, thresholds from the environment."""
     calls = f"traces_spanmetrics_calls_total{{{REQUEST_KINDS}}}"
     errors = f'traces_spanmetrics_calls_total{{{REQUEST_KINDS}, status_code="STATUS_CODE_ERROR"}}'
     by = "sum by (project, env, service)"
     error_rate = f"{by} (rate({errors}[5m])) / {by} (rate({calls}[5m]))"
-    p95 = f"1000 * histogram_quantile(0.95, sum by (le, project, env, service) (rate(traces_spanmetrics_latency_bucket{{{REQUEST_KINDS}}}[10m])))"
+    p95 = latency_expr(limits["p95_min_calls"])
     disk = f"max by (device, fstype) (100 * (1 - node_filesystem_avail_bytes{{{HOST_FS}}} / node_filesystem_size_bytes{{{HOST_FS}}}))"
     rate_pct = f"{limits['error_rate'] * 100:g} %"
     return [
@@ -256,9 +289,12 @@ def rules(limits, prometheus_uid):
             p95,
             limits["p95_ms"],
             "warning",
-            "2m",
-            f"{{{{ $labels.service }}}} ({{{{ $labels.env }}}}) : p95 au-dessus de {limits['p95_ms']} ms sur 10 min",
+            P95_FOR,
+            f"{{{{ $labels.service }}}} ({{{{ $labels.env }}}}) : p95 au-dessus de {limits['p95_ms']} ms sur 5 min"
+            f" (au moins {limits['p95_min_calls']} requêtes sur la période)",
             prometheus_uid,
+            window_s=600,
+            keep_firing_for=P95_KEEP_FIRING_FOR,
         ),
         rule(
             "gc-silence",

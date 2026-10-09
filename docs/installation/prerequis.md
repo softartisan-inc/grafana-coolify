@@ -37,7 +37,7 @@ Attendu : les dossiers `applications`, `proxy`, `ssh`… puis deux chemins (`/us
 serveur qui doit joindre GitHub) :
 
 ```bash
-curl -sI https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v1/README.md | head -1
+curl -sI https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v2/README.md | head -1
 ```
 
 Attendu : `HTTP/2 200`. Sans `curl` :

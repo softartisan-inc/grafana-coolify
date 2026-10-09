@@ -197,7 +197,8 @@ class BundleTest(unittest.TestCase):
                         errors = check.check_bundle()
                     self.assertEqual(errors if shallow else len(errors), expected)
                     if shallow:
-                        self.assertIn("skipped: tag grafana-setup-content-v1 not found locally and this clone is shallow", out.getvalue())
+                        pinned = check.render.load_versions(ROOT / "tools" / "versions.env")["GRAFANA_SETUP_TAG"]
+                        self.assertIn(f"skipped: tag {pinned} not found locally and this clone is shallow", out.getvalue())
                     else:
                         self.assertEqual(out.getvalue(), "")
         finally:
