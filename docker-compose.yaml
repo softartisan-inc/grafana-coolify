@@ -29,7 +29,7 @@ services:
     command:
       - sh
       - -c
-      - "echo '0c61b885fccb9718253dfaa57e9c3fe02aa322a1920e4c4cda42564a9e3839e8  /opt/config-guard/guard.0c61b885.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.0c61b885.sh"
+      - "echo 'caddbbedbd1198650693c97d7015f117479ad3bfdb04e98784bec362d70e604d  /opt/config-guard/guard.caddbbed.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.caddbbed.sh"
     environment:
       CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.68351f56.py=68351f563802cf7f702133bf9f2a32d07644e8cc9c172854ae2d296a3ed9f701;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.8839df29.sh=8839df2975e953c5def06ee0fbf63cce7b43766649beaa1b929c9d800fa8d68e;/guard/tempo/tempo.86df7701.yaml=86df7701962c324e02857df241d356bc8532b6d712eaef3fdf4e7624da043621"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
@@ -52,8 +52,8 @@ services:
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.0c61b885.sh
-        target: /opt/config-guard/guard.0c61b885.sh
+        source: ./config/config-guard/guard.caddbbed.sh
+        target: /opt/config-guard/guard.caddbbed.sh
         content: |2
           #!/bin/sh
           set -u
@@ -119,7 +119,7 @@ services:
           fi
           projects=${PROJECTS:-}
           if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
-            error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
+            error "PROJECTS must look like demo,other-project (lowercase, comma separated, no spaces)"
           fi
           faro_services=${FARO_SERVICES:-}
           if [ -n "$faro_services" ] && ! matches "$faro_services" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then

@@ -479,7 +479,7 @@ otelcol.processor.transform "faro" {
 // - PROJECTS is set and its project is not in it (same rule as the Faro logs);
 // - its service.name is neither in FARO_SERVICES nor a service of HOST_MAP. Closed by default:
 //   both empty, every Faro trace is dropped. The HOST_MAP pattern turns
-//   "example.me=guest-front:prod" into ^(?:(?:example\.me=)?guest-front(?::prod)?)$, a finite set.
+//   "example.me=web-front:prod" into ^(?:(?:example\.me=)?web-front(?::prod)?)$, a finite set.
 // Counter: otelcol_processor_filter_spans_filtered_total{component_id="otelcol.processor.filter.faro"}.
 otelcol.processor.filter "faro" {
   // Fail-open like the other processors: a condition error keeps the span (see "default").
@@ -558,7 +558,7 @@ loki.process "faro" {
     expression = `^(?P<gc_hm_service>[^:]+):(?P<gc_hm_env>.+)$`
   }
 
-  // Services of HOST_MAP (",guest-front,..."): allowed Faro service names, like FARO_SERVICES.
+  // Services of HOST_MAP (",web-front,..."): allowed Faro service names, like FARO_SERVICES.
   stage.template {
     source   = "gc_hm_services"
     template = `{{ range $e := splitList "," .gc_host_map }}{{ $kv := splitList "=" $e }}{{ if eq (len $kv) 2 }},{{ index (splitList ":" (index $kv 1)) 0 }}{{ end }}{{ end }}`

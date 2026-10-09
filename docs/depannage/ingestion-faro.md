@@ -3,7 +3,7 @@
 [← Index du dépannage](README.md)
 
 Entrées de **prévention** : écrites pour la mise en service d'un client desktop
-([`immo-desktop`](../ajouter-un-projet.md#un-client-desktop-hors-navigateur)), valables pour tout
+([`desktop-app`](../ajouter-un-projet.md#un-client-desktop-hors-navigateur)), valables pour tout
 client Faro. Les rejets se lisent dans Prometheus (Alloy est scrapé) ou dans le panneau
 « Rejets » du tableau **Santé du pipeline** :
 
@@ -17,7 +17,7 @@ mise en service ou le redéploiement concerné.
 
 ## `loki_process_dropped_lines_total{reason="unknown_service"}` augmente
 
-**Symptôme** : aucun log `{service_name="immo-desktop"}` dans Explore, et le compteur
+**Symptôme** : aucun log `{service_name="desktop-app"}` dans Explore, et le compteur
 `unknown_service` monte dès que des postes tournent. Les traces du desktop manquent aussi
 (`otelcol_processor_filter_spans_filtered_total{component_id="otelcol.processor.filter.faro"}`
 augmente).
@@ -28,7 +28,7 @@ modifiée sans **Redeploy**. C'est aussi l'effet voulu de l'interrupteur (servic
 liste).
 
 **Correctif** : ajouter le nom à la valeur existante, sans la remplacer
-(`FARO_SERVICES=tenant-front,immo-desktop`), puis **Redeploy**.
+(`FARO_SERVICES=web-front,desktop-app`), puis **Redeploy**.
 
 **Vérification** : la valeur réellement vue par Alloy, sur l'hôte :
 
@@ -36,7 +36,7 @@ liste).
 docker inspect $(docker ps --format '{{.Names}}' | grep '^alloy-<uuid>' | head -1) --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^FARO_SERVICES='
 ```
 
-Puis le compteur ne bouge plus, et `{project="in-immo", service_name="immo-desktop"}` répond
+Puis le compteur ne bouge plus, et `{project="demo", service_name="desktop-app"}` répond
 dans Explore.
 
 ## `reason="invalid_env"` ou `reason="missing_env"` augmente
@@ -45,20 +45,20 @@ dans Explore.
 
 **Cause** : l'environnement envoyé par le client (`app.environment`) n'est ni `prod` ni `preprod`,
 ou il manque. Pour un client sans hôte de page reconnu (desktop : `page_url` en
-`app://immo-desktop/…`), rien ne le corrige côté serveur : la valeur du client est la seule
-source. Le desktop d'IN IMMO ne doit rien envoyer quand il ne reconnaît pas l'hôte d'API ; une
+`app://desktop-app/…`), rien ne le corrige côté serveur : la valeur du client est la seule
+source. Le client desktop ne doit rien envoyer quand il ne reconnaît pas l'hôte d'API ; une
 hausse vient donc d'un build mal configuré, ou d'un émetteur qui n'est pas l'application.
 
 **Correctif** : côté client (configuration du build, table hôte → `env`). Ne **pas** ajouter
-l'hôte `immo-desktop` à `HOST_MAP` pour forcer un `env` : il ne vaudrait que pour un seul des deux
+l'hôte `desktop-app` à `HOST_MAP` pour forcer un `env` : il ne vaudrait que pour un seul des deux
 environnements.
 
 **Vérification** : le compteur ne bouge plus ; Explore montre les deux valeurs attendues,
-`{project="in-immo", service_name="immo-desktop", env=~"prod|preprod"}`.
+`{project="demo", service_name="desktop-app", env=~"prod|preprod"}`.
 
 ## Lignes du desktop stockées sans `tenant`
 
-**Symptôme** : `{project="in-immo", service_name="immo-desktop"} | tenant="<slug>"` ne renvoie
+**Symptôme** : `{project="demo", service_name="desktop-app"} | tenant="<slug>"` ne renvoie
 rien, alors que les lignes existent sans filtre.
 
 **Cause** (aucune n'est un rejet : la ligne est gardée, seul le tenant manque) :
@@ -69,9 +69,9 @@ rien, alors que les lignes existent sans filtre.
 - le slug est dans `RESERVED_SUBDOMAINS` : il est retiré.
 
 **Correctif** : côté client si le slug est mal formé ; sinon rien à faire. Le tenant qui fait foi
-reste celui du span serveur enfant (`in-immo-api`).
+reste celui du span serveur enfant (`api`).
 
-**Vérification** : `{project="in-immo", service_name="immo-desktop"} | tenant!=""` renvoie les
+**Vérification** : `{project="demo", service_name="desktop-app"} | tenant!=""` renvoie les
 lignes des postes connectés.
 
 ## Traces du desktop absentes, logs présents
@@ -85,4 +85,4 @@ ou si `deployment.environment.name` n'est ni `prod` ni `preprod` (même compteur
 
 **Correctif** : côté client, la réécriture de la ressource des traces (ces trois attributs).
 
-**Vérification** : TraceQL `{ resource.service.name = "immo-desktop" }` dans Explore (Tempo).
+**Vérification** : TraceQL `{ resource.service.name = "desktop-app" }` dans Explore (Tempo).

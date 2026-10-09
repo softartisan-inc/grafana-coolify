@@ -32,7 +32,7 @@ le **texte du message** pour valeur (voir
 |---|---|---|
 | `PROJECTS` | `projet-a,projet-b` (minuscules, virgules **sans espace**) | Un dossier Grafana `gc-<projet>` chacun. Garder renseigné : vide, tout projet au bon format est accepté. |
 | `FARO_SERVICES` | `web-app,desktop` | Fermé par défaut : vide, seuls les services de `HOST_MAP` passent. |
-| `HOST_MAP` | `example.me=guest-front:prod` | Hôte exact → service et env (logs Faro). |
+| `HOST_MAP` | `example.me=web-front:prod` | Hôte exact → service et env (logs Faro). |
 | `RESERVED_SUBDOMAINS` | `www,api` | Jamais des tenants. |
 | `TENANT_HOST_REGEX` | `^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me\|app)$` | Cocher **Is Literal?** (contient des `$`). |
 | `FARO_RATE`, `FARO_BURST`, `FARO_MAX_PAYLOAD` | `100`, `200`, `5MiB` | Limites globales du récepteur. |

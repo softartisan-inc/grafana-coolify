@@ -18,7 +18,7 @@ LOKI_CONFIG = ROOT / "config" / "loki" / "loki.yaml"
 VALID_ENV = {
     "IP_HASH_SALT": "harnessNotASecret0000000000",
     "FARO_API_KEY": "harness-not-a-secret-0000000000",
-    "HOST_MAP": "example.me=guest-front:prod",
+    "HOST_MAP": "example.me=web-front:prod",
     "RESERVED_SUBDOMAINS": "www,api",
     "TENANT_HOST_REGEX": r"^(?P<sub>[a-z0-9-]+?)(?P<dev>-dev)?\.example\.(me|app)$",
     "PROJECTS": "demo,other-project",
@@ -143,7 +143,7 @@ class GuardCases:
 
     def test_projects_rules(self):
         self.assertEqual(self.guard(PROJECTS="").returncode, 0)
-        self.assertEqual(self.guard(PROJECTS="in-immo").returncode, 0)
+        self.assertEqual(self.guard(PROJECTS="demo").returncode, 0)
         self.assertEqual(self.guard(PROJECTS="a" * 64 + ",b-1").returncode, 0)
         for value in ["demo, other", "Demo", "demo,", "a_b", "demo\nDemo Bad", "-demo", "demo,-other", "a" * 65]:
             with self.subTest(value=value):

@@ -30,7 +30,7 @@ class LoadTest(unittest.TestCase):
 
 class LinksDashboardTest(unittest.TestCase):
     def test_short_uid(self):
-        self.assertEqual(dashboards.short_uid("gcl-", "in-immo"), "gcl-in-immo")
+        self.assertEqual(dashboards.short_uid("gcl-", "demo"), "gcl-demo")
         long_uid = dashboards.short_uid("gcl-", "a" * 64)
         self.assertEqual(len(long_uid), 40)
         self.assertTrue(long_uid.startswith("gcl-aaaa"))
@@ -38,21 +38,21 @@ class LinksDashboardTest(unittest.TestCase):
         self.assertEqual(dashboards.short_uid("gc-", "b" * 37), "gc-" + "b" * 37)
 
     def test_links(self):
-        board = dashboards.links_dashboard("in-immo", dashboards.load())
-        self.assertEqual(board["uid"], "gcl-in-immo")
+        board = dashboards.links_dashboard("demo", dashboards.load())
+        self.assertEqual(board["uid"], "gcl-demo")
         urls = [link["url"] for link in board["links"]]
         self.assertEqual(
             urls,
             [
-                "/d/gc-project?var-project=in-immo",
-                "/d/gc-service?var-project=in-immo",
-                "/d/gc-frontend?var-project=in-immo",
+                "/d/gc-project?var-project=demo",
+                "/d/gc-service?var-project=demo",
+                "/d/gc-frontend?var-project=demo",
                 "/d/gc-host",
                 "/d/gc-pipeline",
-                "/d/gc-cardinality?var-project=in-immo",
+                "/d/gc-cardinality?var-project=demo",
             ],
         )
-        self.assertIn("(/d/gc-frontend?var-project=in-immo)", board["panels"][0]["options"]["content"])
+        self.assertIn("(/d/gc-frontend?var-project=demo)", board["panels"][0]["options"]["content"])
 
 
 if __name__ == "__main__":

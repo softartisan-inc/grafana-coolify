@@ -72,7 +72,7 @@ fi
 # Each item: ^[a-z0-9][a-z0-9-]{0,63}$, the rule of grafana-setup (no leading hyphen).
 projects=${PROJECTS:-}
 if [ -n "$projects" ] && ! matches "$projects" '^[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63})*$'; then
-  error "PROJECTS must look like in-immo,other-project (lowercase, comma separated, no spaces)"
+  error "PROJECTS must look like demo,other-project (lowercase, comma separated, no spaces)"
 fi
 # FARO_SERVICES (Faro service allow-list) is spliced into an OTTL regex and a Go template: same
 # rule as PROJECTS.

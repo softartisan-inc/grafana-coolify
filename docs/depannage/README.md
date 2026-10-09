@@ -63,7 +63,7 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 |---|---|
 | `loki_process_dropped_lines_total{reason="unknown_service"}` augmente (prévention) | [service non listé](ingestion-faro.md#loki_process_dropped_lines_totalreasonunknown_service-augmente) |
 | `reason="invalid_env"`, `reason="missing_env"` (prévention) | [env du client](ingestion-faro.md#reasoninvalid_env-ou-reasonmissing_env-augmente) |
-| Lignes `immo-desktop` sans `tenant` (prévention) | [tenant retiré ou absent](ingestion-faro.md#lignes-du-desktop-stockées-sans-tenant) |
+| Lignes `desktop-app` sans `tenant` (prévention) | [tenant retiré ou absent](ingestion-faro.md#lignes-du-desktop-stockées-sans-tenant) |
 | Traces du desktop absentes, logs présents (prévention) | [traces supprimées](ingestion-faro.md#traces-du-desktop-absentes-logs-présents) |
 
 ## Notifications

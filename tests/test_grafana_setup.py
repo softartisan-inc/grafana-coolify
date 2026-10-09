@@ -184,7 +184,7 @@ class GrafanaSetupUnitTest(unittest.TestCase):
             "LOKI_INTERNAL_URL": "http://loki-abc:3100",
             "TEMPO_INTERNAL_URL": "http://tempo-abc:3200",
             "PROMETHEUS_INTERNAL_URL": "http://prometheus-abc:9090",
-            "PROJECTS": "in-immo, other-project,in-immo",
+            "PROJECTS": "demo, other-project,demo",
             "TELEGRAM_BOT_TOKEN": BOT_TOKEN,
             "TELEGRAM_CHAT_ID": "-1001234567890",
             "ALERT_EMAILS": "ops@example.com, dev@example.com",
@@ -207,12 +207,12 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         result = self.setup_run()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(sorted(self.state["datasources"]), ["gc-loki", "gc-prometheus", "gc-tempo"])
-        self.assertEqual(sorted(self.state["folders"]), ["gc-grafana-coolify", "gc-in-immo", "gc-other-project"])
+        self.assertEqual(sorted(self.state["folders"]), ["gc-demo", "gc-grafana-coolify", "gc-other-project"])
         self.assertEqual(self.state["datasources"]["gc-loki"]["url"], "http://loki-abc:3100")
-        expected_boards = sorted([uid for uid, _p in dashboards.DASHBOARDS] + ["gcl-in-immo", "gcl-other-project"])
+        expected_boards = sorted([uid for uid, _p in dashboards.DASHBOARDS] + ["gcl-demo", "gcl-other-project"])
         self.assertEqual(sorted(self.state["dashboards"]), expected_boards)
         self.assertEqual(self.state["dashboards"]["gc-host"]["meta"]["folderUid"], "gc-grafana-coolify")
-        self.assertEqual(self.state["dashboards"]["gcl-in-immo"]["meta"]["folderUid"], "gc-in-immo")
+        self.assertEqual(self.state["dashboards"]["gcl-demo"]["meta"]["folderUid"], "gc-demo")
         self.assertEqual(sorted(self.state["contact_points"]), ["gc-email", "gc-telegram"])
         self.assertEqual(sorted(self.state["rules"]), ["gc-cardinality", "gc-disk", "gc-error-rate", "gc-latency", "gc-rejections", "gc-silence"])
 
@@ -435,7 +435,7 @@ class GrafanaSetupUnitTest(unittest.TestCase):
                 self.assertEqual(self.state["dashboards"], {})
 
     def test_folder_uid_matches_the_dashboards_rule(self):
-        for project in ("in-immo", "b" * 37, "b" * 38, "a" * 64):
+        for project in ("demo", "b" * 37, "b" * 38, "a" * 64):
             with self.subTest(project=project):
                 self.assertEqual(setup.folder_uid(project), dashboards.short_uid("gc-", project))
 
@@ -459,8 +459,8 @@ class GrafanaSetupUnitTest(unittest.TestCase):
 
     def test_links_dashboard_sets_the_project_variable(self):
         self.assertEqual(self.setup_run().returncode, 0)
-        links = {link["title"]: link["url"] for link in self.state["dashboards"]["gcl-in-immo"]["dashboard"]["links"]}
-        self.assertEqual(links["Vue projet"], "/d/gc-project?var-project=in-immo")
+        links = {link["title"]: link["url"] for link in self.state["dashboards"]["gcl-demo"]["dashboard"]["links"]}
+        self.assertEqual(links["Vue projet"], "/d/gc-project?var-project=demo")
         self.assertEqual(links["Hôte"], "/d/gc-host")
         self.assertEqual(len(links), 6)
 

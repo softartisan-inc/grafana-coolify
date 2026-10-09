@@ -375,7 +375,7 @@ def masking_nested(c):
 # (page host, tenant sent by the client, service_name, env, stored tenant). None = absent;
 # "client" = the app name (an allowed Faro service); the client environment is "preprod".
 HOST_CASES = [
-    ("example.me", "clienttenant", "guest-front", "prod", None),
+    ("example.me", "clienttenant", "web-front", "prod", None),
     ("www.example.me", "clienttenant", "client", "prod", None),
     ("api-dev.example.me", "clienttenant", "client", "preprod", None),
     ("acme.example.me", "clienttenant", "client", "prod", "acme"),
