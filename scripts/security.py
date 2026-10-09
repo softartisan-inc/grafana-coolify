@@ -102,8 +102,12 @@ def expect(condition, message):
         raise AssertionError(message)
 
 
+# The headers the Faro Web SDK (>= 2.x) sends on every POST /collect, as a browser preflight lists them.
+FARO_REQUEST_HEADERS = "content-type,idempotency-key,x-api-key,x-faro-session-id"
+
+
 def preflight_headers(origin):
-    return {"Origin": origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type,x-api-key"}
+    return {"Origin": origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": FARO_REQUEST_HEADERS}
 
 
 def item1_unreachable(t):
@@ -157,7 +161,7 @@ def item3_cors(t):
     methods = {m.strip() for m in resp.headers.get("Access-Control-Allow-Methods", "").split(",")}
     expect(methods == {"POST", "OPTIONS"}, f"methods {methods}")
     allowed = {h.strip().lower() for h in resp.headers.get("Access-Control-Allow-Headers", "").split(",")}
-    expect(allowed == {"content-type", "x-api-key", "x-faro-session-id"}, f"headers {allowed}")
+    expect(allowed == {"content-type", "x-api-key", "x-faro-session-id", "idempotency-key"}, f"headers {allowed}")
     expect(resp.headers.get("Access-Control-Max-Age") == "600", f"max-age {resp.headers.get('Access-Control-Max-Age')}")
     for origin in EVIL_ORIGINS:
         evil = t.faro_request("OPTIONS", headers=preflight_headers(origin))

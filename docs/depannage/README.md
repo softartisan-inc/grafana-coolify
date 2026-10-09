@@ -55,6 +55,7 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | `Found unknown escape character "\."` | [regex entre guillemets](traefik.md#found-unknown-escape-character) |
 | `middleware "gc-…@file" does not exist` (prévention) | [fichier dynamique](traefik.md#middleware-gc-file-does-not-exist) |
 | `401` OTLP avec le bon mot de passe (prévention) | [htpasswd](traefik.md#otlp--401-avec-le-bon-mot-de-passe) |
+| `Request header field idempotency-key is not allowed by Access-Control-Allow-Headers in preflight response` | [en-tête CORS du SDK Faro 2.x](traefik.md#request-header-field-idempotency-key-is-not-allowed-by-access-control-allow-headers-in-preflight-response) |
 
 ## Ingestion Faro
 
