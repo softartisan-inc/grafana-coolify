@@ -47,7 +47,8 @@ Tant que le point Faro est fermé (aucun domaine pour `alloy`), `HOST_MAP`,
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | vides | Tous deux ou aucun ([bot Telegram](../exploitation/alertes.md#bot-telegram)). |
 | `ALERT_EMAILS` | vide | Obligatoire dès que Telegram est renseigné. Vide avec Telegram vide : les règles **ne notifient personne**. |
 | `ALERT_ERROR_RATE` | `0.05` | 5 % de spans serveur en erreur. |
-| `ALERT_P95_MS` | `1500` | |
+| `ALERT_P95_MS` | `1500` | Seuil de la latence p95, en ms, sur 5 min. |
+| `ALERT_P95_MIN_CALLS` | `100` | Requêtes minimales d'un service sur 5 min pour que sa latence p95 soit évaluée (entier, 1 à 10 000 000). |
 | `ALERT_SILENCE_MIN` | `15` | |
 | `ALERT_DISK_PCT` | `80` | |
 | `CARDINALITY_ALERT_THRESHOLD` | `200000` | |

@@ -1231,14 +1231,15 @@ services:
       PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
       PROJECTS: ${PROJECTS:-}
       # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
-      GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v1"
-      GRAFANA_SETUP_FILES: "alerting.py=5c8cc8130da62873bdf392ec6dd32f9512a25dee7f42d9b0cc0b5ac70611674e;dashboards/gc-cardinality.json=627297b75136a04ecd4aea4d26a3d44d153d536a3f14a82359f51f7424ecb6e2;dashboards/gc-frontend.json=ea341f8609cc46b220d85b903150e7efa5c7af32774c5e2d6f005d994a6cb6ab;dashboards/gc-host.json=90ef9083bfaab82ac57191aa3f00008cbcc545db6c10f112f5352c6561a4bfb0;dashboards/gc-pipeline.json=fb18316522abe4fffee6078142ac5162c48d63670f1ef564c8f1be4900cde0d8;dashboards/gc-project.json=1eb7ec2cc4c944066e69930be9f1afd7bb984897e30361982eeb0a152b5f66fb;dashboards/gc-service.json=c0b95dc9ebebc9a9a18f4cf7a88049a9a788bb9e52b2792aba1e0cc786877c8c;dashboards.py=bf9f2b5bc00dcf1b803eb82fb712985d80c102662bbfcc4a5600eee872f69e19"
+      GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v2"
+      GRAFANA_SETUP_FILES: "alerting.py=601b9f72c60dc0eccd1a8dc44d102164f29e21a1c4f1360b40d18361d7447a35;dashboards/gc-cardinality.json=627297b75136a04ecd4aea4d26a3d44d153d536a3f14a82359f51f7424ecb6e2;dashboards/gc-frontend.json=ea341f8609cc46b220d85b903150e7efa5c7af32774c5e2d6f005d994a6cb6ab;dashboards/gc-host.json=90ef9083bfaab82ac57191aa3f00008cbcc545db6c10f112f5352c6561a4bfb0;dashboards/gc-pipeline.json=fb18316522abe4fffee6078142ac5162c48d63670f1ef564c8f1be4900cde0d8;dashboards/gc-project.json=1eb7ec2cc4c944066e69930be9f1afd7bb984897e30361982eeb0a152b5f66fb;dashboards/gc-service.json=c0b95dc9ebebc9a9a18f4cf7a88049a9a788bb9e52b2792aba1e0cc786877c8c;dashboards.py=bf9f2b5bc00dcf1b803eb82fb712985d80c102662bbfcc4a5600eee872f69e19"
       GRAFANA_SETUP_MIRROR_URL: ${GRAFANA_SETUP_MIRROR_URL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       ALERT_EMAILS: ${ALERT_EMAILS:-}
       ALERT_ERROR_RATE: ${ALERT_ERROR_RATE:-0.05}
       ALERT_P95_MS: ${ALERT_P95_MS:-1500}
+      ALERT_P95_MIN_CALLS: ${ALERT_P95_MIN_CALLS:-100}
       ALERT_SILENCE_MIN: ${ALERT_SILENCE_MIN:-15}
       ALERT_DISK_PCT: ${ALERT_DISK_PCT:-80}
       CARDINALITY_ALERT_THRESHOLD: ${CARDINALITY_ALERT_THRESHOLD:-200000}

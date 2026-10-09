@@ -144,7 +144,7 @@ class FakeGrafana(BaseHTTPRequestHandler):
                 return self.reply(200, state["rules"][uid])
         if path == "/alert-rules" and method == "POST":
             data = self.body()
-            state["rules"][data["uid"]] = dict(data, id=1, updated="2026-10-01T00:00:00Z", keep_firing_for="0s")
+            state["rules"][data["uid"]] = dict({"keep_firing_for": "0s"}, **data, id=1, updated="2026-10-01T00:00:00Z")
             return self.reply(201, state["rules"][data["uid"]])
         return self.reply(404, {"message": "unknown provisioning route"})
 
@@ -398,6 +398,7 @@ class GrafanaSetupUnitTest(unittest.TestCase):
             "ALERT_ERROR_RATE='2' is out of range": {"ALERT_ERROR_RATE": "2"},
             "ALERT_SILENCE_MIN='0' is out of range": {"ALERT_SILENCE_MIN": "0"},
             "ALERT_DISK_PCT='100' is out of range": {"ALERT_DISK_PCT": "100"},
+            "ALERT_P95_MIN_CALLS='0' is out of range": {"ALERT_P95_MIN_CALLS": "0"},
             "go together": {"TELEGRAM_CHAT_ID": ""},
             "ALERT_EMAILS is required when Telegram is set": {"ALERT_EMAILS": ""},
             "ALERT_EMAILS: invalid address": {"ALERT_EMAILS": "ops@example.com,not-an-email"},

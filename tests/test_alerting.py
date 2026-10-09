@@ -96,7 +96,7 @@ class RulesTest(unittest.TestCase):
         return {r["uid"]: r for r in alerting.rules(alerting.thresholds(env), "gc-prometheus")}
 
     def test_thresholds_default_to_the_spec(self):
-        expected = {"error_rate": 0.05, "p95_ms": 1500, "silence_min": 15, "disk_pct": 80, "cardinality": 200000, "host_env": "prod"}
+        expected = {"error_rate": 0.05, "p95_ms": 1500, "p95_min_calls": 100, "silence_min": 15, "disk_pct": 80, "cardinality": 200000, "host_env": "prod"}
         self.assertEqual(alerting.thresholds({}), expected)
 
     def test_six_rules_with_the_severities_of_the_spec(self):
@@ -127,6 +127,11 @@ class RulesTest(unittest.TestCase):
             ({"ALERT_ERROR_RATE": "5%"}, "not a valid float"),
             ({"ALERT_ERROR_RATE": "2"}, "out of range"),
             ({"ALERT_P95_MS": "1.5"}, "not a valid int"),
+            ({"ALERT_P95_MIN_CALLS": "1.5"}, "ALERT_P95_MIN_CALLS='1.5' is not a valid int"),
+            ({"ALERT_P95_MIN_CALLS": "beaucoup"}, "ALERT_P95_MIN_CALLS='beaucoup' is not a valid int"),
+            ({"ALERT_P95_MIN_CALLS": "0"}, "ALERT_P95_MIN_CALLS='0' is out of range"),
+            ({"ALERT_P95_MIN_CALLS": "-5"}, "ALERT_P95_MIN_CALLS='-5' is out of range"),
+            ({"ALERT_P95_MIN_CALLS": "10000001"}, "ALERT_P95_MIN_CALLS='10000001' is out of range"),
             ({"ALERT_SILENCE_MIN": "0"}, "out of range"),
             ({"ALERT_DISK_PCT": "100"}, "out of range"),
             ({"CARDINALITY_ALERT_THRESHOLD": "-1"}, "out of range"),
@@ -134,6 +139,43 @@ class RulesTest(unittest.TestCase):
             with self.subTest(env=env):
                 with self.assertRaisesRegex(alerting.AlertingError, message):
                     alerting.thresholds(env)
+
+    def test_latency_uses_5m_windows_and_a_volume_guard(self):
+        """Anti-flapping (prod incident): no 10 min window, p95 kept only above ALERT_P95_MIN_CALLS requests."""
+        expr = self.rules()["gc-latency"]["data"][0]["model"]["expr"]
+        self.assertIn("rate(traces_spanmetrics_latency_bucket{" + alerting.REQUEST_KINDS + "}[5m])", expr)
+        self.assertNotIn("[10m]", expr)
+        guard = (
+            " and on (project, env, service) (sum by (project, env, service) "
+            "(increase(traces_spanmetrics_calls_total{" + alerting.REQUEST_KINDS + "}[5m])) >= 100)"
+        )
+        self.assertTrue(expr.endswith(guard), expr)
+        self.assertIn(">= 2500)", self.rules(ALERT_P95_MIN_CALLS="2500")["gc-latency"]["data"][0]["model"]["expr"])
+
+    def test_latency_query_range_covers_its_window(self):
+        self.assertGreaterEqual(self.rules()["gc-latency"]["data"][0]["relativeTimeRange"]["from"], 300)
+
+    def test_empty_min_calls_takes_the_default(self):
+        """Coolify passes a variable emptied in its UI as an empty string, not the compose fallback."""
+        for value in ("", "   "):
+            with self.subTest(value=value):
+                self.assertEqual(alerting.thresholds({"ALERT_P95_MIN_CALLS": value})["p95_min_calls"], 100)
+
+    def test_latency_pending_and_keep_firing(self):
+        latency = self.rules()["gc-latency"]
+        self.assertEqual((latency["for"], latency["keep_firing_for"]), ("5m", "15m"))
+
+    def test_other_rules_keep_their_behaviour(self):
+        expected = {"gc-error-rate": "2m", "gc-silence": "0s", "gc-disk": "2m", "gc-cardinality": "2m", "gc-rejections": "0s"}
+        rules = self.rules()
+        self.assertEqual({uid: rules[uid]["for"] for uid in expected}, expected)
+        self.assertEqual({uid: rules[uid]["keep_firing_for"] for uid in expected}, dict.fromkeys(expected, "0s"))
+
+    def test_latency_summary_names_the_window_and_the_volume(self):
+        summary = self.rules(ALERT_P95_MIN_CALLS="250")["gc-latency"]["annotations"]["summary"]
+        self.assertIn("sur 5 min", summary)
+        self.assertIn("250 requêtes", summary)
+        self.assertNotIn("10 min", summary)
 
     def test_rejections_cover_every_counter_of_the_spec(self):
         expr = self.rules()["gc-rejections"]["data"][0]["model"]["expr"]
@@ -154,6 +196,55 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(self.rules(HOST_ENV="preprod")["gc-disk"]["labels"], {"env": "preprod", "severity": "critical"})
         with self.assertRaisesRegex(alerting.AlertingError, "HOST_ENV='staging' must be prod or preprod"):
             self.rules(HOST_ENV="staging")
+
+
+class EnsureRuleTest(unittest.TestCase):
+    """A rerun leaves every rule alone when Grafana returns what it stored (with its own extra fields)."""
+
+    class FakeGrafana:
+        """Stores rules like Grafana 13: adds id/updated, and keep_firing_for "0s" when it is omitted."""
+
+        def __init__(self):
+            self.rules = {}
+            self.writes = []
+
+        def request(self, method, path, body=None):
+            uid = path.rsplit("/", 1)[1]
+            return (200, self.rules[uid]) if uid in self.rules else (404, b"")
+
+        def expect(self, method, path, body=None, ok=(200,), headers=None):
+            self.writes.append((method, body["uid"]))
+            self.rules[body["uid"]] = dict({"keep_firing_for": "0s"}, **body, id=1, updated="2026-10-09T00:00:00Z")
+
+        def error(self, method, path, status, payload):
+            return RuntimeError(f"{method} {path}: {status}")
+
+    def desired(self, **env):
+        return alerting.rules(alerting.thresholds(env), "gc-prometheus")
+
+    def test_rerun_is_unchanged_for_all_six_rules(self):
+        api = self.FakeGrafana()
+        self.assertEqual([alerting.ensure_rule(api, item) for item in self.desired()], ["created"] * 6)
+        self.assertEqual([alerting.ensure_rule(api, item) for item in self.desired()], ["unchanged"] * 6)
+        self.assertEqual(len(api.writes), 6)
+
+    def test_rule_stored_before_keep_firing_for_is_updated(self):
+        """A gc-latency created by the previous version (no keep_firing_for, Grafana stored "0s") is rewritten."""
+        api = self.FakeGrafana()
+        for item in self.desired():
+            alerting.ensure_rule(api, item)
+        api.rules["gc-latency"]["keep_firing_for"] = "0s"
+        results = {item["uid"]: alerting.ensure_rule(api, item) for item in self.desired()}
+        self.assertEqual(results.pop("gc-latency"), "updated")
+        self.assertEqual(set(results.values()), {"unchanged"})
+
+    def test_min_calls_change_updates_only_the_latency_rule(self):
+        api = self.FakeGrafana()
+        for item in self.desired():
+            alerting.ensure_rule(api, item)
+        results = {item["uid"]: alerting.ensure_rule(api, item) for item in self.desired(ALERT_P95_MIN_CALLS="500")}
+        self.assertEqual(results.pop("gc-latency"), "updated")
+        self.assertEqual(set(results.values()), {"unchanged"})
 
 
 if __name__ == "__main__":
