@@ -30,6 +30,9 @@ http:
           - Content-Type
           - x-api-key
           - x-faro-session-id
+          # Faro Web SDK >= 2.x sends it on every fetch: without it, browsers block every preflight.
+          - Idempotency-Key
+          # Content-Encoding is deliberately absent: only needed if Faro compression is enabled.
         accessControlMaxAge: 600
         addVaryHeader: true
     gc-faro-ratelimit:

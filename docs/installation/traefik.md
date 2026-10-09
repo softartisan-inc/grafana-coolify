@@ -62,6 +62,16 @@ barre, `"^https://([a-z0-9-]+\\.)?example\\.(me|app)$"`.
 Cette regex accepte `https://example.me`, `https://acme.example.me`, `https://acme-dev.example.app`
 et refuse `https://evil-example.me` ou `https://example.me.attaquant.com`.
 
+## En-têtes autorisés (CORS Faro)
+
+`accessControlAllowHeaders` liste les en-têtes que le SDK Faro Web envoie sur chaque
+`POST /collect` : `Content-Type`, `x-api-key`, `x-faro-session-id` et, depuis le SDK 2.x,
+`Idempotency-Key`. Un en-tête absent de cette liste fait échouer **toutes** les requêtes
+préliminaires (preflight) du navigateur : plus aucune donnée Faro n'arrive
+([dépannage](../depannage/traefik.md#request-header-field-idempotency-key-is-not-allowed-by-access-control-allow-headers-in-preflight-response)).
+`Content-Encoding` n'est pas autorisé : il ne servirait que si la compression Faro était activée
+côté client, ce qu'aucun client ne fait.
+
 ## Rattachement et vérification
 
 Le rattachement est fait par les labels du compose : `alloy-gateway` → `gc-otlp-auth@file` ;
