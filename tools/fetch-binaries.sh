@@ -91,6 +91,10 @@ fetch_zip loki "$LOKI_VERSION" "$GH/grafana/loki/releases/download/v$LOKI_VERSIO
 fetch_tar tempo "$TEMPO_VERSION" "$GH/grafana/tempo/releases/download/v$TEMPO_VERSION" \
   "tempo_${TEMPO_VERSION}_linux_amd64.tar.gz" SHA256SUMS tempo:tempo
 
+# Pyroscope
+fetch_tar pyroscope "$PYROSCOPE_VERSION" "$GH/grafana/pyroscope/releases/download/v$PYROSCOPE_VERSION" \
+  "pyroscope_${PYROSCOPE_VERSION}_linux_amd64.tar.gz" checksums.txt pyroscope:pyroscope
+
 # Prometheus + promtool
 fetch_tar prometheus "$PROMETHEUS_VERSION" "$GH/prometheus/prometheus/releases/download/v$PROMETHEUS_VERSION" \
   "prometheus-$PROMETHEUS_VERSION.linux-amd64.tar.gz" sha256sums.txt \

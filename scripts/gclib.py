@@ -44,6 +44,8 @@ def settings():
         "GC_TEMPO_URL": "http://tempo:3200",
         "GC_PROM_URL": "http://prometheus:9090",
         "GC_ALLOY_METRICS_URL": "http://alloy:12345",
+        "GC_PROFILES_URL": "http://alloy:4040",
+        "GC_PYROSCOPE_URL": "http://pyroscope:4040",
     }
     for key, value in defaults.items():
         values[key] = os.environ.get(key, value)
@@ -259,6 +261,29 @@ def trace_resources_and_spans(trace):
         spans = [otlp_attr_map(s.get("attributes")) for scope in resource_spans.get("scopeSpans", []) for s in scope.get("spans", [])]
         result.append((resource, spans))
     return result
+
+
+def profile_name(service, labels):
+    """`name` of the Pyroscope /ingest API: service{k=v,...} (the labels Alloy relabels)."""
+    return service + "{" + ",".join(f"{k}={v}" for k, v in sorted(labels.items())) + "}"
+
+
+def send_profile(base_url, service, labels, folded="main;work 100\n", timeout=15):
+    """One CPU profile in the folded (collapsed) format, as the PHP client sends it."""
+    until = int(time.time())
+    params = {"name": profile_name(service, labels), "from": until - 10, "until": until, "format": "folded", "sampleRate": 100, "spyName": "phpspy"}
+    url = base_url.rstrip("/") + "/ingest?" + urllib.parse.urlencode(params)
+    return http("POST", url, folded.encode("utf-8"), headers={"Content-Type": "text/plain"}, timeout=timeout)
+
+
+def pyroscope_query(pyroscope_url, method, since_s=900, **fields):
+    """POST a Connect JSON query (querier.v1.QuerierService/<method>) over the last since_s seconds."""
+    end = int(time.time() * 1000) + 60_000
+    body = {"start": end - (since_s + 60) * 1000, "end": end, **fields}
+    resp = http("POST", pyroscope_url.rstrip("/") + "/querier.v1.QuerierService/" + method, body)
+    if resp.status != 200:
+        raise AssertionError(f"Pyroscope {method}: HTTP {resp.status}: {resp.body[:300]!r}")
+    return resp.json()
 
 
 def prom_query(prom_url, expr):
