@@ -356,7 +356,9 @@ def client_apps():
     crashed_sessions = f"count(sum by (session_id) (count_over_time({CLIENT_CRASHES} [$__range])))"
     crashed_sessions_by_version = f"count by (app_version) (sum by (app_version, session_id) (count_over_time({CLIENT_CRASHES} [$__range])))"
     slow_traces = (
-        '{ resource.project = "$project" && resource.env =~ "$env" && resource.service.name =~ "$service"'
+        # Explicit :pipe format (a|b), independent of how the Tempo datasource formats multi-values.
+        # The project's All value (.+) is a regex too, hence =~ and not =.
+        '{ resource.project =~ "${project:pipe}" && resource.env =~ "${env:pipe}" && resource.service.name =~ "${service:pipe}"'
         " && kind = client && duration > $slow_trace }"
         " | select(span.http.route, span.http.response.status_code, span.http.request.method)"
     )

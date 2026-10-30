@@ -1109,7 +1109,7 @@
             "uid": "gc-tempo"
           },
           "limit": 20,
-          "query": "{ resource.project = \"$project\" && resource.env =~ \"$env\" && resource.service.name =~ \"$service\" && kind = client && duration > $slow_trace } | select(span.http.route, span.http.response.status_code, span.http.request.method)",
+          "query": "{ resource.project =~ \"${project:pipe}\" && resource.env =~ \"${env:pipe}\" && resource.service.name =~ \"${service:pipe}\" && kind = client && duration > $slow_trace } | select(span.http.route, span.http.response.status_code, span.http.request.method)",
           "queryType": "traceql",
           "refId": "A",
           "tableType": "traces"

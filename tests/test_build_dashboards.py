@@ -133,6 +133,16 @@ class ClientAppsDashboardTest(unittest.TestCase):
             with self.subTest(panel=title):
                 self.assertNotRegex(expr, r"sum(\s+by\s*\([^)]*\))?\s*\(\s*quantile_over_time")
 
+    def test_traceql_variables_are_regexes(self):
+        """The project's All value is `.+` and env/service are multi-value: `=~` and :pipe only."""
+        traceql = [target["query"] for _title, target in self.targets if target.get("queryType") == "traceql"]
+        self.assertTrue(traceql)
+        for query in traceql:
+            for name in ("project", "env", "service"):
+                with self.subTest(variable=name):
+                    self.assertRegex(query, r'=~ "\$\{' + name + r':pipe\}"')
+                    self.assertNotRegex(query, r'[=~] "\$' + name + '"')
+
     def test_rows_and_tempo(self):
         rows = [p["title"] for p in self.board["panels"] if p["type"] == "row"]
         self.assertEqual(len(rows), 8)
