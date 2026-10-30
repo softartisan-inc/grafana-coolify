@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """grafana-setup: idempotently provision Grafana (spec 10). Standard library only.
 
-1. Grafana >= 12.0; datasources (fixed UIDs, correlations of 7.3); folders. 2. Plan B content, too
+1. Grafana >= 12.0; datasources (fixed UIDs, correlations of 7.3; Pyroscope only when
+PYROSCOPE_INTERNAL_URL is set, on Grafana >= 12.3); folders. 2. Plan B content, too
 big for the compose (spec 4.3): downloaded (mirror, or this repository at a fixed tag), checked
 against GRAFANA_SETUP_FILES (path=sha256;...), imported only if all match; it provisions dashboards
 and alerting. Tokens are never written to the output.
@@ -24,6 +25,9 @@ MIN_MAJOR = 12
 LOKI_UID = "gc-loki"
 TEMPO_UID = "gc-tempo"
 PROMETHEUS_UID = "gc-prometheus"
+PYROSCOPE_UID = "gc-pyroscope"
+# The built-in Pyroscope datasource of Grafana requires 12.3 or later.
+PYROSCOPE_MIN_VERSION = (12, 3)
 # Same rule as config-guard (guard.sh) for each item of PROJECTS.
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 # Trace -> logs: every log of the trace, whatever its path (OTLP or Faro), via trace_id metadata.
@@ -240,6 +244,25 @@ def datasources(loki_url, tempo_url, prometheus_url):
     ]
 
 
+def pyroscope_datasource(pyroscope_url):
+    """Optional profiles datasource. No traces-to-profiles: neither the PHP nor the Node.js SDK
+    sends the span profile ids it needs."""
+    return {
+        "uid": PYROSCOPE_UID,
+        "name": "Pyroscope (grafana-coolify)",
+        "type": "grafana-pyroscope-datasource",
+        "access": "proxy",
+        "url": pyroscope_url,
+        "basicAuth": False,
+        "jsonData": {"minStep": "15s"},
+    }
+
+
+def version_tuple(version):
+    match = re.match(r"^v?(\d+)\.(\d+)", version)
+    return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+
+
 def ensure_datasource(api, desired):
     path = f"/api/datasources/uid/{desired['uid']}"
     status, current = api.request("GET", path)
@@ -290,6 +313,11 @@ def required_url(env, name):
     if not HTTP_URL_RE.match(value) or value.rstrip("/") in ("http:", "https:"):
         raise SetupError(f"{name} must be an http:// or https:// URL, got {mask_userinfo(value)[:80]!r}")
     return value
+
+
+def optional_url(env, name):
+    """Empty: None (feature off). Set: same rule as required_url."""
+    return required_url(env, name) if env.get(name, "").strip() else None
 
 
 def parse_content(value):
@@ -368,11 +396,18 @@ def run(env, out=print, health_timeout=120):
     grafana_url, loki_url, tempo_url, prometheus_url = (required_url(env, name) for name in URL_VARIABLES)
     api = Grafana(grafana_url, required(env, "GRAFANA_SA_TOKEN"))
     desired = datasources(loki_url, tempo_url, prometheus_url)
+    pyroscope_url = optional_url(env, "PYROSCOPE_INTERNAL_URL")
     projects = parse_projects(env.get("PROJECTS", ""))
     version = check_version(wait_healthy(api, timeout=health_timeout))
     out(f"grafana-setup: Grafana {version}")
     for datasource in desired:
         out(f"grafana-setup: datasource {datasource['uid']}: {ensure_datasource(api, datasource)}")
+    if pyroscope_url is None:
+        out(f"grafana-setup: datasource {PYROSCOPE_UID}: skipped (PYROSCOPE_INTERNAL_URL is empty)")
+    elif version_tuple(version) < PYROSCOPE_MIN_VERSION:
+        out(f"grafana-setup: datasource {PYROSCOPE_UID}: skipped (Grafana {version}: 12.3 or later is required)")
+    else:
+        out(f"grafana-setup: datasource {PYROSCOPE_UID}: {ensure_datasource(api, pyroscope_datasource(pyroscope_url))}")
     out(f"grafana-setup: folder {SHARED_FOLDER_UID}: {ensure_folder(api, SHARED_FOLDER_UID, SHARED_FOLDER_TITLE)}")
     for project in projects:
         out(f"grafana-setup: folder {folder_uid(project)}: {ensure_folder(api, folder_uid(project), project)}")
