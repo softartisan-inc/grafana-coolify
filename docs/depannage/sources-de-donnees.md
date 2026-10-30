@@ -128,3 +128,38 @@ curl -s -o /dev/null -w '%{http_code}\n' -G http://gc-tempo:3200/api/metrics/que
 
 Juste après le redéploiement, seuls les spans reçus depuis le redémarrage de Tempo sont comptés
 pour la dernière demi-heure ; au-delà, Tempo lit ses blocs habituels.
+
+## Pyroscope : aucun profil
+
+**Symptôme** : **Drilldown → Profiles** (ou **Explore** sur `Pyroscope (grafana-coolify)`) ne
+montre pas le service, alors que le profilage est activé dans l'application.
+
+**Causes, dans l'ordre** :
+
+1. **Source absente** : `PYROSCOPE_INTERNAL_URL` est vide (`grafana-setup: datasource
+   gc-pyroscope: skipped (PYROSCOPE_INTERNAL_URL is empty)`) ou Grafana est antérieur à 12.3
+   (`skipped (Grafana … : 12.3 or later is required)`). Correctif : `http://gc-pyroscope:4040`,
+   puis **Redeploy**.
+2. **Profils rejetés par Alloy** : `project` absent, mal formé ou hors de `PROJECTS`, `env` autre
+   que `prod`/`preprod`, nom de service mal formé. Dans **Explore**, source
+   `Prometheus (grafana-coolify)` (Alloy est scrapé par le job `alloy`) :
+
+   ```
+   increase(pyroscope_relabel_profiles_dropped[15m])
+   increase(pyroscope_write_dropped_profiles_total[15m])
+   ```
+
+   `pyroscope_relabel_profiles_dropped` : corriger les labels de l'application (voir le README,
+   « Profils (profilage continu) »). `pyroscope_write_dropped_profiles_total` : `pyroscope` ne
+   répond pas (logs du service `pyroscope`, `/ready`).
+3. **Application hors du réseau `coolify`** ou mauvaise adresse : l'application doit viser
+   `http://gc-alloy:4040`, jamais `gc-pyroscope` directement (sans la validation d'Alloy) ni le
+   domaine public de Faro.
+
+**Vérification** : depuis un conteneur du réseau `coolify`,
+
+```bash
+wget -qO- http://gc-pyroscope:4040/ready
+```
+
+répond `ready` (environ 40 s après le démarrage de `pyroscope` : le metastore attend son élection).

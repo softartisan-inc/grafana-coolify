@@ -2,15 +2,16 @@
 
 Package Docker Compose, déployable sur [Coolify](https://coolify.io), qui ajoute à un service
 Coolify **Grafana** existant tout ce qu'il faut pour recevoir, masquer, stocker et relier logs,
-traces et métriques :
+traces, métriques et profils :
 
 | Service | Rôle | Exposition |
 |---|---|---|
-| `alloy` | Collecteur : OTLP interne (4317/4318) et Faro (12347), masquage, étiquetage, filtrage, routage | Faro public via Traefik |
+| `alloy` | Collecteur : OTLP interne (4317/4318), Faro (12347) et profils (4040, interne), masquage, étiquetage, filtrage, routage | Faro public via Traefik |
 | `alloy-gateway` | Relais OTLP/HTTP authentifié (Basic Auth par projet) vers `alloy` | OTLP public via Traefik |
 | `loki` | Logs (rétention prod 30 j, reste 7 j) | interne |
 | `tempo` | Traces (7 j), métriques dérivées (span-metrics, carte des services) et métriques TraceQL (Traces Drilldown) | interne |
 | `prometheus` | Métriques (90 j), récepteurs OTLP et remote write, scrape de la stack | interne |
+| `pyroscope` | Profils (profilage continu, 7 j), Pyroscope v2 en mode single-node sur disque local | interne |
 | `node-exporter` | Métriques de l'hôte (montages en lecture seule) | interne |
 | `config-guard` | Ponctuel : vérifie les fichiers de config et les variables avant tout démarrage | — |
 | `grafana-setup` | Ponctuel : crée dans Grafana les sources de données, les dossiers, les tableaux de bord et les alertes | — |
@@ -30,7 +31,7 @@ serveur, et un [index de dépannage](docs/depannage/README.md) qui part du messa
 ## Prérequis
 
 - Un serveur Coolify avec le proxy Traefik, et le service Coolify **Grafana 12.0 ou plus récent**.
-- Environ **6 Go de RAM** libres (somme des `mem_limit` : ~5,7 Gio) et de la place disque pour
+- Environ **7 Go de RAM** libres (somme des `mem_limit` : ~6,7 Gio, dont 1 Gio pour `pyroscope`) et de la place disque pour
   90 jours de métriques.
 - Les **spikes de `docs/spikes.md`** joués une fois sur le serveur cible (version de Coolify,
   portée des middlewares, fichiers `content:`, noms internes).
@@ -57,6 +58,8 @@ Copier `.env.example` dans l'onglet **Environment Variables**, puis remplir :
 | `FARO_SERVICES` | Services Faro autorisés (`app.name`), mêmes règles d'écriture que `PROJECTS` (`web-app,desktop`). Les services de `HOST_MAP` sont toujours acceptés ; tout autre nom choisi par le client est rejeté. **Fermé par défaut** : vide, seuls les services de `HOST_MAP` passent. |
 | `HOST_MAP`, `RESERVED_SUBDOMAINS`, `TENANT_HOST_REGEX` | Règles de déduction depuis l'hôte (voir plus bas). |
 | `LOKI_INTERNAL_URL`, `TEMPO_INTERNAL_URL`, `PROMETHEUS_INTERNAL_URL` | Alias stables sur le réseau `coolify` : `http://gc-loki:3100`, `http://gc-tempo:3200`, `http://gc-prometheus:9090` (étape 4). |
+| `PYROSCOPE_INTERNAL_URL` | Facultatif : `http://gc-pyroscope:4040` crée la source de données Pyroscope (profils, Grafana 12.3 ou plus). Vide : pas de source Pyroscope. |
+| `PYROSCOPE_RETENTION` | Rétention des profils, `168h` par défaut, 24 h minimum (vérifié par `config-guard`). |
 | `GRAFANA_URL`, `GRAFANA_SA_TOKEN` | Adresse **interne** de Grafana, `http://grafana-<uuid>:3000` (étape 4), et jeton du compte de service (étape 5). |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ALERT_EMAILS` | Notifications (voir « Tableaux de bord et alertes ») : bot Telegram pour `critical` + `prod`, email pour le reste. |
 | `ALERT_ERROR_RATE`, `ALERT_P95_MS`, `ALERT_P95_MIN_CALLS`, `ALERT_SILENCE_MIN`, `ALERT_DISK_PCT`, `CARDINALITY_ALERT_THRESHOLD` | Seuils des alertes ; défauts de `.env.example`. |
@@ -162,15 +165,16 @@ Traefik répond lui-même aux requêtes préalables `OPTIONS`, avant la limite d
 
 Coolify suffixe le nom de chaque conteneur à **chaque déploiement** (`loki-<uuid>-<horodatage>`) :
 ce nom change à chaque redéploiement, et `loki-<uuid>` ne résout **pas** sur le réseau `coolify`.
-Le compose donne donc lui-même à `loki`, `tempo`, `prometheus` et `alloy` un **alias stable et
-unique** sur ce réseau : `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-alloy`.
+Le compose donne donc lui-même à `loki`, `tempo`, `prometheus`, `pyroscope` et `alloy` un **alias
+stable et unique** sur ce réseau : `gc-loki`, `gc-tempo`, `gc-prometheus`, `gc-pyroscope`,
+`gc-alloy`.
 
 Le réseau externe s'appelle `coolify` : c'est le réseau de la destination par défaut de Coolify.
 Si la destination de la ressource porte un autre nom, adapter `networks.coolify.name` dans
 `compose.template.yaml`, puis régénérer `docker-compose.yaml` (`python3 scripts/render.py`).
 
 1. **Ce package** : laisser **Connect To Predefined Network** **désactivé** sur la ressource. Le
-   compose déclare le réseau externe `coolify` et y rattache les quatre services avec leur alias,
+   compose déclare le réseau externe `coolify` et y rattache les cinq services avec leur alias,
    ainsi que `grafana-setup`, sans alias, pour joindre `GRAFANA_URL` ; option désactivée, Coolify
    n'y met aucun autre service. Option activée, Coolify remplace l'entrée `coolify` de chaque
    service par la sienne, sans alias : les noms `gc-*` ne résolvent plus (voir `docs/spikes.md`,
@@ -186,7 +190,9 @@ Si la destination de la ressource porte un autre nom, adapter `networks.coolify.
    PROMETHEUS_INTERNAL_URL=http://gc-prometheus:9090
    ```
 
-   et documenter pour les applications du même hôte `ALLOY_INTERNAL_URL=http://gc-alloy:4318`.
+   et, pour les profils (facultatif), `PYROSCOPE_INTERNAL_URL=http://gc-pyroscope:4040`.
+   Documenter pour les applications du même hôte `ALLOY_INTERNAL_URL=http://gc-alloy:4318` et,
+   si elles envoient des profils, `ALLOY_PROFILES_URL=http://gc-alloy:4040`.
    Tant que ces trois URL sont vides, seul `grafana-setup` échoue
    (`LOKI_INTERNAL_URL is required`) : les autres services tournent.
 4. `GRAFANA_URL` est l'adresse **interne** du conteneur Grafana, `http://grafana-<uuid>:3000` :
@@ -252,7 +258,7 @@ dans les deux états de l'option, car Compose ajoute toujours le nom du service 
 conteneur.
 
 **Hypothèse de sécurité** : tout conteneur du réseau `coolify` est de confiance (Loki, Tempo,
-Prometheus et les ports internes d'Alloy n'ont pas d'authentification). Aucun service interne ne
+Prometheus, Pyroscope et les ports internes d'Alloy n'ont pas d'authentification). Aucun service interne ne
 publie de port (`scripts/check.py` le vérifie).
 
 ### 5. Compte de service Grafana
@@ -614,6 +620,7 @@ point de contact, pas `gc-telegram` (voir plus haut).
 | Serveur du **même hôte** | `ALLOY_INTERNAL_URL` (OTLP/HTTP 4318, ou gRPC 4317) | réseau `coolify` |
 | Serveur **distant** | `https://<domaine OTLP>` | `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64 projet:mot-de-passe>` |
 | Navigateur, poste de travail, mobile | `https://<domaine Faro>/collect` | CORS, `FARO_API_KEY`, débit, taille |
+| Profils (SDK Pyroscope), **même hôte** uniquement | `ALLOY_PROFILES_URL` = `http://gc-alloy:4040` (`/ingest`) | réseau `coolify` |
 
 Attributs obligatoires (ressource OpenTelemetry) : `project`, `deployment.environment.name`
 (`prod` ou `preprod`), `service.name`. `tenant` en ressource ou en attribut de span selon le
@@ -648,6 +655,39 @@ Pour les logs Faro, `env` et `tenant` sont **déduits de l'hôte de la page** :
 > rythme de `FARO_RATE`. Loki plafonne le tout à `max_global_streams_per_user: 10000` flux
 > (`config/loki/loki.yaml`, deux fois le défaut de Loki), budget partagé avec le chemin OTLP.
 
+### Profils (profilage continu)
+
+Les applications envoient leurs profils à `alloy` (`http://gc-alloy:4040`, API `/ingest` des SDK
+Pyroscope, formats `pprof` ou `folded`), **jamais directement** à `pyroscope`. Le profilage est
+coupé par défaut **côté application** ; `pyroscope` reste au repos tant que rien n'arrive.
+
+- **Labels obligatoires**, dans le nom de l'application (`/ingest?name=<service>{project=…,env=…}`)
+  ou les `tags` du SDK : `project` (`[a-z0-9][a-z0-9-]{0,63}`, et présent dans `PROJECTS` quand la
+  liste est renseignée, même règle que Faro), `env` (`prod` ou `preprod`), et un nom de service
+  `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. `role` (faible cardinalité, par exemple `web`, `worker`) est
+  facultatif.
+- **Tout autre label est retiré** par Alloy (liste blanche : `service_name`, `project`, `env`,
+  `role` et les labels internes `__…`) : jamais de `tenant`, d'identifiant d'utilisateur ou de
+  requête dans un label de profil (les séries Pyroscope sont globales).
+- **Rejets** : un profil qui ne respecte pas ces règles est supprimé et compté par
+  `pyroscope_relabel_profiles_dropped` ; un envoi vers `pyroscope` en échec, par
+  `pyroscope_write_dropped_profiles_total` (métriques d'Alloy, job Prometheus `alloy`).
+- **Pyroscope indisponible** : Alloy transmet de façon synchrone, avec un délai de 5 s et deux
+  nouvelles tentatives au plus, puis répond `500` ; le SDK abandonne l'envoi. Rien n'est mis en
+  file : les profils de cette période sont perdus, l'application n'est pas ralentie au-delà du
+  délai de son propre client HTTP.
+- **Limites assumées** : pas de lien trace → profil (les SDK PHP et Node.js n'envoient pas
+  l'identifiant de profil de span) ; les serveurs **distants** ne peuvent pas envoyer de profils
+  (`alloy-gateway` ne relaie que l'OTLP) ; Pyroscope v2 en mode single-node est qualifié par
+  Grafana de « non recommandé en production » (c'est le seul mode qui accepte un disque local) :
+  risque accepté pour un hôte unique. Retour arrière : vider `PYROSCOPE_INTERNAL_URL`, supprimer
+  la source `gc-pyroscope` dans Grafana, couper le profilage dans les applications.
+- Les profils ne passent pas par le masquage : ils ne contiennent que des noms de fonctions et de
+  fichiers, et la liste blanche empêche toute fuite par les labels.
+
+Dans Grafana : **Drilldown → Profiles** (application « Profiles Drilldown », préinstallée et active dans
+Grafana 13.2.2, vérifié sur le banc) ou **Explore** sur la source `Pyroscope (grafana-coolify)`.
+
 Noms à utiliser dans les requêtes Grafana :
 
 | Donnée | Loki | Tempo | Prometheus (OTLP) | Span-metrics |
@@ -657,6 +697,8 @@ Noms à utiliser dans les requêtes Grafana :
 | service | `service_name` | `resource.service.name` | `job` | `service` |
 | tenant | `tenant` (métadonnée) | `tenant` | `tenant` | `tenant` |
 | niveau | `detected_level` (métadonnée) | — | — | — |
+
+Profils (Pyroscope) : `project`, `env`, `service_name`, `role` ; pas de `tenant`.
 
 ## Masquage (filet de sécurité)
 
@@ -814,6 +856,10 @@ Logs et données du banc : `.harness/` (non versionné). `.harness/coolify/` y j
 Coolify écrit les fichiers `content:`, sous leur nom à empreinte. Faute de cgroup, le banc donne
 lui-même à `alloy` et `prometheus` le `GOMEMLIMIT` (90 % du `mem_limit`) que ces binaires tirent
 de la limite de leur conteneur ; le `memory_limiter` d'Alloy, lui, ne se déclenche qu'en conteneur.
+`pyroscope` fixe son `GOMEMLIMIT` dans le compose (Go ne le déduit pas du cgroup) et n'est prêt
+qu'après environ 40 s (élection de son metastore). Pyroscope n'a pas d'option de vérification de
+configuration : `check.py` le lance avec une cible inconnue, qui l'arrête juste après la lecture de
+sa configuration (une clé inconnue est refusée).
 
 ### Banc Docker (`compose.dev.yaml`)
 

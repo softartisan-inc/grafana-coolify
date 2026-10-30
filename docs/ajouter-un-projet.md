@@ -49,10 +49,28 @@ l'alerte Disque), pas les applications. Serveur unique qui héberge la prod : `H
 3. S'il envoie depuis **un autre serveur** : une ligne htpasswd à son nom dans
    [Traefik](installation/traefik.md#comptes-otlp-htpasswd), et un domaine pour
    `alloy-gateway` si la porte OTLP est encore fermée.
-4. **Redeploy**. `grafana-setup` crée le dossier `gc-<projet>` et son tableau
+4. S'il envoie des **profils** (profilage continu, facultatif, même hôte uniquement) : rien à
+   changer dans le package, voir [Profils d'un projet](#profils-dun-projet).
+5. **Redeploy**. `grafana-setup` crée le dossier `gc-<projet>` et son tableau
    `grafana-coolify — <projet>`, dont les liens ouvrent les six tableaux avec `var-project`
    réglé.
-5. Instrumenter l'application, puis vérifier dans **Explore** (Loki : `{project="<projet>"}`).
+6. Instrumenter l'application, puis vérifier dans **Explore** (Loki : `{project="<projet>"}`).
+
+## Profils d'un projet
+
+Le profilage continu est **coupé par défaut dans l'application** : il s'active par une
+variable d'environnement de l'application, jamais dans le package.
+
+1. Une seule fois pour le serveur : renseigner `PYROSCOPE_INTERNAL_URL=http://gc-pyroscope:4040`
+   et redéployer, pour que `grafana-setup` crée la source `gc-pyroscope`.
+2. L'application envoie à `http://gc-alloy:4040` (API `/ingest` du SDK Pyroscope), depuis un
+   conteneur du réseau `coolify` du même hôte. Labels : `project` (le même que pour l'OTLP, présent
+   dans `PROJECTS`), `env` (`prod` ou `preprod`), le nom de service (le même que `service.name`
+   pour retrouver le service d'un écran à l'autre), et facultativement `role` (`web`, `worker`…).
+3. **Jamais de `tenant`** ni d'identifiant variable : Alloy retire tout label hors de
+   `service_name`, `project`, `env`, `role`.
+4. Vérifier dans Grafana → **Drilldown** → **Profiles**, filtre `project="<projet>"`. Rien
+   n'arrive : [dépannage](depannage/sources-de-donnees.md#pyroscope--aucun-profil).
 
 ## Un client desktop (hors navigateur)
 
