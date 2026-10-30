@@ -355,7 +355,7 @@ Attendu :
   production ;
 - `notify-test: gc-telegram: sent` et `notify-test: gc-email: sent`, puis le message dans le
   groupe Telegram et dans chaque boîte de `ALERT_EMAILS` ;
-- dans Grafana, dossier **grafana-coolify** : six tableaux sans panneau en erreur, six règles
+- dans Grafana, dossier **grafana-coolify** : sept tableaux sans panneau en erreur, six règles
   **Normal** ou **Firing**, aucune en **Error** ; dossier de chaque projet : les liens ouvrent les
   tableaux avec le bon `var-project`.
 
