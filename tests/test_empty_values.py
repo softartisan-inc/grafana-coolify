@@ -27,6 +27,7 @@ TEMPO = ROOT / "config" / "tempo" / "tempo.yaml"
 LOKI = ROOT / "config" / "loki" / "loki.yaml"
 ALLOY = ROOT / "config" / "alloy" / "config.alloy"
 PROM_START = ROOT / "config" / "prometheus" / "start.sh"
+PYROSCOPE = ROOT / "config" / "pyroscope" / "pyroscope.yaml"
 FALLBACKS = check.fallback_defaults(TEMPLATE)
 EMPTIED = dict.fromkeys(FALLBACKS, "")
 
@@ -35,6 +36,8 @@ def reapplied(name, default):
     """True when the consumer of `name` applies `default` itself to an empty value."""
     if name in ("TEMPO_RETENTION", "TEMPO_MAX_ACTIVE_SERIES", "ENABLE_EXEMPLARS"):
         return f"${{{name}:-{default}}}" in TEMPO.read_text(encoding="utf-8")
+    if name == "PYROSCOPE_RETENTION":
+        return f"${{{name}:-{default}}}" in PYROSCOPE.read_text(encoding="utf-8")
     if name.startswith("LOKI_RETENTION_"):
         return f"${{{name}:-{default}}}" in LOKI.read_text(encoding="utf-8")
     if name in ("PROM_RETENTION_TIME", "PROM_RETENTION_SIZE"):
@@ -112,6 +115,45 @@ class TempoEmptyValuesTest(unittest.TestCase):
         compactor = re.search(r"(?m)^compactor:\n(?:  .*\n)*?        block_retention: (\S+)", text)
         self.assertEqual(compactor.group(1), "168h0m0s")
         self.assertRegex(text, r"(?m)^ +max_active_series: 100000$")
+
+
+class PyroscopeEmptyValuesTest(unittest.TestCase):
+    """The real Pyroscope binary, every fallback variable empty: retention takes 168h (1w)."""
+
+    ADDR = "127.0.77.4"
+
+    def setUp(self):
+        for port in (9097, 9099, 7947):
+            with socket.socket() as sock:
+                if sock.connect_ex(("127.0.0.1", port)) == 0:
+                    self.skipTest(f"127.0.0.1:{port} busy (a harness Pyroscope is running)")
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_defaults_apply(self):
+        env = {**validator_env(self.tmp.name), **EMPTIED, "BIND_ADDR": self.ADDR, "PYROSCOPE_DATA_DIR": self.tmp.name}
+        log = (Path(self.tmp.name) / "pyroscope.log").open("w")
+        cmd = [str(binary("pyroscope")), f"-config.file={PYROSCOPE}", "-config.expand-env=true"]
+        proc = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            text = None
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline and proc.poll() is None:
+                try:
+                    with urllib.request.urlopen(f"http://{self.ADDR}:4040/api/v1/status/config", timeout=2) as resp:
+                        text = resp.read().decode("utf-8")
+                    break
+                except OSError:
+                    time.sleep(0.5)
+            self.assertIsNotNone(text, (Path(self.tmp.name) / "pyroscope.log").read_text(encoding="utf-8")[-2000:])
+        finally:
+            proc.kill()
+            proc.wait(timeout=30)
+            log.close()
+        self.assertRegex(text, r"(?m)^limits:\n(?:    .*\n)*?    retention_period: 1w$")
+        self.assertRegex(text, r"(?m)^architecture_storage: v2$")
 
 
 class LokiEmptyValuesTest(unittest.TestCase):

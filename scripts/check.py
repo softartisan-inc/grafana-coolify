@@ -22,6 +22,10 @@ import render  # noqa: E402
 BIN = Path(os.environ.get("GC_BIN_DIR", str(ROOT / ".bin")))
 # Variables documented in .env.example but read by nobody in the compose (spec 11).
 DOC_ONLY_VARS = {"ALLOY_INTERNAL_URL"}
+# Pyroscope has no verify flag: an unknown -target makes it stop right after parsing its config,
+# with this message; a config it cannot parse fails earlier with "failed parsing config".
+PYROSCOPE_PARSE_TARGET = "gc-config-check"
+PYROSCOPE_PARSED = "unrecognised module name: " + PYROSCOPE_PARSE_TARGET
 # check.py size warns when the compose gets this close to its base64 budget.
 SIZE_WARN_MARGIN = 4096
 VAR_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:?+-][^}]*)?\}")
@@ -386,11 +390,20 @@ def validator_commands(sources):
             commands.append([tool("loki"), f"-config.file={path}", "-config.expand-env=true", "-verify-config"])
         elif source.endswith("/tempo/tempo.yaml"):
             commands.append([tool("tempo"), f"-config.file={path}", "-config.expand-env=true", "-config.verify=true"])
+        elif source.endswith("/pyroscope/pyroscope.yaml"):
+            commands.append([tool("pyroscope"), f"-config.file={path}", "-config.expand-env=true", f"-target={PYROSCOPE_PARSE_TARGET}"])
         elif source.endswith("/prometheus/prometheus.yml"):
             commands.append([tool("promtool"), "check", "config", path])
         elif source.endswith(".alloy"):
             commands.append([tool("alloy"), "validate", "--stability.level=public-preview", path])
     return commands
+
+
+def validator_passed(cmd, code, output):
+    """Exit code 0, or the parse-only stop of Pyroscope (PYROSCOPE_PARSED)."""
+    if any(arg == f"-target={PYROSCOPE_PARSE_TARGET}" for arg in cmd):
+        return PYROSCOPE_PARSED in output and "failed parsing config" not in output
+    return code == 0
 
 
 def check_targets():
@@ -409,14 +422,15 @@ def check_validators():
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ)
         env.update(load_env(ROOT / "harness" / "harness.env"))
-        env.update({"BIND_ADDR": "127.0.0.1", "LOKI_DATA_DIR": f"{tmp}/loki", "TEMPO_DATA_DIR": f"{tmp}/tempo", "ALLOY_QUEUE_DIR": f"{tmp}/queue"})
+        env.update({"BIND_ADDR": "127.0.0.1", "LOKI_DATA_DIR": f"{tmp}/loki", "TEMPO_DATA_DIR": f"{tmp}/tempo", "ALLOY_QUEUE_DIR": f"{tmp}/queue",
+                    "PYROSCOPE_DATA_DIR": f"{tmp}/pyroscope"})
         # Second pass as Coolify runs it when the operator empties a variable (spike S5): the
         # compose fallback is skipped, the config must still load with its own defaults.
         emptied = {**env, **dict.fromkeys(fallback_defaults(template), "")}
         for label, values in (("", env), (" with every fallback variable empty", emptied)):
             for cmd in validator_commands(sources):
                 code, output = run(cmd, env=values)
-                if code != 0:
+                if not validator_passed(cmd, code, output):
                     errors.append(f"{Path(cmd[0]).name} rejected {cmd[-1] if 'check' in cmd else cmd[1:]}{label}:\n{output.strip()}")
     return errors
 

@@ -11,6 +11,7 @@ EXPECTED_TARGETS = {
     "prometheus": "prometheus:9090",
     "loki": "loki:3100",
     "tempo": "tempo:3200",
+    "pyroscope": "pyroscope:4040",
     "alloy": "alloy:12345",
     "alloy-gateway": "alloy-gateway:12345",
     "node-exporter": "node-exporter:9100",

@@ -152,6 +152,8 @@ check_duration() { # name value min_ms message
 order='up to 292y, units y w d h m s ms once each in order, such as'
 check_duration LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 86400000 "must be 24h $order 720h (empty: 720h)"
 check_duration LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
+# Pyroscope reads its retention with model.ParseDuration too; 0 means "never delete": same 24h floor.
+check_duration PYROSCOPE_RETENTION "${PYROSCOPE_RETENTION:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
 # Prometheus has no floor; 0 turns time retention off (unbounded).
 check_duration PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" 1 "must be non-zero $order 90d (empty: 90d)"
 # Size: units.ParseBase2Bytes (KB = KiB) also takes -1GB, 1.5GB, 1GB512MB and wraps at 8EB:

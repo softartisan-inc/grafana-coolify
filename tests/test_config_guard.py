@@ -11,6 +11,7 @@ import yaml
 from support import BIN, ROOT, binary, run, validator_env
 
 sys.path.insert(0, str(ROOT / "scripts"))
+import check  # noqa: E402
 import render  # noqa: E402
 
 GUARD = ROOT / "config" / "config-guard" / "guard.sh"
@@ -25,7 +26,8 @@ VALID_ENV = {
     "FARO_SERVICES": "web-app,desktop-app",
 }
 # Checked by grafana-setup only: a wrong value must never stop Loki, Tempo, Prometheus or Alloy.
-SETUP_ONLY_VARIABLES = ("GRAFANA_URL", "GRAFANA_SA_TOKEN", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL")
+SETUP_ONLY_VARIABLES = ("GRAFANA_URL", "GRAFANA_SA_TOKEN", "LOKI_INTERNAL_URL", "TEMPO_INTERNAL_URL", "PROMETHEUS_INTERNAL_URL", "PYROSCOPE_INTERNAL_URL")
+PYROSCOPE_CONFIG = ROOT / "config" / "pyroscope" / "pyroscope.yaml"
 # Loki retentions (Prometheus model.ParseDuration, then Loki's own 24h floor on retention_stream):
 # LokiDurationCrossCheckTest holds both lists against the real binary.
 LOKI_GOOD = (
@@ -182,6 +184,7 @@ class GuardCases:
         """Empty takes the default downstream (Coolify passes "", spike S5); a set value must be valid and non-zero."""
         rules = {
             "TEMPO_RETENTION": (["168h", "1h30m", "720h"], ["0", "0h", "0h0m", "7d", "168", "168 h", "-1h", "168h\nx"]),
+            "PYROSCOPE_RETENTION": (["168h", "24h", "30d", "1w"], ["0", "0h", "23h", "1h", "7", "7D", "1h1d", "168h\nx"]),
             "TEMPO_MAX_ACTIVE_SERIES": (["100000", "1"], ["0", "000", "-1", "1e5", "100 000", "unlimited", "10\nx"]),
             "LOKI_RETENTION_PROD": (["720h", "30d", "4w"], ["0", "0d", "30", "30 d", "thirty"]),
             "LOKI_RETENTION_DEFAULT": (["168h", "7d"], ["0s", "7", "7D"]),
@@ -215,6 +218,32 @@ class GuardCases:
         self.assert_fails(self.guard(TENANT_HOST_REGEX=r"^([a-z]+)\.example\.me$"), "TENANT_HOST_REGEX")
         multiline = VALID_ENV["TENANT_HOST_REGEX"] + "\nx"
         self.assert_fails(self.guard(TENANT_HOST_REGEX=multiline), "TENANT_HOST_REGEX")
+
+
+class PyroscopeDurationCrossCheckTest(unittest.TestCase):
+    """PYROSCOPE_RETENTION as the real Pyroscope parses it (parse-only run of scripts/check.py)."""
+
+    def setUp(self):
+        if not (BIN / "pyroscope").exists():
+            self.skipTest(f"{BIN / 'pyroscope'} missing: run tools/fetch-binaries.sh first")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def parses(self, value):
+        env = {**validator_env(self.tmp.name), "PYROSCOPE_DATA_DIR": self.tmp.name, "PYROSCOPE_RETENTION": value}
+        cmd = [binary("pyroscope"), f"-config.file={PYROSCOPE_CONFIG}", "-config.expand-env=true", f"-target={check.PYROSCOPE_PARSE_TARGET}"]
+        result = run(cmd, env=env)
+        return check.validator_passed(cmd, result.returncode, result.stdout)
+
+    def test_guard_values_match_pyroscope(self):
+        # Accepted by the guard (test_retention_and_limit_rules) and by Pyroscope. The guard also
+        # refuses what Pyroscope parses but must not get: 0 (never delete) and under 24h.
+        for value in ("", "168h", "24h", "30d", "1w", "2w3d"):
+            with self.subTest(value=value):
+                self.assertTrue(self.parses(value))
+        for value in ("7", "7D", "1h1d", "168 h", "1e3d"):
+            with self.subTest(value=value):
+                self.assertFalse(self.parses(value))
 
 
 class LokiDurationCrossCheckTest(unittest.TestCase):
@@ -352,7 +381,7 @@ class GuardEnvironmentTest(unittest.TestCase):
         compose = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
         environment = compose["services"]["config-guard"]["environment"]
         names = ("TEMPO_RETENTION", "TEMPO_MAX_ACTIVE_SERIES", "ENABLE_EXEMPLARS", "LOKI_RETENTION_PROD", "LOKI_RETENTION_DEFAULT")
-        for name in (*names, "PROM_RETENTION_TIME", "PROM_RETENTION_SIZE"):
+        for name in (*names, "PROM_RETENTION_TIME", "PROM_RETENTION_SIZE", "PYROSCOPE_RETENTION"):
             with self.subTest(name=name):
                 # No default here: guard.sh must see an emptied variable as empty, as on Coolify.
                 self.assertEqual(environment.get(name), f"${{{name}:-}}")

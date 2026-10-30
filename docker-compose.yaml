@@ -12,8 +12,8 @@
 # - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
-# - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
-# - Network (spike S1): loki, tempo, prometheus and alloy join the external `coolify` network
+# - Memory envelope: ~6.7 GiB of mem_limit in total (spec 9.4), pyroscope's 1 GiB included.
+# - Network (spike S1): loki, tempo, prometheus, pyroscope and alloy join the external `coolify` network
 #   with a gc-* alias, the stable name Grafana and the applications use (Coolify suffixes the
 #   container names per deployment; the bare service names collide with other resources). The
 #   compose declares the network itself: keep "Connect To Predefined Network" OFF on this resource,
@@ -29,9 +29,9 @@ services:
     command:
       - sh
       - -c
-      - "echo 'caddbbedbd1198650693c97d7015f117479ad3bfdb04e98784bec362d70e604d  /opt/config-guard/guard.caddbbed.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.caddbbed.sh"
+      - "echo 'ccbe03a3c879850feebef11c8ec46c5aae9dbca4da848b6dd889a19e8b6d8ec1  /opt/config-guard/guard.ccbe03a3.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.ccbe03a3.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.eaa44437.alloy=eaa44437d0e2d4df8b61c92d797c271511ca6ac0aebaa4db3171114226f1f787;/guard/grafana-setup/setup.68351f56.py=68351f563802cf7f702133bf9f2a32d07644e8cc9c172854ae2d296a3ed9f701;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.8fe5d468.yml=8fe5d4685c1f7c3436fae42b3353ee5eed5a93918ac4f63f11bb2f5b98a5c323;/guard/prometheus/start.8839df29.sh=8839df2975e953c5def06ee0fbf63cce7b43766649beaa1b929c9d800fa8d68e;/guard/tempo/tempo.86df7701.yaml=86df7701962c324e02857df241d356bc8532b6d712eaef3fdf4e7624da043621"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.4d4ee358.alloy=4d4ee358600008f549871e518b565ba5f98a1614f7a3e8a7c0a695555fe54463;/guard/alloy/config.f103d3d0.alloy=f103d3d0302d205e82ac61aaeb3993b2221539086e9ef122ce3ccd4f2eb7ba28;/guard/grafana-setup/setup.9bef42e0.py=9bef42e08b9ff00d04f10ea56281b46a3d2ed36d94a1d6aed33d7273a8336dc4;/guard/loki/loki.a6ca1848.yaml=a6ca1848b3bdef9134d1dd89188f977f501bf93f250e9f34dd169fbb6a20b434;/guard/prometheus/prometheus.d10bc106.yml=d10bc1067384bb334fff75edb250d2aad875f7dd3141de4ac11028b47b9279b4;/guard/prometheus/start.8839df29.sh=8839df2975e953c5def06ee0fbf63cce7b43766649beaa1b929c9d800fa8d68e;/guard/pyroscope/pyroscope.b4a1992a.yaml=b4a1992a8956ef867882f1b3019c45cd69cb3a0826ca80c76d34f9fc75f63a52;/guard/tempo/tempo.86df7701.yaml=86df7701962c324e02857df241d356bc8532b6d712eaef3fdf4e7624da043621"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
       # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
@@ -50,10 +50,11 @@ services:
       ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-}
       PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-}
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
+      PYROSCOPE_RETENTION: ${PYROSCOPE_RETENTION:-}
     volumes:
       - type: bind
-        source: ./config/config-guard/guard.caddbbed.sh
-        target: /opt/config-guard/guard.caddbbed.sh
+        source: ./config/config-guard/guard.ccbe03a3.sh
+        target: /opt/config-guard/guard.ccbe03a3.sh
         content: |2
           #!/bin/sh
           set -u
@@ -187,6 +188,7 @@ services:
           order='up to 292y, units y w d h m s ms once each in order, such as'
           check_duration LOKI_RETENTION_PROD "${LOKI_RETENTION_PROD:-}" 86400000 "must be 24h $order 720h (empty: 720h)"
           check_duration LOKI_RETENTION_DEFAULT "${LOKI_RETENTION_DEFAULT:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
+          check_duration PYROSCOPE_RETENTION "${PYROSCOPE_RETENTION:-}" 86400000 "must be 24h $order 168h (empty: 168h)"
           check_duration PROM_RETENTION_TIME "${PROM_RETENTION_TIME:-}" 1 "must be non-zero $order 90d (empty: 90d)"
           MAX_BYTES=9223372036854775807
           size_in_range() { # size matching the PROM_RETENTION_SIZE regex; 1 <= bytes <= MAX_BYTES
@@ -449,7 +451,7 @@ services:
       - /bin/sh
       - /etc/prometheus/start.8839df29.sh
     command:
-      - --config.file=/etc/prometheus/prometheus.8fe5d468.yml
+      - --config.file=/etc/prometheus/prometheus.d10bc106.yml
       - --storage.tsdb.path=/prometheus
       - --web.listen-address=0.0.0.0:9090
       - --web.enable-otlp-receiver
@@ -460,8 +462,8 @@ services:
       PROM_ENABLE_FEATURES: ${PROM_ENABLE_FEATURES:-}
     volumes:
       - type: bind
-        source: ./config/prometheus/prometheus.8fe5d468.yml
-        target: /etc/prometheus/prometheus.8fe5d468.yml
+        source: ./config/prometheus/prometheus.d10bc106.yml
+        target: /etc/prometheus/prometheus.d10bc106.yml
         content: |2
           global:
             scrape_interval: 30s
@@ -484,6 +486,9 @@ services:
             - job_name: tempo
               static_configs:
                 - targets: ["tempo:3200"]
+            - job_name: pyroscope
+              static_configs:
+                - targets: ["pyroscope:4040"]
             - job_name: alloy
               static_configs:
                 - targets: ["alloy:12345"]
@@ -516,6 +521,58 @@ services:
         aliases:
           - gc-prometheus
     mem_limit: 1536m
+    cpus: 1.0
+
+  # Profiles: written by alloy (pyroscope:4040), read by Grafana (gc-pyroscope).
+  pyroscope:
+    image: grafana/pyroscope:2.4.0
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/etc/pyroscope/pyroscope.b4a1992a.yaml
+      - -config.expand-env=true
+    environment:
+      BIND_ADDR: 0.0.0.0
+      PYROSCOPE_DATA_DIR: /data/v2
+      PYROSCOPE_RETENTION: ${PYROSCOPE_RETENTION:-168h}
+      # ~90% of mem_limit (Go ignores the cgroup).
+      GOMEMLIMIT: 900MiB
+    volumes:
+      - type: bind
+        source: ./config/pyroscope/pyroscope.b4a1992a.yaml
+        target: /etc/pyroscope/pyroscope.b4a1992a.yaml
+        content: |2
+          architecture_storage: v2
+          server:
+            http_listen_address: ${BIND_ADDR}
+            http_listen_port: 4040
+            grpc_listen_address: 127.0.0.1
+            grpc_listen_port: 9097
+          distributor: {ring: {instance_addr: 127.0.0.1}}
+          segment_writer: {lifecycler: {address: 127.0.0.1}}
+          frontend: {instance_addr: 127.0.0.1}
+          query_backend: {address: 127.0.0.1:9097}
+          memberlist: {bind_addr: [127.0.0.1], bind_port: 7947}
+          metastore:
+            address: 127.0.0.1:9097
+            data_dir: ${PYROSCOPE_DATA_DIR}/metastore
+            raft: {dir: "${PYROSCOPE_DATA_DIR}/raft", snapshots_dir: "${PYROSCOPE_DATA_DIR}/raft"}
+          storage: {backend: filesystem, filesystem: {dir: "${PYROSCOPE_DATA_DIR}/shared"}}
+          limits: {retention_period: "${PYROSCOPE_RETENTION:-168h}"}
+          self_profiling: {disable_push: true}
+          analytics: {reporting_enabled: false}
+        read_only: true
+      - pyroscope-data:/data
+    expose:
+      - "4040"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-pyroscope
+    mem_limit: 1024m
     cpus: 1.0
 
   node-exporter:
@@ -553,7 +610,7 @@ services:
       - no-new-privileges:true
     command:
       - run
-      - /etc/alloy/config.eaa44437.alloy
+      - /etc/alloy/config.f103d3d0.alloy
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - --stability.level=public-preview
@@ -573,8 +630,8 @@ services:
       TENANT_HOST_REGEX: ${TENANT_HOST_REGEX:-}
     volumes:
       - type: bind
-        source: ./config/alloy/config.eaa44437.alloy
-        target: /etc/alloy/config.eaa44437.alloy
+        source: ./config/alloy/config.f103d3d0.alloy
+        target: /etc/alloy/config.f103d3d0.alloy
         content: |2
           logging {
             level  = "info"
@@ -1128,18 +1185,61 @@ services:
               url = "http://loki:3100/loki/api/v1/push"
             }
           }
+          pyroscope.receive_http "default" {
+            http {
+              listen_address = sys.env("BIND_ADDR")
+              listen_port    = 4040
+            }
+            forward_to = [pyroscope.relabel.default.receiver]
+          }
+          pyroscope.relabel "default" {
+            forward_to = [pyroscope.write.pyroscope.receiver]
+            rule {
+              source_labels = ["project"]
+              regex         = coalesce(string.replace(sys.env("PROJECTS"), ",", "|"), "[a-z0-9][a-z0-9-]{0,63}")
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["env"]
+              regex         = "prod|preprod"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["service_name"]
+              regex         = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+              action        = "keep"
+            }
+            rule {
+              regex  = "__.+|service_name|project|env|role"
+              action = "labelkeep"
+            }
+            rule {
+              source_labels = ["role"]
+              regex         = "|[a-z0-9][a-z0-9-]{0,31}"
+              action        = "keep"
+            }
+          }
+          pyroscope.write "pyroscope" {
+            endpoint {
+              url                 = "http://pyroscope:4040"
+              remote_timeout      = "5s"
+              max_backoff_retries = 2
+              max_backoff_period  = "2s"
+            }
+          }
         read_only: true
       - alloy-data:/var/lib/alloy
     labels:
       # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
       - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
     # Faro first: Coolify routes a domain saved without an "Internal port" to the first port of
-    # `expose` (scripts/check.py, ports). 4317/4318 stay internal (OTLP from the same host).
+    # `expose` (scripts/check.py, ports). 4317/4318 (OTLP) and 4040 (profiles) stay internal.
     expose:
       - "12347"
       - "4317"
       - "4318"
       - "12345"
+      - "4040"
     networks:
       default: {}
       coolify:
@@ -1222,13 +1322,15 @@ services:
         condition: service_completed_successfully
     command:
       - python3
-      - /opt/grafana-setup/setup.68351f56.py
+      - /opt/grafana-setup/setup.9bef42e0.py
     environment:
       GRAFANA_URL: ${GRAFANA_URL:-}
       GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN:-}
       LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
       TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
       PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
+      # Optional (empty: no Pyroscope datasource).
+      PYROSCOPE_INTERNAL_URL: ${PYROSCOPE_INTERNAL_URL:-}
       PROJECTS: ${PROJECTS:-}
       # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
       GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v2"
@@ -1246,13 +1348,14 @@ services:
       HOST_ENV: ${HOST_ENV:-prod}
     volumes:
       - type: bind
-        source: ./config/grafana-setup/setup.68351f56.py
-        target: /opt/grafana-setup/setup.68351f56.py
+        source: ./config/grafana-setup/setup.9bef42e0.py
+        target: /opt/grafana-setup/setup.9bef42e0.py
         content: |2
           #!/usr/bin/env python3
           """grafana-setup: idempotently provision Grafana (spec 10). Standard library only.
 
-          1. Grafana >= 12.0; datasources (fixed UIDs, correlations of 7.3); folders. 2. Plan B content, too
+          1. Grafana >= 12.0; datasources (fixed UIDs, correlations of 7.3; Pyroscope only when
+          PYROSCOPE_INTERNAL_URL is set, on Grafana >= 12.3); folders. 2. Plan B content, too
           big for the compose (spec 4.3): downloaded (mirror, or this repository at a fixed tag), checked
           against GRAFANA_SETUP_FILES (path=sha256;...), imported only if all match; it provisions dashboards
           and alerting. Tokens are never written to the output.
@@ -1275,6 +1378,8 @@ services:
           LOKI_UID = "gc-loki"
           TEMPO_UID = "gc-tempo"
           PROMETHEUS_UID = "gc-prometheus"
+          PYROSCOPE_UID = "gc-pyroscope"
+          PYROSCOPE_MIN_VERSION = (12, 3)
           PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
           TRACE_TO_LOGS_QUERY = '{project=~".+"} | trace_id="${__trace.traceId}"'
           COMPARED_FIELDS = ("name", "type", "access", "url", "basicAuth", "jsonData")
@@ -1481,6 +1586,25 @@ services:
               ]
 
 
+          def pyroscope_datasource(pyroscope_url):
+              """Optional profiles datasource. No traces-to-profiles: neither the PHP nor the Node.js SDK
+              sends the span profile ids it needs."""
+              return {
+                  "uid": PYROSCOPE_UID,
+                  "name": "Pyroscope (grafana-coolify)",
+                  "type": "grafana-pyroscope-datasource",
+                  "access": "proxy",
+                  "url": pyroscope_url,
+                  "basicAuth": False,
+                  "jsonData": {"minStep": "15s"},
+              }
+
+
+          def version_tuple(version):
+              match = re.match(r"^v?(\d+)\.(\d+)", version)
+              return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+
+
           def ensure_datasource(api, desired):
               path = f"/api/datasources/uid/{desired['uid']}"
               status, current = api.request("GET", path)
@@ -1531,6 +1655,11 @@ services:
               if not HTTP_URL_RE.match(value) or value.rstrip("/") in ("http:", "https:"):
                   raise SetupError(f"{name} must be an http:// or https:// URL, got {mask_userinfo(value)[:80]!r}")
               return value
+
+
+          def optional_url(env, name):
+              """Empty: None (feature off). Set: same rule as required_url."""
+              return required_url(env, name) if env.get(name, "").strip() else None
 
 
           def parse_content(value):
@@ -1608,11 +1737,18 @@ services:
               grafana_url, loki_url, tempo_url, prometheus_url = (required_url(env, name) for name in URL_VARIABLES)
               api = Grafana(grafana_url, required(env, "GRAFANA_SA_TOKEN"))
               desired = datasources(loki_url, tempo_url, prometheus_url)
+              pyroscope_url = optional_url(env, "PYROSCOPE_INTERNAL_URL")
               projects = parse_projects(env.get("PROJECTS", ""))
               version = check_version(wait_healthy(api, timeout=health_timeout))
               out(f"grafana-setup: Grafana {version}")
               for datasource in desired:
                   out(f"grafana-setup: datasource {datasource['uid']}: {ensure_datasource(api, datasource)}")
+              if pyroscope_url is None:
+                  out(f"grafana-setup: datasource {PYROSCOPE_UID}: skipped (PYROSCOPE_INTERNAL_URL is empty)")
+              elif version_tuple(version) < PYROSCOPE_MIN_VERSION:
+                  out(f"grafana-setup: datasource {PYROSCOPE_UID}: skipped (Grafana {version}: 12.3 or later is required)")
+              else:
+                  out(f"grafana-setup: datasource {PYROSCOPE_UID}: {ensure_datasource(api, pyroscope_datasource(pyroscope_url))}")
               out(f"grafana-setup: folder {SHARED_FOLDER_UID}: {ensure_folder(api, SHARED_FOLDER_UID, SHARED_FOLDER_TITLE)}")
               for project in projects:
                   out(f"grafana-setup: folder {folder_uid(project)}: {ensure_folder(api, folder_uid(project), project)}")
@@ -1656,6 +1792,7 @@ volumes:
   tempo-data:
   prometheus-data:
   alloy-data:
+  pyroscope-data:
 
 networks:
   coolify:

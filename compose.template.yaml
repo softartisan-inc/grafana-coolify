@@ -10,8 +10,8 @@
 # - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
-# - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
-# - Network (spike S1): loki, tempo, prometheus and alloy join the external `coolify` network
+# - Memory envelope: ~6.7 GiB of mem_limit in total (spec 9.4), pyroscope's 1 GiB included.
+# - Network (spike S1): loki, tempo, prometheus, pyroscope and alloy join the external `coolify` network
 #   with a gc-* alias, the stable name Grafana and the applications use (Coolify suffixes the
 #   container names per deployment; the bare service names collide with other resources). The
 #   compose declares the network itself: keep "Connect To Predefined Network" OFF on this resource,
@@ -48,6 +48,7 @@ services:
       ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-}
       PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-}
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
+      PYROSCOPE_RETENTION: ${PYROSCOPE_RETENTION:-}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh
@@ -167,6 +168,39 @@ services:
     mem_limit: 1536m
     cpus: 1.0
 
+  # Profiles: written by alloy (pyroscope:4040), read by Grafana (gc-pyroscope).
+  pyroscope:
+    image: grafana/pyroscope:@@PYROSCOPE_VERSION@@
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/etc/pyroscope/pyroscope.yaml
+      - -config.expand-env=true
+    environment:
+      BIND_ADDR: 0.0.0.0
+      PYROSCOPE_DATA_DIR: /data/v2
+      PYROSCOPE_RETENTION: ${PYROSCOPE_RETENTION:-168h}
+      # ~90% of mem_limit (Go ignores the cgroup).
+      GOMEMLIMIT: 900MiB
+    volumes:
+      - type: bind
+        source: ./config/pyroscope/pyroscope.yaml
+        target: /etc/pyroscope/pyroscope.yaml
+        content: "@@CONTENT@@"
+        read_only: true
+      - pyroscope-data:/data
+    expose:
+      - "4040"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-pyroscope
+    mem_limit: 1024m
+    cpus: 1.0
+
   node-exporter:
     image: quay.io/prometheus/node-exporter:v@@NODE_EXPORTER_VERSION@@
     restart: unless-stopped
@@ -231,12 +265,13 @@ services:
       # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
       - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
     # Faro first: Coolify routes a domain saved without an "Internal port" to the first port of
-    # `expose` (scripts/check.py, ports). 4317/4318 stay internal (OTLP from the same host).
+    # `expose` (scripts/check.py, ports). 4317/4318 (OTLP) and 4040 (profiles) stay internal.
     expose:
       - "12347"
       - "4317"
       - "4318"
       - "12345"
+      - "4040"
     networks:
       default: {}
       coolify:
@@ -298,6 +333,8 @@ services:
       LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
       TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
       PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
+      # Optional (empty: no Pyroscope datasource).
+      PYROSCOPE_INTERNAL_URL: ${PYROSCOPE_INTERNAL_URL:-}
       PROJECTS: ${PROJECTS:-}
       # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
       GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/@@GRAFANA_SETUP_TAG@@"
@@ -331,6 +368,7 @@ volumes:
   tempo-data:
   prometheus-data:
   alloy-data:
+  pyroscope-data:
 
 networks:
   coolify:
