@@ -423,12 +423,14 @@ par `tempo -config.verify`) et coût :
 
 `grafana-setup` crée, à chaque déploiement et sans effet de bord :
 
-- le dossier **`grafana-coolify`** (UID `gc-grafana-coolify`), qui contient les six tableaux de
+- le dossier **`grafana-coolify`** (UID `gc-grafana-coolify`), qui contient les sept tableaux de
   bord et les règles d'alerte ;
-- les six tableaux de bord (liste fermée) : **Vue projet** (`gc-project` : débit, taux d'erreur
+- les sept tableaux de bord (liste fermée) : **Vue projet** (`gc-project` : débit, taux d'erreur
   et p95 par service, filtres `project`, `env`, `service`, `tenant`), **Erreurs et latence par
   service** (`gc-service` : détail par route, logs d'erreur liés à leur trace), **Frontend**
-  (`gc-frontend` : erreurs JS, Web Vitals, sessions Faro), **Hôte** (`gc-host` : CPU, mémoire,
+  (`gc-frontend` : erreurs JS, Web Vitals, sessions Faro), **Applications clientes**
+  (`gc-client` : crashs et sorties système, erreurs, API vue du client, écrans, traces client,
+  adoption par version et OS, santé de l'ingestion Faro ; navigateur, desktop ou mobile), **Hôte** (`gc-host` : CPU, mémoire,
   disque, réseau), **Santé du pipeline** (`gc-pipeline` : ingestion, rejets, file d'envoi, santé
   de Loki, Tempo et Prometheus) et **Cardinalité** (`gc-cardinality` : séries par projet, service
   et tenant) ;
@@ -439,6 +441,12 @@ par `tempo -config.verify`) et coût :
 
 La variable « service » des tableaux vise le même nom partout ; seul le label change selon la
 source : `service` pour les span-metrics, `job` pour les métriques OTLP, `service_name` pour Loki.
+
+**Applications clientes** : les noms propres à une application (événement d'appel API et ses
+clés d'attributs, événement « écran prêt », type de sortie système, raisons comptées comme crash)
+sont des variables texte du tableau, aux valeurs par défaut neutres (`api_call`, `screen_ready`,
+`AppExit`…). L'opérateur y saisit les noms de son application ; détail et contrat des données :
+[Tableaux de bord](docs/exploitation/tableaux-de-bord.md#applications-clientes-gc-client).
 
 Les tableaux, les points de contact, la politique et les règles restent **modifiables dans
 Grafana** (`X-Disable-Provenance: true`), mais `grafana-setup` remet leur contenu à l'identique au

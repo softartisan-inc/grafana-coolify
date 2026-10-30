@@ -8,10 +8,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_dashboards  # noqa: E402
 
 DIRECTORY = ROOT / "config" / "grafana-setup" / "dashboards"
-UIDS = ["gc-project", "gc-service", "gc-frontend", "gc-host", "gc-pipeline", "gc-cardinality"]
-TITLES = ["Vue projet", "Erreurs et latence par service", "Frontend", "Hôte", "Santé du pipeline", "Cardinalité"]
+UIDS = ["gc-project", "gc-service", "gc-frontend", "gc-client", "gc-host", "gc-pipeline", "gc-cardinality"]
+TITLES = ["Vue projet", "Erreurs et latence par service", "Frontend", "Applications clientes", "Hôte", "Santé du pipeline", "Cardinalité"]
 # Values for the Grafana variables and macros, so that promtool can parse the queries.
-SUBSTITUTIONS = {"$__rate_interval": "1m", "$project": "demo", "$env": "prod", "$service": "api", "$tenant": "acme"}
+SUBSTITUTIONS = {"$__rate_interval": "1m", "$__range": "1h", "$project": "demo", "$env": "prod", "$service": "api", "$tenant": "acme"}
 
 
 def targets(board):
@@ -28,7 +28,7 @@ class BuildDashboardsTest(unittest.TestCase):
         result = run([sys.executable, ROOT / "scripts" / "build_dashboards.py", "--check"])
         self.assertEqual(result.returncode, 0, result.stdout)
 
-    def test_closed_list_of_six(self):
+    def test_closed_list_of_seven(self):
         self.assertEqual(sorted(p.name for p in DIRECTORY.glob("*.json")), sorted(f"{uid}.json" for uid in UIDS))
         self.assertEqual([b["uid"] for b in self.boards], UIDS)
         self.assertEqual([b["title"] for b in self.boards], TITLES)
@@ -37,14 +37,14 @@ class BuildDashboardsTest(unittest.TestCase):
         for board in self.boards:
             for title, target in targets(board):
                 with self.subTest(dashboard=board["uid"], panel=title):
-                    self.assertIn(target["datasource"]["uid"], ("gc-prometheus", "gc-loki"))
+                    self.assertIn(target["datasource"]["uid"], ("gc-prometheus", "gc-loki", "gc-tempo"))
 
     def test_project_view_filters(self):
         self.assertEqual([v["name"] for v in self.boards[0]["templating"]["list"]], ["project", "env", "service", "tenant"])
 
     def test_service_variable_maps_to_the_label_of_each_store(self):
         """Spec 10.3: `service` in span-metrics, `job` in OTLP metrics, `service_name` in Loki."""
-        exprs = [target["expr"] for board in self.boards for _title, target in targets(board)]
+        exprs = [target.get("expr", "") for board in self.boards for _title, target in targets(board)]
         for label in ('service=~"$service"', 'job=~"$service"', 'service_name=~"$service"'):
             with self.subTest(label=label):
                 self.assertTrue(any(label in expr for expr in exprs), label)
@@ -82,6 +82,73 @@ class BuildDashboardsTest(unittest.TestCase):
 
     def test_builder_is_deterministic(self):
         self.assertEqual(build_dashboards.build(), build_dashboards.build())
+
+
+class ClientAppsDashboardTest(unittest.TestCase):
+    """gc-client: generic, every app-specific name is a variable with a neutral default."""
+
+    def setUp(self):
+        self.board = json.loads((DIRECTORY / "gc-client.json").read_text(encoding="utf-8"))
+        self.variables = {v["name"]: v for v in self.board["templating"]["list"]}
+        self.targets = targets(self.board)
+
+    def loki_exprs(self):
+        return [(title, target["expr"]) for title, target in self.targets if target["datasource"]["uid"] == "gc-loki"]
+
+    def test_variables(self):
+        self.assertEqual(list(self.variables)[:4], ["project", "env", "service", "tenant"])
+        self.assertEqual(self.variables["service"]["query"]["label"], "service_name")
+        self.assertEqual(self.variables["tenant"]["datasource"]["uid"], "gc-prometheus")
+        defaults = {name: v["query"] for name, v in self.variables.items() if v["type"] == "textbox"}
+        self.assertEqual(defaults["api_event"], "api_call")
+        self.assertEqual(defaults["screen_event"], "screen_ready")
+        self.assertEqual(defaults["exit_type"], "AppExit")
+        for name in ("version", "os"):
+            self.assertEqual(defaults[name], ".*")
+
+    def test_app_specific_names_come_from_variables(self):
+        exprs = " ".join(expr for _title, expr in self.loki_exprs())
+        for literal in ('"api_call"', '"screen_ready"', '"AppExit"', "event_data_route", "event_data_status"):
+            with self.subTest(literal=literal):
+                self.assertNotIn(literal, exprs)
+        for variable in ("$api_event", "${api_route_key}", "${api_status_key}", "${api_duration_key}", "$screen_event", "${screen_key}", "$exit_type"):
+            with self.subTest(variable=variable):
+                self.assertIn(variable, exprs)
+
+    def test_logfmt_without_key_list(self):
+        """Loki 3.7 gives wrong metric results with `| logfmt k1, k2`: always the full parse."""
+        for title, expr in self.loki_exprs():
+            with self.subTest(panel=title):
+                self.assertNotRegex(expr, r"\| logfmt [a-z_]")
+
+    def test_textbox_regexes_are_between_backticks(self):
+        """A regex such as 1\\.2 between double quotes would be an invalid LogQL escape."""
+        for title, expr in self.loki_exprs():
+            with self.subTest(panel=title):
+                for name in ("version", "os", "crash_reasons"):
+                    self.assertNotIn(f'"${name}"', expr)
+
+    def test_quantiles_are_not_summed(self):
+        for title, expr in self.loki_exprs():
+            with self.subTest(panel=title):
+                self.assertNotRegex(expr, r"sum(\s+by\s*\([^)]*\))?\s*\(\s*quantile_over_time")
+
+    def test_traceql_variables_are_regexes(self):
+        """The project's All value is `.+` and env/service are multi-value: `=~` and :pipe only."""
+        traceql = [target["query"] for _title, target in self.targets if target.get("queryType") == "traceql"]
+        self.assertTrue(traceql)
+        for query in traceql:
+            for name in ("project", "env", "service"):
+                with self.subTest(variable=name):
+                    self.assertRegex(query, r'=~ "\$\{' + name + r':pipe\}"')
+                    self.assertNotRegex(query, r'[=~] "\$' + name + '"')
+
+    def test_rows_and_tempo(self):
+        rows = [p["title"] for p in self.board["panels"] if p["type"] == "row"]
+        self.assertEqual(len(rows), 8)
+        self.assertFalse([p for p in self.board["panels"] if p["type"] == "row" and "targets" in p])
+        tempo = [target for _title, target in self.targets if target["datasource"]["uid"] == "gc-tempo"]
+        self.assertEqual(sorted(t["queryType"] for t in tempo), ["serviceMap", "traceql"])
 
 
 if __name__ == "__main__":
