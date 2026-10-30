@@ -61,6 +61,7 @@ SERVICE_IPS = {
     "node-exporter": "127.0.10.7",
     "config-guard": "127.0.10.8",
     "grafana-setup": "127.0.10.9",
+    "pyroscope": "127.0.10.10",
 }
 # Image repository -> binary in .bin/ (the image ENTRYPOINT). Other images run `command:` as is, and
 # a service with its own `entrypoint:` runs it with .bin/ first on PATH.
@@ -68,6 +69,7 @@ BINARIES = {
     "grafana/alloy": "alloy",
     "grafana/loki": "loki",
     "grafana/tempo": "tempo",
+    "grafana/pyroscope": "pyroscope",
     "prom/prometheus": "prometheus",
     "quay.io/prometheus/node-exporter": "node_exporter",
 }
@@ -80,13 +82,14 @@ MEMORY_UNITS = {"b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 READY = {
     "loki": "http://{ip}:3100/ready",
     "tempo": "http://{ip}:3200/ready",
+    "pyroscope": "http://{ip}:4040/ready",
     "prometheus": "http://{ip}:9090/-/ready",
     "alloy": "http://{ip}:12345/-/ready",
     "alloy-gateway": "http://{ip}:12345/-/ready",
     "node-exporter": "http://{ip}:9100/metrics",
 }
 ONESHOTS = ("config-guard", "grafana-setup")
-START_ORDER = ("loki", "tempo", "prometheus", "node-exporter", "alloy", "alloy-gateway")
+START_ORDER = ("loki", "tempo", "prometheus", "pyroscope", "node-exporter", "alloy", "alloy-gateway")
 VAR_RE = re.compile(r"\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)")
 
 

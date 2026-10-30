@@ -7,7 +7,7 @@
 - Un serveur Coolify (v4) avec son proxy **Traefik**.
 - Le service Coolify **Grafana 12.0 ou plus récent** (variante PostgreSQL recommandée), déjà
   installé : le package ne contient pas Grafana, il l'alimente.
-- Environ **6 Go de RAM** libres (somme des `mem_limit` : ~5,7 Gio) et de la place disque pour
+- Environ **7 Go de RAM** libres (somme des `mem_limit` : ~6,7 Gio, dont 1 Gio pour `pyroscope`) et de la place disque pour
   90 jours de métriques (`PROM_RETENTION_SIZE=100GB` par défaut).
 
 ## Accès à l'hôte

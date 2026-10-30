@@ -47,6 +47,7 @@ rencontrés lors du premier déploiement réel, sauf mention « prévention ».
 | `lookup gc-prometheus … no such host` alors que le déploiement a réussi | [option activée sur le package](sources-de-donnees.md#les-alias-gc--ne-résolvent-pas-option-activée-sur-le-package) |
 | Données absentes ou d'une autre stack, test vert (prévention) | [collision](sources-de-donnees.md#la-source-répond-mais-interroge-la-mauvaise-stack-collision) |
 | `localblocks processor not found` (Traces Drilldown, métriques TraceQL) | [processeur `local-blocks`](sources-de-donnees.md#localblocks-processor-not-found-traces-drilldown-métriques-traceql) |
+| Aucun profil dans **Drilldown → Profiles**, `datasource gc-pyroscope: skipped` | [Pyroscope : aucun profil](sources-de-donnees.md#pyroscope--aucun-profil) |
 
 ## Traefik
 

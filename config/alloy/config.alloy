@@ -1,6 +1,7 @@
 // grafana-coolify - main Alloy pipeline (spec 7.1).
-// In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway) and Faro on 12347 (public).
-// Out: traces -> Tempo, logs -> Loki, metrics -> Prometheus.
+// In: OTLP on 4317/4318 (internal, and relayed by alloy-gateway), Faro on 12347 (public) and
+// profiles on 4040 (internal).
+// Out: traces -> Tempo, logs -> Loki, metrics -> Prometheus, profiles -> Pyroscope.
 // Every runtime value comes from sys.env(); Coolify writes this file byte for byte.
 
 logging {
@@ -723,5 +724,64 @@ loki.process "faro" {
 loki.write "loki" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ------------------------------------------------------------------ Profiles path
+// Continuous profiling (Pyroscope SDKs, /ingest and push API) on 4040, internal only. Same
+// admission rule as the Faro logs: project well formed and, when PROJECTS is set, listed; env prod
+// or preprod; service name well formed. Any other label is dropped (no tenant, no free-form
+// label: Pyroscope series are global). Counters: pyroscope_relabel_profiles_dropped,
+// pyroscope_write_dropped_profiles_total.
+pyroscope.receive_http "default" {
+  http {
+    listen_address = sys.env("BIND_ADDR")
+    listen_port    = 4040
+  }
+
+  forward_to = [pyroscope.relabel.default.receiver]
+}
+
+pyroscope.relabel "default" {
+  forward_to = [pyroscope.write.pyroscope.receiver]
+
+  // Regexes are anchored. guard.sh restricts PROJECTS to [a-z0-9-] items: no regex injection.
+  rule {
+    source_labels = ["project"]
+    regex         = coalesce(string.replace(sys.env("PROJECTS"), ",", "|"), "[a-z0-9][a-z0-9-]{0,63}")
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["env"]
+    regex         = "prod|preprod"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["service_name"]
+    regex         = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+    action        = "keep"
+  }
+
+  rule {
+    regex  = "__.+|service_name|project|env|role"
+    action = "labelkeep"
+  }
+
+  rule {
+    source_labels = ["role"]
+    regex         = "|[a-z0-9][a-z0-9-]{0,31}"
+    action        = "keep"
+  }
+}
+
+// The client waits for this write (receive_http is synchronous): short timeout, few retries.
+pyroscope.write "pyroscope" {
+  endpoint {
+    url                 = "http://pyroscope:4040"
+    remote_timeout      = "5s"
+    max_backoff_retries = 2
+    max_backoff_period  = "2s"
   }
 }

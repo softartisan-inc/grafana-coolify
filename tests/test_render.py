@@ -369,7 +369,7 @@ class RepositoryRenderTest(unittest.TestCase):
         self.assertTrue((ROOT / "docker-compose.yaml").read_text(encoding="utf-8").startswith("# GENERATED — DO NOT EDIT"))
 
 
-ALIASED = {"loki": "gc-loki", "tempo": "gc-tempo", "prometheus": "gc-prometheus", "alloy": "gc-alloy"}
+ALIASED = {"loki": "gc-loki", "tempo": "gc-tempo", "prometheus": "gc-prometheus", "pyroscope": "gc-pyroscope", "alloy": "gc-alloy"}
 
 
 class CoolifyNetworkTest(unittest.TestCase):

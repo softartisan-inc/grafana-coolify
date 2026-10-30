@@ -12,8 +12,8 @@
 # - `read_only: true` on the content volumes serves the Docker bench only: Coolify drops it on
 #   long-syntax binds, and the non-root users of the services cannot write those files anyway.
 # - Internal services only `expose:` ports, never `ports:` (spec 3.2).
-# - Memory envelope: ~5.7 GiB of mem_limit in total (spec 9.4).
-# - Network (spike S1): loki, tempo, prometheus and alloy join the external `coolify` network
+# - Memory envelope: ~6.7 GiB of mem_limit in total (spec 9.4), pyroscope's 1 GiB included.
+# - Network (spike S1): loki, tempo, prometheus, pyroscope and alloy join the external `coolify` network
 #   with a gc-* alias, the stable name Grafana and the applications use (Coolify suffixes the
 #   container names per deployment; the bare service names collide with other resources). The
 #   compose declares the network itself: keep "Connect To Predefined Network" OFF on this resource,
@@ -40,9 +40,9 @@ services:
     command:
       - sh
       - -c
-      - "echo '44271e4f3a180991e3781a8e73fe5b3b76e58a5af6b72689d07fa567f9a1b18d  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
+      - "echo '6b83d3cada6eab6006061587df2e8aa5e89c4ad02f5e6f229dc567c9d839cbd6  /opt/config-guard/guard.sh' | sha256sum -c - && exec sh /opt/config-guard/guard.sh"
     environment:
-      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=3d0ef7d74b38020b19129fef91e7cd9e79c6e53176f782f1df9766c855368af8;/guard/grafana-setup/setup.py=4ebe90a7f4da74073d8a7da4a490e8a3d25b5f63a50deb93d4fa2b469682fb0c;/guard/loki/loki.yaml=03314b1798606e2df34068e561a8d7e338b3e6ab61cc2ab3024b9bd834968fc8;/guard/prometheus/prometheus.yml=6e92fe284c1627b3a294093a30ba9bbd71c6414aad338c7061ec7278d2e90d6a;/guard/prometheus/start.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/tempo/tempo.yaml=a0386ac69e088b9910872063d54feb11c56af065cfadc202ee19462a1cc8bede"
+      CONFIG_GUARD_EXPECTED: "/guard/alloy-gateway/config.alloy=57c7d4be0c98bc0f0038d0251ade7df73df49d3475444e4499220c908baaa1ff;/guard/alloy/config.alloy=2b9ee2f166147e204f726f28d5f4f7f4899248e6f956e47891e98f8fd5cd7c86;/guard/grafana-setup/setup.py=eaef43f13a1c8b21aeab4d97ab1af01defae55a0cfcc3fc89976dba0713064d9;/guard/loki/loki.yaml=03314b1798606e2df34068e561a8d7e338b3e6ab61cc2ab3024b9bd834968fc8;/guard/prometheus/prometheus.yml=ac24bb4c8b410d7772cb32d35e51d2f557170437627018d2cdb975aa7397cb51;/guard/prometheus/start.sh=be7203a46402741b461c66a2d5fc1bf77996cb7635e146085ca811f68542e782;/guard/pyroscope/pyroscope.yaml=193db05742d0feb8e2ab027cbc9d9a0f2880865471fbcde9e146517c8977d783;/guard/tempo/tempo.yaml=a0386ac69e088b9910872063d54feb11c56af065cfadc202ee19462a1cc8bede"
       # Never `${X:?message}`: Coolify turns it into X=message. The required checks are in guard.sh
       # (variables every service needs) or in setup.py (grafana-setup only: it fails alone).
       IP_HASH_SALT: ${IP_HASH_SALT:-}
@@ -61,6 +61,7 @@ services:
       ENABLE_EXEMPLARS: ${ENABLE_EXEMPLARS:-}
       PROM_RETENTION_TIME: ${PROM_RETENTION_TIME:-}
       PROM_RETENTION_SIZE: ${PROM_RETENTION_SIZE:-}
+      PYROSCOPE_RETENTION: ${PYROSCOPE_RETENTION:-}
     volumes:
       - type: bind
         source: ./config/config-guard/guard.sh
@@ -175,6 +176,40 @@ services:
     mem_limit: 1536m
     cpus: 1.0
 
+  # Profiles: written by alloy (pyroscope:4040), read by Grafana (gc-pyroscope).
+  pyroscope:
+    image: grafana/pyroscope:2.4.0
+    restart: unless-stopped
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/etc/pyroscope/pyroscope.yaml
+      - -config.expand-env=true
+      # Ack before the ~0.5 s segment flush: clients push with short timeouts.
+      - -async-ingest=true
+    environment:
+      BIND_ADDR: 0.0.0.0
+      PYROSCOPE_DATA_DIR: /data/v2
+      PYROSCOPE_RETENTION: ${PYROSCOPE_RETENTION:-168h}
+      # ~90% of mem_limit (Go ignores the cgroup).
+      GOMEMLIMIT: 900MiB
+    volumes:
+      - type: bind
+        source: ./config/pyroscope/pyroscope.yaml
+        target: /etc/pyroscope/pyroscope.yaml
+        read_only: true
+      - pyroscope-data:/data
+    expose:
+      - "4040"
+    networks:
+      default: {}
+      coolify:
+        aliases:
+          - gc-pyroscope
+    mem_limit: 1024m
+    cpus: 1.0
+
   node-exporter:
     image: quay.io/prometheus/node-exporter:v1.12.1
     restart: unless-stopped
@@ -238,12 +273,13 @@ services:
       # CORS first: every answer, 429 of the rate limit included, carries the CORS headers.
       - coolify.traefik.middlewares=gc-faro-cors@file,gc-faro-ratelimit@file,gc-faro-body@file
     # Faro first: Coolify routes a domain saved without an "Internal port" to the first port of
-    # `expose` (scripts/check.py, ports). 4317/4318 stay internal (OTLP from the same host).
+    # `expose` (scripts/check.py, ports). 4317/4318 (OTLP) and 4040 (profiles) stay internal.
     expose:
       - "12347"
       - "4317"
       - "4318"
       - "12345"
+      - "4040"
     networks:
       default: {}
       coolify:
@@ -304,6 +340,8 @@ services:
       LOKI_INTERNAL_URL: ${LOKI_INTERNAL_URL:-}
       TEMPO_INTERNAL_URL: ${TEMPO_INTERNAL_URL:-}
       PROMETHEUS_INTERNAL_URL: ${PROMETHEUS_INTERNAL_URL:-}
+      # Optional (empty: no Pyroscope datasource).
+      PYROSCOPE_INTERNAL_URL: ${PYROSCOPE_INTERNAL_URL:-}
       PROJECTS: ${PROJECTS:-}
       # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
       GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v4"
@@ -336,6 +374,7 @@ volumes:
   tempo-data:
   prometheus-data:
   alloy-data:
+  pyroscope-data:
 
 networks:
   coolify:

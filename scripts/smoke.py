@@ -697,9 +697,51 @@ def correlation(c):
     expect(any(f"faro-corr-{c.run}" in line for line in lines), f"trace -> logs misses the Faro log: {lines}")
 
 
+@section("profiles")
+def profiles(c):
+    """Profiles path: project (PROJECTS), env prod/preprod and service name enforced by Alloy; only
+    service_name, project, env and role reach Pyroscope (no tenant); rejects counted."""
+    s = c.s
+    dropped = "pyroscope_relabel_profiles_dropped"
+    before = g.metric_value(g.scrape(s["GC_ALLOY_METRICS_URL"]), dropped)
+    ok = f"prof-ok-{c.run}"
+    cases = {
+        ok: {"project": c.faro_project, "env": "prod", "role": "web", "tenant": "acme"},
+        f"prof-unknown-{c.run}": {"project": f"unlisted-{c.run}", "env": "prod"},
+        f"prof-dev-{c.run}": {"project": c.faro_project, "env": "dev"},
+        f"prof-noenv-{c.run}": {"project": c.faro_project},
+    }
+    if not [p for p in s.get("PROJECTS", "").split(",") if p]:
+        # PROJECTS empty: any well-formed project is accepted, the unknown case is not a reject.
+        del cases[f"prof-unknown-{c.run}"]
+    for service, labels in cases.items():
+        resp = g.send_profile(s["GC_PROFILES_URL"], service, labels)
+        expect(resp.status == 200, f"{service}: /ingest answered HTTP {resp.status}: {resp.body[:200]!r}")
+
+    def stored():
+        names = g.pyroscope_query(s["GC_PYROSCOPE_URL"], "LabelValues", name="service_name").get("names", [])
+        return names if ok in names else None
+
+    names = g.wait_for(stored, f"Pyroscope service_name {ok}", timeout=90, interval=3)
+    for service in cases:
+        expect(service == ok or service not in names, f"rejected profile {service} reached Pyroscope")
+    matcher = f'{{service_name="{ok}"}}'
+    labels = set(g.pyroscope_query(s["GC_PYROSCOPE_URL"], "LabelNames", matchers=[matcher]).get("names", []))
+    public = {name for name in labels if not name.startswith("__")}
+    # Added by Pyroscope after Alloy: pyroscope_spy (from spyName), app_name (the service name).
+    expect(public <= {"service_name", "project", "env", "role", "pyroscope_spy", "app_name"}, f"unexpected profile labels {sorted(public)}")
+    expect({"service_name", "project", "env", "role"} <= public, f"missing profile labels {sorted(public)}")
+    after = g.wait_for(
+        lambda: (lambda v: v if v >= before + len(cases) - 1 else None)(g.metric_value(g.scrape(s["GC_ALLOY_METRICS_URL"]), dropped)),
+        dropped,
+        timeout=30,
+    )
+    expect(after >= before + len(cases) - 1, f"{dropped} {before} -> {after}")
+
+
 @section("retention")
 def retention(c):
-    """12.3.11: effective retention of Loki, Tempo and Prometheus matches the variables."""
+    """12.3.11: effective retention of Loki, Tempo, Prometheus and Pyroscope matches the variables."""
     s = c.s
     loki = g.http("GET", s["GC_LOKI_URL"] + "/config").body.decode()
     limits = loki[loki.index("\nlimits_config:") :]
@@ -715,6 +757,9 @@ def retention(c):
     expect(flags["storage.tsdb.retention.time"] == s["PROM_RETENTION_TIME"], f"Prometheus retention.time {flags['storage.tsdb.retention.time']}")
     size = flags["storage.tsdb.retention.size"]
     expect(g.size_bytes(size) == g.size_bytes(s["PROM_RETENTION_SIZE"]), f"Prometheus retention.size {size}")
+    pyroscope = g.http("GET", s["GC_PYROSCOPE_URL"] + "/api/v1/status/config").body.decode()
+    profiles = g.yaml_section_value(pyroscope, "limits", "retention_period")
+    expect(g.duration_seconds(profiles) == g.duration_seconds(s["PYROSCOPE_RETENTION"]), f"Pyroscope retention_period {profiles}")
 
 
 # --- end of sections ---

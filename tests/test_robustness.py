@@ -142,7 +142,7 @@ class RobustnessTest(unittest.TestCase):
         self.assertLess(peak[0], ALLOY_MEM_LIMIT, f"alloy anonymous RSS peaked at {peak[0] / 2**20:.0f} MiB")
         self.wait_log("burst-0")
         status = stack("status").stdout
-        for name in ("loki", "tempo", "prometheus", "alloy", "alloy-gateway", "node-exporter"):
+        for name in ("loki", "tempo", "prometheus", "pyroscope", "alloy", "alloy-gateway", "node-exporter"):
             self.assertRegex(status, rf"{name}\s+pid=\d+\s+running ready")
 
     def test_4_empty_prometheus_features_start_normally(self):
@@ -191,7 +191,7 @@ class RobustnessTest(unittest.TestCase):
         try:
             stack("up", *sets)
             status = stack("status").stdout
-            for name in ("loki", "tempo", "prometheus", "alloy", "alloy-gateway", "node-exporter"):
+            for name in ("loki", "tempo", "prometheus", "pyroscope", "alloy", "alloy-gateway", "node-exporter"):
                 self.assertRegex(status, rf"{name}\s+pid=\d+\s+running ready")
             result = run([*STACK, "oneshot", "grafana-setup"], timeout=120)
             self.assertNotEqual(result.returncode, 0, result.stdout)

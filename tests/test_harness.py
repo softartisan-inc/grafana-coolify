@@ -133,6 +133,7 @@ class ContentFilesTest(unittest.TestCase):
     def test_grpc_ports_come_from_the_configs(self):
         self.assertEqual(stack.extra_ports("loki"), [("127.0.0.1", 9095)])
         self.assertEqual(stack.extra_ports("tempo"), [("127.0.0.1", 9096)])
+        self.assertEqual(stack.extra_ports("pyroscope"), [("127.0.0.1", 9097)])
         self.assertEqual(stack.extra_ports("prometheus"), [])
 
     def test_content_file_gets_its_hashed_name(self):

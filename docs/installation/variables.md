@@ -18,6 +18,12 @@ Référence des variables du **package** (onglet **Environment Variables** de la
 | `TEMPO_INTERNAL_URL` | `http://gc-tempo:3200` (ou `http://tempo:3200`) | `grafana-setup` |
 | `PROMETHEUS_INTERNAL_URL` | `http://gc-prometheus:9090` (ou `http://prometheus:9090`) | `grafana-setup` |
 
+## Facultatives
+
+| Variable | Valeur | Vérifiée par |
+|---|---|---|
+| `PYROSCOPE_INTERNAL_URL` | `http://gc-pyroscope:4040` (ou `http://pyroscope:4040`) : crée la source de données Pyroscope `gc-pyroscope` (profils). **Vide** : aucune source Pyroscope, le reste du provisionnement continue. Exige Grafana 12.3 ou plus (sinon `skipped`). | `grafana-setup` |
+
 Une variable propre à `grafana-setup` vide ou invalide n'arrête **que** `grafana-setup` (code 1,
 message clair) ; Loki, Tempo, Prometheus et Alloy démarrent quand même. Une variable vérifiée par
 `config-guard` invalide empêche **tout** démarrage (`config-guard: FAILED - no service will start`).
@@ -57,7 +63,7 @@ Tant que le point Faro est fermé (aucun domaine pour `alloy`), `HOST_MAP`,
 ## Rétention et réglages
 
 Une variable de cette section laissée **vide** prend son défaut : Coolify transmet la valeur vide
-sans appliquer le repli du compose, Tempo, Loki et Prometheus appliquent donc le défaut
+sans appliquer le repli du compose, Tempo, Loki, Prometheus et Pyroscope appliquent donc le défaut
 eux-mêmes ([spike S5](../spikes.md#variables-vidées-dans-coolify--le-repli-var-défaut-du-compose-ne-sapplique-pas)). Une valeur
 renseignée mais mal formée ou nulle (`0`, `0h`, `0GB`) arrête le déploiement à `config-guard`.
 
@@ -65,11 +71,13 @@ renseignée mais mal formée ou nulle (`0`, `0h`, `0GB`) arrête le déploiement
 |---|---|
 | `LOKI_RETENTION_PROD` / `LOKI_RETENTION_DEFAULT` | `720h` / `168h` (entre `24h` et `292y`, unités dans l'ordre `y w d h m s ms`. Loki refuse au démarrage une rétention de flux (`LOKI_RETENTION_PROD`) sous 24h ; `LOKI_RETENTION_DEFAULT` est aligné sur le même plancher, le minimum documenté par Loki. `config-guard` refuse les deux avant) |
 | `TEMPO_RETENTION` | `168h` |
+| `PYROSCOPE_RETENTION` | `168h` (profils ; entre `24h` et `292y`, unités dans l'ordre `y w d h m s ms`. `0`, qui voudrait dire « jamais supprimé », est refusé par `config-guard`) |
 | `TEMPO_MAX_ACTIVE_SERIES` | `100000` (vide = `100000` ; `0`, qui voudrait dire « illimité », est refusé par `config-guard`) |
 | `PROM_RETENTION_TIME` / `PROM_RETENTION_SIZE` | `90d` / `100GB` (durée non nulle jusqu'à `292y`, unités dans l'ordre `y w d h m s ms` ; taille entière non nulle sous `8EB`, unités `B KB MB GB TB PB EB` ou `KiB`… `EiB`, puissances de 2) |
 | `PROM_ENABLE_FEATURES`, `ENABLE_EXEMPLARS` | vide, `false` (exemplars : activer les deux ensemble) |
 | `GRAFANA_SETUP_MIRROR_URL` | vide (ce dépôt, au tag épinglé) |
 | `ALLOY_INTERNAL_URL` | documentaire : `http://gc-alloy:4318` (ou `http://alloy:4318`) pour les applications du même hôte |
+| `ALLOY_PROFILES_URL` | documentaire, à donner aux applications (pas une variable du package) : `http://gc-alloy:4040`, adresse des profils (SDK Pyroscope) |
 
 ## À ne pas mettre ici
 

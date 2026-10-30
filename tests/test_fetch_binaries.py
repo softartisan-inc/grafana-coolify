@@ -20,6 +20,9 @@ class FetchBinariesTest(unittest.TestCase):
     def test_tempo(self):
         self.assert_version([binary("tempo"), "-version"], "version " + versions()["TEMPO_VERSION"])
 
+    def test_pyroscope(self):
+        self.assert_version([binary("pyroscope"), "-version"], "version " + versions()["PYROSCOPE_VERSION"])
+
     def test_prometheus_and_promtool(self):
         expected = "version " + versions()["PROMETHEUS_VERSION"]
         self.assert_version([binary("prometheus"), "--version"], expected)

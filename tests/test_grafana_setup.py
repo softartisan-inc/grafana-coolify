@@ -251,6 +251,53 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         self.assertIn("Grafana 11.6.3 is not supported", result.stdout)
         self.assertEqual([r for r in self.state["requests"] if r[1] != "/api/health"], [])
 
+    def test_pyroscope_datasource_is_off_without_its_url(self):
+        for value in (None, "", "  "):
+            with self.subTest(value=value):
+                env = {} if value is None else {"PYROSCOPE_INTERNAL_URL": value}
+                result = self.setup_run(**env)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn("gc-pyroscope", self.state["datasources"])
+                self.assertIn("datasource gc-pyroscope: skipped (PYROSCOPE_INTERNAL_URL is empty)", result.stdout)
+
+    def test_pyroscope_datasource_created_then_unchanged(self):
+        result = self.setup_run(PYROSCOPE_INTERNAL_URL="http://gc-pyroscope:4040")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("datasource gc-pyroscope: created", result.stdout)
+        datasource = self.state["datasources"]["gc-pyroscope"]
+        self.assertEqual(
+            {k: datasource[k] for k in ("type", "url", "access", "jsonData")},
+            {"type": "grafana-pyroscope-datasource", "url": "http://gc-pyroscope:4040", "access": "proxy", "jsonData": {"minStep": "15s"}},
+        )
+        # No traces-to-profiles: the Tempo datasource is unchanged.
+        self.assertNotIn("tracesToProfiles", self.state["datasources"]["gc-tempo"]["jsonData"])
+        self.state["requests"].clear()
+        result = self.setup_run(PYROSCOPE_INTERNAL_URL="http://gc-pyroscope:4040")
+        self.assertIn("datasource gc-pyroscope: unchanged", result.stdout)
+        self.assertEqual(self.writes(), [])
+
+    def test_pyroscope_datasource_needs_grafana_12_3(self):
+        for version, created in (("12.2.1", False), ("12.3.0", True), ("13.2.2", True)):
+            with self.subTest(version=version):
+                self.state["datasources"].pop("gc-pyroscope", None)
+                self.state["version"] = version
+                result = self.setup_run(PYROSCOPE_INTERNAL_URL="http://gc-pyroscope:4040")
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual("gc-pyroscope" in self.state["datasources"], created, result.stdout)
+                if not created:
+                    self.assertIn(f"skipped (Grafana {version}: 12.3 or later is required)", result.stdout)
+
+    def test_pyroscope_url_must_be_http(self):
+        result = self.setup_run(PYROSCOPE_INTERNAL_URL="gc-pyroscope:4040")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PYROSCOPE_INTERNAL_URL must be an http:// or https:// URL", result.stdout)
+        self.assertEqual(self.writes(), [])
+
+    def test_version_tuple(self):
+        self.assertEqual(setup.version_tuple("12.3.0"), (12, 3))
+        self.assertEqual(setup.version_tuple("v13.2.2-security-01"), (13, 2))
+        self.assertEqual(setup.version_tuple("unknown"), (0, 0))
+
     def test_token_never_printed(self):
         self.state["fail_with_token_echo"] = True
         result = self.setup_run()
@@ -605,6 +652,7 @@ class GrafanaSetupHarnessTest(unittest.TestCase):
             LOKI_INTERNAL_URL="http://loki:3100",
             TEMPO_INTERNAL_URL="http://tempo:3200",
             PROMETHEUS_INTERNAL_URL="http://prometheus:9090",
+            PYROSCOPE_INTERNAL_URL="http://pyroscope:4040",
             PROJECTS="demo,other-project",
             TELEGRAM_BOT_TOKEN="",
             TELEGRAM_CHAT_ID="",
@@ -616,7 +664,7 @@ class GrafanaSetupHarnessTest(unittest.TestCase):
 
     def snapshot(self):
         datasources = {}
-        for uid in (setup.LOKI_UID, setup.TEMPO_UID, setup.PROMETHEUS_UID):
+        for uid in (setup.LOKI_UID, setup.TEMPO_UID, setup.PROMETHEUS_UID, setup.PYROSCOPE_UID):
             status, payload = self.api.request("GET", f"/api/datasources/uid/{uid}")
             self.assertEqual(status, 200)
             datasources[uid] = {k: payload[k] for k in ("uid", "name", "type", "url", "jsonData", "isDefault")}

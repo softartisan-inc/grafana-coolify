@@ -1,0 +1,36 @@
+# Pyroscope 2.x single-binary configuration for grafana-coolify (continuous profiling).
+# Environment variables are expanded by Pyroscope itself (-config.expand-env=true): BIND_ADDR,
+# PYROSCOPE_DATA_DIR and PYROSCOPE_RETENTION are set by compose.template.yaml. An empty
+# PYROSCOPE_RETENTION (Coolify, spike S5) takes the default below, like the compose fallback.
+# v2 storage, single node: the only v2 mode that accepts a local disk (microservices need an
+# object store). Grafana labels it "not recommended for production": accepted for one host.
+# Pyroscope has no config verification flag: the native bench (harness/stack.py) starts it.
+architecture_storage: v2
+
+server:
+  http_listen_address: ${BIND_ADDR}
+  http_listen_port: 4040
+  # Module-to-module gRPC only, on loopback; Loki uses 9095 and Tempo 9096 (same host on the bench).
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: 9097
+
+# The rings and internal clients default to the interface address and to localhost:9095: pin them
+# to the loopback gRPC listener above, or ingestion fails with "no segment writer instances".
+# Flow style: this file is inlined in the compose, whose size is bounded (scripts/check.py size).
+distributor: {ring: {instance_addr: 127.0.0.1}}
+segment_writer: {lifecycler: {address: 127.0.0.1}}
+frontend: {instance_addr: 127.0.0.1}
+query_backend: {address: 127.0.0.1:9097}
+memberlist: {bind_addr: [127.0.0.1], bind_port: 7947}
+metastore:
+  address: 127.0.0.1:9097
+  data_dir: ${PYROSCOPE_DATA_DIR}/metastore
+  raft: {dir: "${PYROSCOPE_DATA_DIR}/raft", snapshots_dir: "${PYROSCOPE_DATA_DIR}/raft"}
+storage: {backend: filesystem, filesystem: {dir: "${PYROSCOPE_DATA_DIR}/shared"}}
+
+# Applied by the metastore (deletes whole partitions); config-guard refuses under 24h.
+limits: {retention_period: "${PYROSCOPE_RETENTION:-168h}"}
+
+# Without this, Pyroscope pushes its own profiles to itself, with no project or env label.
+self_profiling: {disable_push: true}
+analytics: {reporting_enabled: false}
