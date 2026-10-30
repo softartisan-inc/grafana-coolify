@@ -11,7 +11,7 @@ import dashboards  # noqa: E402
 
 
 class LoadTest(unittest.TestCase):
-    def test_six_dashboards_in_display_order(self):
+    def test_seven_dashboards_in_display_order(self):
         self.assertEqual([b["uid"] for b in dashboards.load()], [uid for uid, _project in dashboards.DASHBOARDS])
 
     def test_missing_or_mismatched_file_is_an_error(self):
@@ -47,6 +47,7 @@ class LinksDashboardTest(unittest.TestCase):
                 "/d/gc-project?var-project=demo",
                 "/d/gc-service?var-project=demo",
                 "/d/gc-frontend?var-project=demo",
+                "/d/gc-client?var-project=demo",
                 "/d/gc-host",
                 "/d/gc-pipeline",
                 "/d/gc-cardinality?var-project=demo",
