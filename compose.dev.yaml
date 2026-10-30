@@ -344,8 +344,8 @@ services:
       PYROSCOPE_INTERNAL_URL: ${PYROSCOPE_INTERNAL_URL:-}
       PROJECTS: ${PROJECTS:-}
       # Plan B content, downloaded at a fixed tag and checked by SHA-256 (spec 4.3).
-      GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v2"
-      GRAFANA_SETUP_FILES: "alerting.py=601b9f72c60dc0eccd1a8dc44d102164f29e21a1c4f1360b40d18361d7447a35;dashboards/gc-cardinality.json=627297b75136a04ecd4aea4d26a3d44d153d536a3f14a82359f51f7424ecb6e2;dashboards/gc-frontend.json=ea341f8609cc46b220d85b903150e7efa5c7af32774c5e2d6f005d994a6cb6ab;dashboards/gc-host.json=90ef9083bfaab82ac57191aa3f00008cbcc545db6c10f112f5352c6561a4bfb0;dashboards/gc-pipeline.json=fb18316522abe4fffee6078142ac5162c48d63670f1ef564c8f1be4900cde0d8;dashboards/gc-project.json=1eb7ec2cc4c944066e69930be9f1afd7bb984897e30361982eeb0a152b5f66fb;dashboards/gc-service.json=c0b95dc9ebebc9a9a18f4cf7a88049a9a788bb9e52b2792aba1e0cc786877c8c;dashboards.py=bf9f2b5bc00dcf1b803eb82fb712985d80c102662bbfcc4a5600eee872f69e19"
+      GRAFANA_SETUP_PINNED_URL: "https://raw.githubusercontent.com/softartisan-inc/grafana-coolify/grafana-setup-content-v4"
+      GRAFANA_SETUP_FILES: "alerting.py=601b9f72c60dc0eccd1a8dc44d102164f29e21a1c4f1360b40d18361d7447a35;dashboards/gc-cardinality.json=627297b75136a04ecd4aea4d26a3d44d153d536a3f14a82359f51f7424ecb6e2;dashboards/gc-client.json=1ed72ed86f1e1618d71d4d61699a338077d69d0b9c88d4a218cfe6647d451d8b;dashboards/gc-frontend.json=ea341f8609cc46b220d85b903150e7efa5c7af32774c5e2d6f005d994a6cb6ab;dashboards/gc-host.json=90ef9083bfaab82ac57191aa3f00008cbcc545db6c10f112f5352c6561a4bfb0;dashboards/gc-pipeline.json=fb18316522abe4fffee6078142ac5162c48d63670f1ef564c8f1be4900cde0d8;dashboards/gc-project.json=1eb7ec2cc4c944066e69930be9f1afd7bb984897e30361982eeb0a152b5f66fb;dashboards/gc-service.json=c0b95dc9ebebc9a9a18f4cf7a88049a9a788bb9e52b2792aba1e0cc786877c8c;dashboards.py=24390201dc9a0a915dc84cc43a9d0e9d41bb8e51029c3238ed22b9fb6a6aed62"
       GRAFANA_SETUP_MIRROR_URL: ${GRAFANA_SETUP_MIRROR_URL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}

@@ -1,0 +1,1824 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Crashs, erreurs, API vue du client, écrans, traces et adoption des applications clientes (Faro, traces client).",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "État de santé",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "count(sum by (session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | session_id!=\"\" [$__range])))",
+          "legendFormat": "sessions",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Sessions",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "description": "Approximation : un crash est rapporté au lancement suivant (session et version de ce lancement) et un crash JS fatal peut aussi produire une sortie système de raison crash, d'où une borne haute des sessions touchées.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "1 - ((count(sum by (session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | (type=\"$exit_type\" and value=~`$crash_reasons`) or (type!=\"$exit_type\" and context_fatal=\"true\" and context_previous_launch!=\"true\") [$__range])))) or vector(0)) / count(sum by (session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | session_id!=\"\" [$__range])))",
+          "legendFormat": "sans crash",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Sessions sans crash",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "id": 4,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (value) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | type=\"$exit_type\" [$__range]))",
+          "legendFormat": "{{value}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Crashs par raison",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "description": "Appels API vus du client : statut 5xx, ou 0 (pas de réponse, hors ligne).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum(count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} | status=~\"5..|0\" [$__range])) / sum(count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} [$__range]))",
+          "legendFormat": "5xx ou sans réponse",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Taux d'erreur API",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "id": 6,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "1000 * histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__range])))",
+          "instant": true,
+          "legendFormat": "traces",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "quantile_over_time(0.95, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} | unwrap duration_ms | __error__=\"\" [$__range]) by (service_name)",
+          "legendFormat": "événements",
+          "queryType": "instant",
+          "refId": "B"
+        }
+      ],
+      "title": "Latence API p95",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "id": 7,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "count(sum by (app_version) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | app_version!=\"\" [$__range])))",
+          "legendFormat": "versions",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Versions actives",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 8,
+      "panels": [],
+      "title": "Crashs et sorties",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "id": 9,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (value) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | type=\"$exit_type\" [$__auto]))",
+          "legendFormat": "{{value}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Sorties système par raison",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "description": "Une sortie système porte la version et l'OS du lancement qui la rapporte : après une mise à jour, un crash de l'ancienne version compte dans la nouvelle.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 15
+      },
+      "id": 10,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (app_version) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | (type=\"$exit_type\" and value=~`$crash_reasons`) or (type!=\"$exit_type\" and context_fatal=\"true\" and context_previous_launch!=\"true\") [$__range]))",
+          "legendFormat": "{{app_version}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Crashs par version",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "description": "Part des sessions de la version touchées par un crash. Une sortie système porte la version et l'OS du lancement qui la rapporte : après une mise à jour, un crash de l'ancienne version compte dans la nouvelle.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 15
+      },
+      "id": 11,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "count by (app_version) (sum by (app_version, session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | (type=\"$exit_type\" and value=~`$crash_reasons`) or (type!=\"$exit_type\" and context_fatal=\"true\" and context_previous_launch!=\"true\") [$__range]))) / count by (app_version) (sum by (app_version, session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | session_id!=\"\" [$__range])))",
+          "legendFormat": "{{app_version}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Taux de crash par version",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "description": "Une sortie système porte la version et l'OS du lancement qui la rapporte : après une mise à jour, un crash de l'ancienne version compte dans la nouvelle.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 15
+      },
+      "id": 12,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (os, os_version) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | (type=\"$exit_type\" and value=~`$crash_reasons`) or (type!=\"$exit_type\" and context_fatal=\"true\" and context_previous_launch!=\"true\") [$__range]))",
+          "legendFormat": "{{os}} {{os_version}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Crashs par OS",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 13,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (value) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | type=\"$exit_type\" | value=~`(?i)anr|low_memory|excessive_resource_usage` [$__auto]))",
+          "legendFormat": "{{value}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "ANR et mémoire",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "id": 14,
+      "options": {
+        "enableLogDetails": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "{project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | type=\"$exit_type\" or context_fatal=\"true\" | line_format `{{ .type }}: {{ .value }} | v{{ .app_version }} | {{ .os }} {{ .os_version }}{{ if .context_previous_launch }} | lancement précédent{{ end }}\n{{ .stacktrace }}`",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Derniers crashs et erreurs fatales",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 15,
+      "panels": [],
+      "title": "Erreurs",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "id": 16,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "topk(10, sum by (type, value) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | type!=\"$exit_type\" [$__range])))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Exceptions les plus fréquentes",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "id": 17,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (type) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | type!=\"$exit_type\" [$__auto]))",
+          "legendFormat": "{{type}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Exceptions par type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "description": "Le SDK Faro web ne pose pas context_fatal : ses exceptions tombent en « non gérée ».",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 30,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "id": 18,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (severity) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | type!=\"$exit_type\" | label_format severity=`{{ if eq .context_fatal \"true\" }}fatale{{ else if eq .context_handled \"true\" }}gérée{{ else }}non gérée{{ end }}` [$__auto]))",
+          "legendFormat": "{{severity}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Gérées, non gérées, fatales",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "id": 19,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (type) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=exception\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"exception\" | context_previous_launch=\"true\" [$__auto]))",
+          "legendFormat": "{{type}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Fatales du lancement précédent",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "id": 20,
+      "panels": [],
+      "title": "API vue du client",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "description": "Les spans fetch du web n'ont pas de http.route : ils sont regroupés par nom de span.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 61
+      },
+      "id": 21,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (http_route, span_name) (rate(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__rate_interval]))",
+          "legendFormat": "traces {{http_route}} {{span_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (method, route) (rate({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} [$__auto]))",
+          "legendFormat": "événements {{method}} {{route}}",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "title": "Débit par route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "description": "Le code HTTP n'est pas une dimension des span-metrics : 5xx et 0 (hors ligne) viennent des événements.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "id": 22,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / sum(rate(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__rate_interval]))",
+          "legendFormat": "traces (statut ERROR)",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum(rate({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} | status=~\"5..\" [$__auto])) / sum(rate({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} [$__auto]))",
+          "legendFormat": "événements 5xx",
+          "queryType": "range",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum(rate({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} | status=\"0\" [$__auto])) / sum(rate({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} [$__auto]))",
+          "legendFormat": "événements sans réponse",
+          "queryType": "range",
+          "refId": "C"
+        }
+      ],
+      "title": "Taux d'erreur",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "id": 23,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "1000 * histogram_quantile(0.5, sum by (le, http_route) (rate(traces_spanmetrics_latency_bucket{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{http_route}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "1000 * histogram_quantile(0.95, sum by (le, http_route) (rate(traces_spanmetrics_latency_bucket{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{http_route}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "1000 * histogram_quantile(0.99, sum by (le, http_route) (rate(traces_spanmetrics_latency_bucket{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__rate_interval])))",
+          "legendFormat": "p99 {{http_route}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "quantile_over_time(0.95, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} | unwrap duration_ms | __error__=\"\" [$__auto]) by (route)",
+          "legendFormat": "p95 événements {{route}}",
+          "queryType": "range",
+          "refId": "D"
+        }
+      ],
+      "title": "Latence par route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "description": "Value #A : p95 en ms ; Value #B : appels sur la période.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 77
+      },
+      "id": 24,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "topk(10, 1000 * histogram_quantile(0.95, sum by (le, http_route) (rate(traces_spanmetrics_latency_bucket{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__range]))))",
+          "instant": true,
+          "legendFormat": "p95 ms",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (http_route) (increase(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "appels",
+          "range": false,
+          "refId": "B"
+        }
+      ],
+      "title": "Routes les plus lentes (traces)",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 77
+      },
+      "id": 25,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "topk(10, quantile_over_time(0.95, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} | unwrap duration_ms | __error__=\"\" [$__range]) by (method, route))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Routes les plus lentes (événements)",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 30,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 85
+      },
+      "id": 26,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (status) (rate({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" |= \"kind=event\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | kind=\"event\" | event_name=\"$api_event\" | label_format route=event_data_${api_route_key}, status=event_data_${api_status_key}, method=event_data_${api_method_key}, duration_ms=event_data_${api_duration_key} [$__auto]))",
+          "legendFormat": "HTTP {{status}}",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (status_code) (rate(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\", service=~\"$service\", tenant=~\"$tenant\", span_kind=\"SPAN_KIND_CLIENT\"}[$__rate_interval]))",
+          "legendFormat": "traces {{status_code}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Codes de statut",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 93
+      },
+      "id": 27,
+      "panels": [],
+      "title": "Écrans",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 94
+      },
+      "id": 28,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "quantile_over_time(0.5, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | (kind=\"event\" and event_name=\"$screen_event\") or (kind=\"measurement\" and type=\"$screen_event\") | label_format screen=`{{ or .event_data_${screen_key} .context_${screen_key} }}`, screen_ms=`{{ or .event_data_${screen_duration_key} .value_${screen_duration_key} }}` | unwrap screen_ms | __error__=\"\" [$__auto]) by (screen)",
+          "legendFormat": "p50 {{screen}}",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "quantile_over_time(0.95, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | (kind=\"event\" and event_name=\"$screen_event\") or (kind=\"measurement\" and type=\"$screen_event\") | label_format screen=`{{ or .event_data_${screen_key} .context_${screen_key} }}`, screen_ms=`{{ or .event_data_${screen_duration_key} .value_${screen_duration_key} }}` | unwrap screen_ms | __error__=\"\" [$__auto]) by (screen)",
+          "legendFormat": "p95 {{screen}}",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "title": "Écran prêt p50 et p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 102
+      },
+      "id": 29,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "topk(15, quantile_over_time(0.95, {project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | (kind=\"event\" and event_name=\"$screen_event\") or (kind=\"measurement\" and type=\"$screen_event\") | label_format screen=`{{ or .event_data_${screen_key} .context_${screen_key} }}`, screen_ms=`{{ or .event_data_${screen_duration_key} .value_${screen_duration_key} }}` | unwrap screen_ms | __error__=\"\" [$__range]) by (screen))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Écrans les plus lents (p95)",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 110
+      },
+      "id": 30,
+      "panels": [],
+      "title": "Traces",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "gc-tempo"
+      },
+      "description": "Spans client plus longs que $slow_trace ; trier par durée dans le tableau. Pas de filtre tenant : un span sans tenant serait exclu.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 111
+      },
+      "id": 31,
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "gc-tempo"
+          },
+          "limit": 20,
+          "query": "{ resource.project =~ \"${project:pipe}\" && resource.env =~ \"${env:pipe}\" && resource.service.name =~ \"${service:pipe}\" && kind = client && duration > $slow_trace } | select(span.http.route, span.http.response.status_code, span.http.request.method)",
+          "queryType": "traceql",
+          "refId": "A",
+          "tableType": "traces"
+        }
+      ],
+      "title": "Traces client lentes",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "gc-tempo"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 121
+      },
+      "id": 32,
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "gc-tempo"
+          },
+          "queryType": "serviceMap",
+          "refId": "A",
+          "serviceMapQuery": "{project=~\"$project\", env=~\"$env\", client=~\"$service\"}"
+        }
+      ],
+      "title": "Graphe client → API",
+      "type": "nodeGraph"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 121
+      },
+      "id": 33,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (client, server) (rate(traces_service_graph_request_total{project=~\"$project\", env=~\"$env\", client=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{client}} → {{server}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Débit client → serveur",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "description": "Un span client mis en file plus de 10 s après son span serveur ne forme pas de paire.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 131
+      },
+      "id": 34,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (client, server) (rate(traces_service_graph_request_failed_total{project=~\"$project\", env=~\"$env\", client=~\"$service\"}[$__rate_interval])) / sum by (client, server) (rate(traces_service_graph_request_total{project=~\"$project\", env=~\"$env\", client=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{client}} → {{server}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Échecs client → serveur",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 131
+      },
+      "id": 35,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "1000 * histogram_quantile(0.95, sum by (le, client, server) (rate(traces_service_graph_request_server_seconds_bucket{project=~\"$project\", env=~\"$env\", client=~\"$service\"}[$__rate_interval])))",
+          "legendFormat": "{{client}} → {{server}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Latence serveur p95 client → serveur",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 139
+      },
+      "id": 36,
+      "panels": [],
+      "title": "Adoption",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 30,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 140
+      },
+      "id": 37,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "count by (app_version) (sum by (app_version, session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | session_id!=\"\" [$__auto])))",
+          "legendFormat": "{{app_version}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Sessions par version",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 148
+      },
+      "id": 38,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "count by (os, os_version) (sum by (os, os_version, session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | session_id!=\"\" [$__range])))",
+          "legendFormat": "{{os}} {{os_version}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Sessions par OS",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 148
+      },
+      "id": 39,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "count by (tenant) (sum by (tenant, session_id) (count_over_time({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} | tenant=~\"$tenant\" | logfmt | label_format os=`{{ or .session_attr_os .browser_os }}`, os_version=`{{ or .session_attr_os_version .browser_os }}` | app_version=~`$version` | os=~`$os` | session_id!=\"\" [$__range])))",
+          "legendFormat": "{{tenant}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Sessions par tenant",
+      "type": "bargauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 156
+      },
+      "id": 40,
+      "panels": [],
+      "title": "Santé de l'ingestion",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "description": "Global : ces métriques d'alloy ne portent ni projet ni service.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 157
+      },
+      "id": 41,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (reason) (increase(loki_process_dropped_lines_total{job=\"alloy\", component_id=\"loki.process.faro\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Lignes Faro rejetées par raison",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "description": "429 : débit limité (FARO_RATE, FARO_BURST). Global : ces métriques d'alloy ne portent ni projet ni service.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 157
+      },
+      "id": 42,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (status_code) (rate(faro_receiver_request_duration_seconds_count{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "HTTP {{status_code}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Requêtes Faro par code",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "description": "Global : ces métriques d'alloy ne portent ni projet ni service.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 165
+      },
+      "id": 43,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(faro_receiver_logs_total{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "logs",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(faro_receiver_exceptions_total{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "exceptions",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(faro_receiver_events_total{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "événements",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum(rate(faro_receiver_measurements_total{job=\"alloy\"}[$__rate_interval]))",
+          "legendFormat": "mesures",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Éléments Faro reçus",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gc-prometheus"
+      },
+      "description": "Global : ces métriques d'alloy ne portent ni projet ni service.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 165
+      },
+      "id": 44,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gc-prometheus"
+          },
+          "expr": "sum by (reason) (increase(loki_write_dropped_entries_total{job=\"alloy\", component_id=\"loki.write.loki\"}[$__rate_interval])) or vector(0)",
+          "legendFormat": "{{reason}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Pertes à l'écriture Loki",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "gc-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 173
+      },
+      "id": 45,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "gc-loki"
+          },
+          "expr": "sum by (service_name) (rate({project=~\"$project\", env=~\"$env\", service_name=~\"$service\"} [$__auto]))",
+          "legendFormat": "{{service_name}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Volume de logs du service",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "tags": [
+    "grafana-coolify"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "gc-loki"
+        },
+        "definition": "label_values({project=~\".+\"}, project)",
+        "includeAll": true,
+        "label": "project",
+        "multi": false,
+        "name": "project",
+        "query": {
+          "label": "project",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{project=~\".+\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "gc-loki"
+        },
+        "definition": "label_values({project=~\"$project\"}, env)",
+        "includeAll": true,
+        "label": "env",
+        "multi": true,
+        "name": "env",
+        "query": {
+          "label": "env",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{project=~\"$project\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "gc-loki"
+        },
+        "definition": "label_values({project=~\"$project\", env=~\"$env\"}, service_name)",
+        "includeAll": true,
+        "label": "service",
+        "multi": true,
+        "name": "service",
+        "query": {
+          "label": "service_name",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{project=~\"$project\", env=~\"$env\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "gc-prometheus"
+        },
+        "definition": "label_values(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\"}, tenant)",
+        "includeAll": true,
+        "label": "tenant",
+        "multi": true,
+        "name": "tenant",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_spanmetrics_calls_total{project=~\"$project\", env=~\"$env\"}, tenant)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "label": "version (regex)",
+        "name": "version",
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "label": "os (regex)",
+        "name": "os",
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "AppExit",
+          "value": "AppExit"
+        },
+        "label": "type de sortie système",
+        "name": "exit_type",
+        "query": "AppExit",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "(?i)crash|crash_native",
+          "value": "(?i)crash|crash_native"
+        },
+        "label": "raisons de crash (regex)",
+        "name": "crash_reasons",
+        "query": "(?i)crash|crash_native",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "api_call",
+          "value": "api_call"
+        },
+        "label": "événement d'appel API",
+        "name": "api_event",
+        "query": "api_call",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "route",
+          "value": "route"
+        },
+        "label": "clé route",
+        "name": "api_route_key",
+        "query": "route",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "status",
+          "value": "status"
+        },
+        "label": "clé statut",
+        "name": "api_status_key",
+        "query": "status",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "method",
+          "value": "method"
+        },
+        "label": "clé méthode",
+        "name": "api_method_key",
+        "query": "method",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "duration_ms",
+          "value": "duration_ms"
+        },
+        "label": "clé durée (ms)",
+        "name": "api_duration_key",
+        "query": "duration_ms",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "screen_ready",
+          "value": "screen_ready"
+        },
+        "label": "événement écran prêt",
+        "name": "screen_event",
+        "query": "screen_ready",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "screen",
+          "value": "screen"
+        },
+        "label": "clé écran",
+        "name": "screen_key",
+        "query": "screen",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "duration_ms",
+          "value": "duration_ms"
+        },
+        "label": "clé durée écran (ms)",
+        "name": "screen_duration_key",
+        "query": "duration_ms",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "1s",
+          "value": "1s"
+        },
+        "label": "trace lente au-delà de",
+        "name": "slow_trace",
+        "query": "1s",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Applications clientes",
+  "uid": "gc-client"
+}

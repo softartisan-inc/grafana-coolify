@@ -224,8 +224,8 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(json.dumps({k: v for k, v in self.state.items() if k != "requests"}, sort_keys=True), snapshot)
         self.assertEqual(self.writes(), [])
-        # 3 datasources, 3 folders, 8 dashboards, 2 contact points, the policy, 6 rules.
-        self.assertEqual(result.stdout.count(": unchanged"), 23)
+        # 3 datasources, 3 folders, 9 dashboards, 2 contact points, the policy, 6 rules.
+        self.assertEqual(result.stdout.count(": unchanged"), 24)
 
     def test_changed_url_is_updated_and_default_flag_kept(self):
         self.assertEqual(self.setup_run().returncode, 0)
@@ -509,7 +509,8 @@ class GrafanaSetupUnitTest(unittest.TestCase):
         links = {link["title"]: link["url"] for link in self.state["dashboards"]["gcl-demo"]["dashboard"]["links"]}
         self.assertEqual(links["Vue projet"], "/d/gc-project?var-project=demo")
         self.assertEqual(links["Hôte"], "/d/gc-host")
-        self.assertEqual(len(links), 6)
+        self.assertEqual(links["Applications clientes"], "/d/gc-client?var-project=demo")
+        self.assertEqual(len(links), 7)
 
 
 class GrafanaRequestErrorTest(unittest.TestCase):

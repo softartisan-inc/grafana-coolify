@@ -52,9 +52,13 @@ l'alerte Disque), pas les applications. Serveur unique qui héberge la prod : `H
 4. S'il envoie des **profils** (profilage continu, facultatif, même hôte uniquement) : rien à
    changer dans le package, voir [Profils d'un projet](#profils-dun-projet).
 5. **Redeploy**. `grafana-setup` crée le dossier `gc-<projet>` et son tableau
-   `grafana-coolify — <projet>`, dont les liens ouvrent les six tableaux avec `var-project`
+   `grafana-coolify — <projet>`, dont les liens ouvrent les sept tableaux avec `var-project`
    réglé.
 6. Instrumenter l'application, puis vérifier dans **Explore** (Loki : `{project="<projet>"}`).
+7. Client avec des événements propres (appels API, écran prêt, sorties système) : régler les
+   variables texte du tableau **Applications clientes** sur ses noms et garder le réglage par un
+   lien ou un **Save as** dans le dossier du projet
+   ([détail](exploitation/tableaux-de-bord.md#applications-clientes-gc-client)).
 
 ## Profils d'un projet
 
