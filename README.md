@@ -676,6 +676,10 @@ coupé par défaut **côté application** ; `pyroscope` reste au repos tant que 
   nouvelles tentatives au plus, puis répond `500` ; le SDK abandonne l'envoi. Rien n'est mis en
   file : les profils de cette période sont perdus, l'application n'est pas ralentie au-delà du
   délai de son propre client HTTP.
+- **Accusé de réception rapide** : Pyroscope tourne avec `-async-ingest=true` et répond avant
+  l'écriture de son segment (environ 0,5 s sinon). Un client à délai court (PHP-FPM, 500 ms)
+  ne tombe donc pas en délai dépassé ; en contrepartie, un arrêt brutal de Pyroscope perd au plus
+  la dernière demi-seconde de profils.
 - **Limites assumées** : pas de lien trace → profil (les SDK PHP et Node.js n'envoient pas
   l'identifiant de profil de span) ; les serveurs **distants** ne peuvent pas envoyer de profils
   (`alloy-gateway` ne relaie que l'OTLP) ; Pyroscope v2 en mode single-node est qualifié par

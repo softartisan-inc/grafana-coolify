@@ -178,6 +178,8 @@ services:
     command:
       - -config.file=/etc/pyroscope/pyroscope.yaml
       - -config.expand-env=true
+      # Ack before the ~0.5 s segment flush: clients push with short timeouts.
+      - -async-ingest=true
     environment:
       BIND_ADDR: 0.0.0.0
       PYROSCOPE_DATA_DIR: /data/v2
